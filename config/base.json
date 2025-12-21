@@ -1,0 +1,64 @@
+{
+  "services": {
+    "data_manager": {
+      "port": 8000,
+      "enabled": true,
+      "host": "localhost"
+    },
+    "strategy_engine": {
+      "port": 8003,
+      "enabled": true,
+      "host": "localhost"
+    },
+    "risk_manager": {
+      "port": 8001,
+      "enabled": true,
+      "host": "localhost"
+    },
+    "executor": {
+      "port": 8002,
+      "enabled": true,
+      "host": "localhost"
+    }
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "athena_trader",
+    "user": "athena",
+    "pool_size": 10,
+    "max_overflow": 20
+  },
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "db": 0,
+    "max_connections": 10
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file_path": "logs/app.log",
+    "max_file_size": "10MB",
+    "backup_count": 5
+  },
+  "risk_limits": {
+    "max_single_order_size_percent": 0.1,
+    "max_total_position_percent": 0.5,
+    "mandatory_stop_loss_percent": -0.02,
+    "mandatory_take_profit_percent": 0.05,
+    "max_drawdown_percent": 0.15
+  },
+  "trading": {
+    "default_symbols": ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
+    "default_timeframes": ["5m", "15m", "1h", "4h"],
+    "signal_interval_seconds": 15,
+    "order_timeout_seconds": 30
+  },
+  "performance": {
+    "max_response_time_seconds": 30,
+    "max_fetch_time_seconds": 5,
+    "max_indicator_calc_time_seconds": 0.1,
+    "health_check_interval_seconds": 60
+  }
+}

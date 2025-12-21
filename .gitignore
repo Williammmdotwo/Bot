@@ -1,0 +1,219 @@
+# Environment variables
+.env
+.env.local
+.env.production
+.env.staging
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache
+.cache/
+*.cache
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Node.js (for frontend)
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Backup files
+backups/
+*.backup
+
+# SSL certificates
+*.pem
+*.key
+*.crt
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Database dumps
+*.sql
+*.dump
+
+# Redis data
+dump.rdb
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# pytype
+.pytype/
+
+# Security
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+*.pem
+*.key
+
+# Monitoring
+prometheus_data/
+grafana_data/
+
+# Kubernetes
+*.kubeconfig
+
+# Terraform
+*.tfstate
+*.tfvars
+
+# Ansible
+*.retry
+inventory
+
+# Local development
+local/
+dev/
+staging/
+
+# Documentation build
+docs/_build/
+site/
+
+# Package files
+*.egg
+*.whl
+*.tar.gz
+*.zip
+
+# Profiling
+*.prof
+*.profile
+
+# Memory dumps
+*.hprof
+*.dump
+
+# Core dumps
+core
+core.*
+
+# Lock files
+*.lock
+*.pid
+
+# Editor backup files
+*~
+.#*
+\#*#
+.*.swp
+.*.swo
+
+# MacOS
+.AppleDoubleUp
+.AppleDB
+.LSOverride
+
+# Windows
+*.cab
+*.dll
+*.exe
+*.msi
+*.msm
+*.msp
+*.sym
+
+# Linux
+*.rpm
+*.deb
+*.tar.gz
+
+# Secrets
+secrets/
+.secrets/
+
+# Monitoring and metrics
+metrics/
+monitoring/
+
+# Load testing
+load_tests/
+jmeter_results/
+
+# CI/CD
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Local development overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Debug tools output
+scripts/debug_tools/*.log
+scripts/legacy/*.log
+
+# Test reports (moved to docs/reports/)
+*_test_results.json
+*_TEST_RESULTS.md

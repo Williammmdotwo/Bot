@@ -1,0 +1,337 @@
+﻿services:
+  # Database Services
+  postgres:
+    image: postgres:15-alpine
+    container_name: athena-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: athena_trader
+      POSTGRES_USER: ${POSTGRES_USER:-athena}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-athena123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"  # Only for host debugging
+    networks:
+      - athena-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-athena} -d ${POSTGRES_DB:-athena_trader}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: athena-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"  # Only for host debugging
+    networks:
+      - athena-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # Backend Services
+  data-service:
+    build:
+      context: .
+      dockerfile: src/data_manager/Dockerfile
+    container_name: athena-data-service
+    restart: unless-stopped
+    command: ["python", "-m", "src.data_manager.main"]
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-athena}:${POSTGRES_PASSWORD:-athena123}@postgres:5432/${POSTGRES_DB:-athena_trader}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-athena-internal-token}
+      - DATA_API_KEY=${DATA_API_KEY}
+      - DATA_SECRET=${DATA_SECRET}
+      - CONFIG_PATH=${CONFIG_PATH:-/app/config}
+      - OKX_DEMO_API_KEY=${OKX_DEMO_API_KEY}
+      - OKX_DEMO_SECRET=${OKX_DEMO_SECRET}
+      - OKX_DEMO_PASSPHRASE=${OKX_DEMO_PASSPHRASE}
+      - OKX_ENVIRONMENT=${OKX_ENVIRONMENT:-demo}
+      - DATABASE_POOL_SIZE=10
+      - DATABASE_MAX_OVERFLOW=20
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - data_service_cache:/app/cache
+    ports:
+      - "8000:8000"  # Only for host debugging
+    networks:
+      - athena-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  risk-service:
+    build:
+      context: .
+      dockerfile: src/risk_manager/Dockerfile
+    container_name: athena-risk-service
+    restart: unless-stopped
+    command: ["python", "-m", "src.risk_manager.main"]
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-athena}:${POSTGRES_PASSWORD:-athena123}@postgres:5432/${POSTGRES_DB:-athena_trader}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8001
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-athena-internal-token}
+      - RISK_API_KEY=${RISK_API_KEY}
+      - RISK_SECRET=${RISK_SECRET}
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL}
+      - CONFIG_PATH=${CONFIG_PATH:-/app/config}
+      - DATABASE_POOL_SIZE=10
+      - DATABASE_MAX_OVERFLOW=20
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - risk_service_cache:/app/cache
+    ports:
+      - "8001:8001"  # Only for host debugging
+    networks:
+      - athena-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  executor-service:
+    build:
+      context: .
+      dockerfile: src/executor/Dockerfile
+    container_name: athena-executor-service
+    restart: unless-stopped
+    command: ["python", "-m", "src.executor.main"]
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-athena}:${POSTGRES_PASSWORD:-athena123}@postgres:5432/${POSTGRES_DB:-athena_trader}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8002
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-athena-internal-token}
+      - EXECUTOR_API_KEY=${EXECUTOR_API_KEY}
+      - EXECUTOR_SECRET=${EXECUTOR_SECRET}
+      - EXECUTOR_PASSPHRASE=${EXECUTOR_PASSPHRASE}
+      - CONFIG_PATH=${CONFIG_PATH:-/app/config}
+      - DATABASE_POOL_SIZE=10
+      - DATABASE_MAX_OVERFLOW=20
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - executor_service_cache:/app/cache
+    ports:
+      - "8002:8002"  # Only for host debugging
+    networks:
+      - athena-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      risk-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  strategy-service:
+    build:
+      context: .
+      dockerfile: src/strategy_engine/Dockerfile
+    container_name: athena-strategy-service
+    restart: unless-stopped
+    command: ["python", "-m", "src.strategy_engine.main"]
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-athena}:${POSTGRES_PASSWORD:-athena123}@postgres:5432/${POSTGRES_DB:-athena_trader}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8003
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-athena-internal-token}
+      - STRATEGY_API_KEY=${STRATEGY_API_KEY}
+      - STRATEGY_SECRET=${STRATEGY_SECRET}
+      - CONFIG_PATH=${CONFIG_PATH:-/app/config}
+      - AI_API_BASE_URL=${AI_API_BASE_URL}
+      - AI_API_KEY=${AI_API_KEY}
+      - AI_MODEL_NAME=${AI_MODEL_NAME}
+      - RUN_STRATEGY_LOOP=false
+      - OKX_DEMO_API_KEY=${OKX_DEMO_API_KEY}
+      - OKX_DEMO_SECRET=${OKX_DEMO_SECRET}
+      - OKX_DEMO_PASSPHRASE=${OKX_DEMO_PASSPHRASE}
+      - OKX_ENVIRONMENT=${OKX_ENVIRONMENT:-demo}
+      - DATABASE_POOL_SIZE=10
+      - DATABASE_MAX_OVERFLOW=20
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - strategy_service_cache:/app/cache
+    ports:
+      - "8003:8003"  # Only for host debugging
+    networks:
+      - athena-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: athena-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://data-service:8000
+      - NEXT_PUBLIC_WS_URL=ws://data-service:8000
+      - NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=${WALLET_CONNECT_PROJECT_ID}
+    ports:
+      - "3000:3000"  # Expose to external access
+    networks:
+      - athena-network
+    depends_on:
+      risk-service:
+        condition: service_healthy
+      executor-service:
+        condition: service_healthy
+      strategy-service:
+        condition: service_healthy
+      data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Reverse Proxy (Optional - for production)
+  nginx:
+    image: nginx:alpine
+    container_name: athena-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - athena-network
+    depends_on:
+      - frontend
+    profiles:
+      - production
+
+# Networks
+networks:
+  athena-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes
+volumes:
+  postgres_data:
+    driver: local
+    labels:
+      - "com.athena.description=PostgreSQL data volume"
+  redis_data:
+    driver: local
+    labels:
+      - "com.athena.description=Redis data volume"
+  data_service_cache:
+    driver: local
+    labels:
+      - "com.athena.description=Data service cache volume"
+  risk_service_cache:
+    driver: local
+    labels:
+      - "com.athena.description=Risk service cache volume"
+  executor_service_cache:
+    driver: local
+    labels:
+      - "com.athena.description=Executor service cache volume"
+  strategy_service_cache:
+    driver: local
+    labels:
+      - "com.athena.description=Strategy service cache volume"

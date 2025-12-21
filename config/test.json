@@ -1,0 +1,62 @@
+{
+  "environment": "test",
+  "database": {
+    "use_database": false,
+    "mock_data": true
+  },
+  "services": {
+    "data_manager": {
+      "port": 8000,
+      "enabled": true
+    },
+    "risk_manager": {
+      "port": 8001,
+      "enabled": true
+    },
+    "executor": {
+      "port": 8002,
+      "enabled": true
+    },
+    "strategy_engine": {
+      "port": 8003,
+      "enabled": true
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "console_output": false
+  },
+  "trading": {
+    "data_source": "OKX_DEMO",
+    "test_duration_minutes": 30,
+    "signal_interval_seconds": 15,
+    "progress_interval_seconds": 30,
+    "stop_loss_pct": 0.04,
+    "take_profit_pct": 0.08,
+    "max_risk_pct": 0.025,
+    "min_confidence_threshold": 0.7,
+    "enable_dynamic_risk": true,
+    "max_single_order_size": 0.15,
+    "max_total_position": 0.6
+  },
+  "risk_limits": {
+    "max_single_order_size_percent": 0.15,
+    "max_total_position_percent": 0.6,
+    "mandatory_stop_loss_percent": -0.04,
+    "mandatory_take_profit_percent": 0.08,
+    "max_drawdown_percent": 0.2,
+    "min_confidence_threshold": 0.7,
+    "dynamic_risk_adjustment": true,
+    "volatility_multiplier": 1.5
+  },
+  "auth": {
+    "internal_token": "athena-internal-token-change-in-production"
+  },
+  "performance": {
+    "max_response_time_seconds": 90,
+    "max_fetch_time_seconds": 10,
+    "max_indicator_calc_time_seconds": 0.2,
+    "api_retry_attempts": 3,
+    "api_retry_delay_seconds": 2
+  }
+}

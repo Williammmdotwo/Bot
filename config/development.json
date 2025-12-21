@@ -1,0 +1,40 @@
+{
+  "environment": "development",
+  "database": {
+    "use_database": false,
+    "mock_data": true
+  },
+  "services": {
+    "data_manager": {
+      "port": 8000,
+      "enabled": true
+    },
+    "strategy_engine": {
+      "host": "0.0.0.0",
+      "port": 8003,
+      "enabled": true
+    },
+    "risk_manager": {
+      "host": "0.0.0.0",
+      "port": 8001,
+      "enabled": true
+    },
+    "executor": {
+      "host": "0.0.0.0",
+      "port": 8002,
+      "enabled": true
+    }
+  },
+  "logging": {
+    "level": "DEBUG",
+    "console_output": true
+  },
+  "trading": {
+    "use_demo": true,
+    "test_duration_minutes": 30,
+    "progress_interval_seconds": 30
+  },
+  "auth": {
+    "internal_token": "athena-dev-token"
+  }
+}

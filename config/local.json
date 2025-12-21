@@ -1,0 +1,118 @@
+{
+  "environment": "local",
+  "database": {
+    "use_database": false,
+    "mock_data": true,
+    "host": "localhost",
+    "port": 5432,
+    "name": "athena_trader_local",
+    "user": "athena",
+    "pool_size": 5,
+    "max_overflow": 10
+  },
+  "redis": {
+    "enabled": false,
+    "host": "localhost",
+    "port": 6379,
+    "db": 0,
+    "max_connections": 5
+  },
+  "services": {
+    "data_manager": {
+      "port": 8000,
+      "enabled": true,
+      "host": "localhost",
+      "mock_external_apis": true,
+      "command": "python -m src.data_manager.main"
+    },
+    "risk_manager": {
+      "port": 8001,
+      "enabled": true,
+      "host": "localhost",
+      "simulation_mode": true,
+      "command": "python -m src.risk_manager.main"
+    },
+    "executor": {
+      "port": 8002,
+      "enabled": true,
+      "host": "localhost",
+      "demo_trading": true,
+      "command": "python -m src.executor.main"
+    },
+    "strategy_engine": {
+      "port": 8003,
+      "enabled": true,
+      "host": "localhost",
+      "ai_simulation": true,
+      "command": "python -m src.strategy_engine.main"
+    }
+  },
+  "logging": {
+    "level": "DEBUG",
+    "console_output": true,
+    "file_path": "logs/local_dev.log",
+    "max_file_size": "5MB",
+    "backup_count": 3
+  },
+  "trading": {
+    "use_demo": true,
+    "simulation_mode": true,
+    "test_duration_minutes": 30,
+    "signal_interval_seconds": 15,
+    "progress_interval_seconds": 30,
+    "default_symbols": ["BTC-USDT", "ETH-USDT"],
+    "default_timeframes": ["5m", "15m", "1h"]
+  },
+  "risk_limits": {
+    "max_single_order_size_percent": 0.05,
+    "max_total_position_percent": 0.25,
+    "mandatory_stop_loss_percent": -0.02,
+    "mandatory_take_profit_percent": 0.05,
+    "max_drawdown_percent": 0.10
+  },
+  "auth": {
+    "internal_token": "athena-local-dev-token",
+    "require_auth": false,
+    "api_keys": {
+      "data_service": "local-data-key",
+      "risk_service": "local-risk-key",
+      "executor_service": "local-executor-key",
+      "strategy_service": "local-strategy-key"
+    }
+  },
+  "performance": {
+    "max_response_time_seconds": 90,
+    "max_fetch_time_seconds": 10,
+    "max_indicator_calc_time_seconds": 0.2,
+    "api_retry_attempts": 3,
+    "api_retry_delay_seconds": 2,
+    "health_check_interval_seconds": 120,
+    "enable_performance_monitoring": true
+  },
+  "development": {
+    "auto_reload": true,
+    "debug_mode": true,
+    "enable_profiling": false,
+    "mock_external_services": true,
+    "skip_ssl_verification": true,
+    "enable_cors": true,
+    "cors_origins": ["http://localhost:3000", "http://127.0.0.1:3000"]
+  },
+  "ai_model": {
+    "enabled": true,
+    "simulation_mode": true,
+    "api_base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "your-siliconflow-token-here",
+    "model_name": "Pro/deepseek-ai/DeepSeek-V3",
+    "max_tokens": 1000,
+    "temperature": 0.7,
+    "timeout_seconds": 30
+  },
+  "monitoring": {
+    "enabled": true,
+    "metrics_collection": true,
+    "health_checks": true,
+    "alerting": false,
+    "log_level": "INFO"
+  }
+}

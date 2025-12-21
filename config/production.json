@@ -1,0 +1,46 @@
+{
+  "environment": "production",
+  "database": {
+    "use_database": true,
+    "mock_data": false,
+    "ssl_mode": "require"
+  },
+  "services": {
+    "data_manager": {
+      "port": 8000,
+      "enabled": true,
+      "host": "0.0.0.0"
+    },
+    "strategy_engine": {
+      "port": 8001,
+      "enabled": true,
+      "host": "0.0.0.0"
+    },
+    "risk_manager": {
+      "port": 8002,
+      "enabled": true,
+      "host": "0.0.0.0"
+    },
+    "executor": {
+      "port": 8003,
+      "enabled": true,
+      "host": "0.0.0.0"
+    }
+  },
+  "logging": {
+    "level": "WARNING",
+    "console_output": false,
+    "file_path": "/var/log/athena/app.log"
+  },
+  "trading": {
+    "use_demo": false
+  },
+  "auth": {
+    "internal_token": "athena-internal-token-change-in-production"
+  },
+  "security": {
+    "enable_https": true,
+    "require_auth": true,
+    "rate_limiting": true
+  }
+}

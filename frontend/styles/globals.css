@@ -1,0 +1,839 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@100;200;300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;200;300;400;500;600;700;800&display=swap');
+
+/* Athena Trader Design System Variables */
+:root {
+  /* 深色主题变量 */
+  --athena-bg-primary: #121212;
+  --athena-card-bg: #1E1E1E;
+  --athena-border: #2D2D2D;
+  --athena-text-primary: #FFFFFF;
+  --athena-text-secondary: #B3B3B3;
+  --athena-text-disabled: #666666;
+  --athena-accent-green: #4CAF50;
+  --athena-accent-red: #E53935;
+  --athena-accent-yellow: #FFC107;
+  --athena-accent-blue: #2196F3;
+  --athena-accent-purple: #9C27B0;
+  --athena-success: #4CAF50;
+  --athena-warning: #FF9800;
+  --athena-error: #F44336;
+  --athena-info: #2196F3;
+  --athena-progress-bg: #333333;
+  --athena-btn-primary: #2D2D2D;
+  --athena-btn-primary-hover: #3A3A3A;
+  --athena-btn-primary-active: #4A4A4A;
+  --athena-btn-secondary: #1E1E1E;
+  --athena-btn-secondary-hover: #2A2A2A;
+  --athena-btn-accent: #4CAF50;
+  --athena-btn-accent-hover: #66BB6A;
+  --athena-btn-danger: #E53935;
+  --athena-btn-danger-hover: #EF5350;
+  
+  /* 浅色主题变量 */
+  --athena-light-bg-primary: #FFFFFF;
+  --athena-light-card-bg: #F5F5F5;
+  --athena-light-border: #E0E0E0;
+  --athena-light-text-primary: #000000;
+  --athena-light-text-secondary: #555555;
+  --athena-light-text-disabled: #999999;
+  --athena-light-accent-green: #388E3C;
+  --athena-light-accent-red: #D32F2F;
+  --athena-light-accent-yellow: #FFA000;
+  --athena-light-accent-blue: #1976D2;
+  --athena-light-accent-purple: #7B1FA2;
+  --athena-light-success: #388E3C;
+  --athena-light-warning: #FFA000;
+  --athena-light-error: #D32F2F;
+  --athena-light-info: #1976D2;
+  --athena-light-progress-bg: #EEEEEE;
+  --athena-light-btn-primary: #EEEEEE;
+  --athena-light-btn-primary-hover: #DDDDDD;
+  --athena-light-btn-primary-active: #CCCCCC;
+  --athena-light-btn-secondary: #FFFFFF;
+  --athena-light-btn-secondary-hover: #F0F0F0;
+  --athena-light-btn-accent: #388E3C;
+  --athena-light-btn-accent-hover: #4CAF50;
+  --athena-light-btn-danger: #D32F2F;
+  --athena-light-btn-danger-hover: #E53935;
+  
+  /* 进度条颜色 */
+  --progress-buy: #4CAF50;
+  --progress-sell: #E53935;
+  --progress-hold: #FFC107;
+  
+  /* 动画变量 */
+  --progress-width: 0%;
+  --card-lift-distance: -4px;
+  --glow-intensity: 0.5;
+  
+  /* 间距变量 */
+  --module-gap: 24px;
+  --inner-padding: 16px;
+  --border-radius-module: 8px;
+  --border-radius-button: 20px;
+  
+  /* 字体变量 */
+  --font-heading-size: 20px;
+  --font-label-size: 14px;
+  --font-value-size: 16px;
+  --font-detail-size: 12px;
+  --font-line-height: 1.5;
+}
+
+/* 浅色主题变量覆盖 */
+.light {
+  --athena-bg-primary: var(--athena-light-bg-primary);
+  --athena-card-bg: var(--athena-light-card-bg);
+  --athena-border: var(--athena-light-border);
+  --athena-text-primary: var(--athena-light-text-primary);
+  --athena-text-secondary: var(--athena-light-text-secondary);
+  --athena-text-disabled: var(--athena-light-text-disabled);
+  --athena-accent-green: var(--athena-light-accent-green);
+  --athena-accent-red: var(--athena-light-accent-red);
+  --athena-accent-yellow: var(--athena-light-accent-yellow);
+  --athena-accent-blue: var(--athena-light-accent-blue);
+  --athena-accent-purple: var(--athena-light-accent-purple);
+  --athena-success: var(--athena-light-success);
+  --athena-warning: var(--athena-light-warning);
+  --athena-error: var(--athena-light-error);
+  --athena-info: var(--athena-light-info);
+  --athena-progress-bg: var(--athena-light-progress-bg);
+  --athena-btn-primary: var(--athena-light-btn-primary);
+  --athena-btn-primary-hover: var(--athena-light-btn-primary-hover);
+  --athena-btn-primary-active: var(--athena-light-btn-primary-active);
+  --athena-btn-secondary: var(--athena-light-btn-secondary);
+  --athena-btn-secondary-hover: var(--athena-light-btn-secondary-hover);
+  --athena-btn-accent: var(--athena-light-btn-accent);
+  --athena-btn-accent-hover: var(--athena-light-btn-accent-hover);
+  --athena-btn-danger: var(--athena-light-btn-danger);
+  --athena-btn-danger-hover: var(--athena-light-btn-danger-hover);
+}
+
+/* Base Styles */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply font-sans antialiased;
+    @apply bg-secondary-50 text-secondary-900;
+    @apply selection:bg-primary-100 selection:text-primary-900;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-secondary-100;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-secondary-300 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-secondary-400;
+  }
+
+  /* Focus styles */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white;
+  }
+
+  /* Smooth transitions */
+  * {
+    @apply transition-colors duration-200 ease-in-out;
+  }
+}
+
+/* Component Styles */
+@layer components {
+  /* Athena Trader Button variants */
+  .athena-btn {
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-button;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply transition-all duration-200 ease-in-out;
+    @apply font-medium;
+  }
+
+  .athena-btn-primary {
+    @apply athena-btn;
+    background-color: var(--athena-btn-primary);
+    color: var(--athena-text-primary);
+    @apply focus:ring-2 focus:ring-offset-2 shadow-module;
+  }
+
+  .athena-btn-primary:hover {
+    background-color: var(--athena-btn-primary-hover);
+    @apply shadow-module-hover;
+  }
+
+  .athena-btn-primary:active {
+    background-color: var(--athena-btn-primary-active);
+  }
+
+  .athena-btn-secondary {
+    @apply athena-btn border;
+    background-color: var(--athena-btn-secondary);
+    color: var(--athena-text-primary);
+    border-color: var(--athena-border);
+  }
+
+  .athena-btn-secondary:hover {
+    background-color: var(--athena-btn-secondary-hover);
+  }
+
+  .athena-btn-accent {
+    @apply athena-btn;
+    background-color: var(--athena-btn-accent);
+    color: white;
+    @apply shadow-glow-success;
+  }
+
+  .athena-btn-accent:hover {
+    background-color: var(--athena-btn-accent-hover);
+  }
+
+  .athena-btn-danger {
+    @apply athena-btn;
+    background-color: var(--athena-btn-danger);
+    color: white;
+    @apply shadow-glow-danger;
+  }
+
+  .athena-btn-danger:hover {
+    background-color: var(--athena-btn-danger-hover);
+  }
+
+  /* Athena Trader Card components */
+  .athena-card {
+    background-color: var(--athena-card-bg);
+    border-color: var(--athena-border);
+    @apply rounded-module border shadow-module p-inner-padding;
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .athena-card:hover {
+    @apply shadow-module-hover;
+    transform: translateY(var(--card-lift-distance));
+  }
+
+  .athena-card-header {
+    @apply mb-4;
+    font-size: var(--font-heading-size);
+    font-weight: 600;
+    color: var(--athena-text-primary);
+    line-height: var(--font-line-height);
+  }
+
+  .athena-card-label {
+    font-size: var(--font-label-size);
+    color: var(--athena-text-secondary);
+    line-height: var(--font-line-height);
+  }
+
+  .athena-card-value {
+    font-size: var(--font-value-size);
+    font-weight: 600;
+    color: var(--athena-text-primary);
+    line-height: var(--font-line-height);
+  }
+
+  .athena-card-detail {
+    font-size: var(--font-detail-size);
+    color: var(--athena-text-secondary);
+    line-height: var(--font-line-height);
+  }
+
+  /* Progress Bar components */
+  .athena-progress {
+    @apply w-full rounded-full overflow-hidden;
+    background-color: var(--athena-progress-bg);
+    height: 8px;
+  }
+
+  .athena-progress-fill {
+    height: 100%;
+    @apply transition-all duration-500 ease-out;
+    animation: fillGradient 1.2s ease-out;
+  }
+
+  .athena-progress-buy {
+    background-color: var(--progress-buy);
+  }
+
+  .athena-progress-sell {
+    background-color: var(--progress-sell);
+  }
+
+  .athena-progress-hold {
+    background-color: var(--progress-hold);
+  }
+
+  /* AI Thinking components */
+  .athena-thinking-item {
+    @apply p-3 rounded-lg text-sm;
+    background-color: var(--athena-card-bg);
+    border: 1px solid var(--athena-border);
+    color: var(--athena-text-secondary);
+    animation: slideInFromLeft 0.4s ease-out;
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .athena-thinking-item:hover {
+    @apply shadow-glow-ai;
+    transform: scale(1.02);
+  }
+
+  .athena-thinking-badge {
+    @apply inline-flex items-center px-2 py-1 rounded text-xs font-medium;
+    background-color: var(--athena-accent-blue);
+    color: white;
+  }
+
+  /* Trade Record components */
+  .athena-trade-card {
+    @apply p-3 rounded-lg border;
+    background-color: var(--athena-card-bg);
+    border-color: var(--athena-border);
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .athena-trade-card:hover {
+    @apply shadow-module-hover;
+    transform: translateY(-2px);
+  }
+
+  .athena-trade-profit {
+    color: var(--athena-success);
+  }
+
+  .athena-trade-loss {
+    color: var(--athena-error);
+  }
+
+  .athena-trade-badge-buy {
+    @apply inline-flex items-center px-2 py-1 rounded text-xs font-medium;
+    background-color: var(--athena-accent-green);
+    color: white;
+  }
+
+  .athena-trade-badge-sell {
+    @apply inline-flex items-center px-2 py-1 rounded text-xs font-medium;
+    background-color: var(--athena-accent-red);
+    color: white;
+  }
+
+  /* Theme Toggle */
+  .athena-theme-toggle {
+    @apply p-2 rounded-lg transition-all duration-200 ease-in-out;
+    background-color: var(--athena-btn-secondary);
+    color: var(--athena-text-primary);
+    border: 1px solid var(--athena-border);
+  }
+
+  .athena-theme-toggle:hover {
+    background-color: var(--athena-btn-secondary-hover);
+    transform: scale(1.1);
+  }
+
+  /* Mode Toggle */
+  .athena-mode-toggle {
+    @apply px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ease-in-out;
+    background-color: var(--athena-accent-blue);
+    color: white;
+    border-radius: var(--border-radius-button);
+  }
+
+  .athena-mode-toggle:hover {
+    background-color: var(--athena-accent-purple);
+    @apply shadow-glow;
+  }
+
+  /* Confidence Index */
+  .athena-confidence-item {
+    @apply mb-4;
+  }
+
+  .athena-confidence-label {
+    @apply flex justify-between items-center mb-2;
+    font-size: var(--font-label-size);
+    color: var(--athena-text-secondary);
+  }
+
+  .athena-confidence-value {
+    @apply font-bold;
+    font-size: var(--font-value-size);
+  }
+
+  .athena-confidence-buy {
+    color: var(--athena-accent-green);
+  }
+
+  .athena-confidence-sell {
+    color: var(--athena-accent-red);
+  }
+
+  .athena-confidence-hold {
+    color: var(--athena-accent-yellow);
+  }
+
+  /* Legacy button variants for compatibility */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-600 text-white hover:bg-primary-700;
+    @apply focus:ring-primary-500 shadow-soft hover:shadow-medium;
+  }
+
+  .btn-secondary {
+    @apply btn bg-secondary-200 text-secondary-900 hover:bg-secondary-300;
+    @apply focus:ring-secondary-500 border border-secondary-300;
+  }
+
+  .btn-success {
+    @apply btn bg-success-600 text-white hover:bg-success-700;
+    @apply focus:ring-success-500 shadow-soft hover:shadow-medium;
+  }
+
+  .btn-warning {
+    @apply btn bg-warning-600 text-white hover:bg-warning-700;
+    @apply focus:ring-warning-500 shadow-soft hover:shadow-medium;
+  }
+
+  .btn-danger {
+    @apply btn bg-danger-600 text-white hover:bg-danger-700;
+    @apply focus:ring-danger-500 shadow-soft hover:shadow-medium;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-secondary-700 hover:bg-secondary-100;
+    @apply focus:ring-secondary-500 border border-secondary-300;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  /* Card components */
+  .card {
+    @apply bg-white rounded-xl shadow-soft border border-secondary-200;
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .card-hover {
+    @apply card hover:shadow-medium hover:-translate-y-1;
+  }
+
+  .card-header {
+    @apply px-6 py-4 border-b border-secondary-200;
+  }
+
+  .card-body {
+    @apply px-6 py-4;
+  }
+
+  .card-footer {
+    @apply px-6 py-4 border-t border-secondary-200 bg-secondary-50;
+  }
+
+  /* Form components */
+  .form-input {
+    @apply w-full px-3 py-2 border border-secondary-300 rounded-lg;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+    @apply bg-white text-secondary-900 placeholder-secondary-400;
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .form-label {
+    @apply block text-sm font-medium text-secondary-700 mb-1;
+  }
+
+  .form-error {
+    @apply text-sm text-danger-600 mt-1;
+  }
+
+  /* Badge components */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-primary {
+    @apply badge bg-primary-100 text-primary-800;
+  }
+
+  .badge-success {
+    @apply badge bg-success-100 text-success-800;
+  }
+
+  .badge-warning {
+    @apply badge bg-warning-100 text-warning-800;
+  }
+
+  .badge-danger {
+    @apply badge bg-danger-100 text-danger-800;
+  }
+
+  .badge-secondary {
+    @apply badge bg-secondary-100 text-secondary-800;
+  }
+
+  /* Table components */
+  .table {
+    @apply w-full border-collapse;
+  }
+
+  .table th {
+    @apply px-4 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider;
+    @apply bg-secondary-50 border-b border-secondary-200;
+  }
+
+  .table td {
+    @apply px-4 py-3 text-sm text-secondary-900 border-b border-secondary-100;
+  }
+
+  .table tr:hover {
+    @apply bg-secondary-50;
+  }
+
+  /* Loading states */
+  .loading-spinner {
+    @apply animate-spin rounded-full border-2 border-secondary-200 border-t-primary-600;
+  }
+
+  .skeleton {
+    @apply bg-secondary-200 rounded animate-pulse;
+  }
+
+  /* Status indicators */
+  .status-online {
+    @apply w-2 h-2 bg-success-500 rounded-full;
+    @apply animate-pulse;
+  }
+
+  .status-offline {
+    @apply w-2 h-2 bg-secondary-400 rounded-full;
+  }
+
+  .status-warning {
+    @apply w-2 h-2 bg-warning-500 rounded-full;
+    @apply animate-pulse;
+  }
+
+  /* Chart container */
+  .chart-container {
+    @apply bg-white rounded-xl shadow-soft border border-secondary-200 p-4;
+    @apply h-96 w-full;
+  }
+
+  /* Navigation */
+  .nav-link {
+    @apply flex items-center px-3 py-2 text-sm font-medium rounded-lg;
+    @apply text-secondary-700 hover:text-secondary-900 hover:bg-secondary-100;
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .nav-link-active {
+    @apply nav-link bg-primary-100 text-primary-900;
+    @apply hover:bg-primary-200 hover:text-primary-900;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    @apply fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm;
+    @apply flex items-center justify-center z-50;
+  }
+
+  .modal-content {
+    @apply bg-white rounded-xl shadow-hard max-w-lg w-full mx-4;
+    @apply transform transition-all duration-300 ease-out;
+  }
+
+  /* Tooltip */
+  .tooltip {
+    @apply absolute z-10 px-2 py-1 text-xs text-white bg-secondary-900 rounded;
+    @apply opacity-0 pointer-events-none transition-opacity duration-200;
+  }
+
+  .tooltip-visible {
+    @apply opacity-100 pointer-events-auto;
+  }
+}
+
+/* Utility Classes */
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent;
+  }
+
+  .bg-gradient-primary {
+    @apply bg-gradient-to-r from-primary-500 to-primary-700;
+  }
+
+  .bg-gradient-success {
+    @apply bg-gradient-to-r from-success-500 to-success-700;
+  }
+
+  .bg-gradient-warning {
+    @apply bg-gradient-to-r from-warning-500 to-warning-700;
+  }
+
+  .bg-gradient-danger {
+    @apply bg-gradient-to-r from-danger-500 to-danger-700;
+  }
+
+  /* Glass morphism effect */
+  .glass {
+    @apply bg-white bg-opacity-80 backdrop-blur-md border border-white border-opacity-20;
+  }
+
+  .glass-dark {
+    @apply bg-secondary-900 bg-opacity-80 backdrop-blur-md border border-secondary-700 border-opacity-20;
+  }
+
+  /* Text truncation */
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .truncate-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Responsive grid */
+  .grid-responsive {
+    @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4;
+  }
+
+  /* Animation delays */
+  .animation-delay-100 {
+    animation-delay: 100ms;
+  }
+
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+
+  .animation-delay-300 {
+    animation-delay: 300ms;
+  }
+
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .dark-mode {
+    @apply bg-secondary-900 text-secondary-100;
+  }
+
+  .dark-mode .card {
+    @apply bg-secondary-800 border-secondary-700;
+  }
+
+  .dark-mode .form-input {
+    @apply bg-secondary-800 border-secondary-600 text-secondary-100;
+  }
+
+  .dark-mode .table th {
+    @apply bg-secondary-800 border-secondary-700 text-secondary-300;
+  }
+
+  .dark-mode .table td {
+    @apply border-secondary-700 text-secondary-100;
+  }
+
+  .dark-mode .table tr:hover {
+    @apply bg-secondary-700;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .print-break-before {
+    page-break-before: always;
+  }
+
+  .print-break-after {
+    page-break-after: always;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .btn {
+    @apply border-2 border-current;
+  }
+
+  .card {
+    @apply border-2 border-secondary-400;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Athena Trader 无障碍性增强 */
+@media (prefers-reduced-motion: reduce) {
+  .athena-card:hover {
+    transform: none !important;
+  }
+  
+  .athena-thinking-item:hover {
+    transform: none !important;
+  }
+  
+  .athena-trade-card:hover {
+    transform: none !important;
+  }
+  
+  .athena-theme-toggle:hover {
+    transform: none !important;
+  }
+}
+
+/* 高对比度模式增强 */
+@media (prefers-contrast: high) {
+  .athena-card {
+    border-width: 2px !important;
+  }
+  
+  .athena-btn {
+    border-width: 2px !important;
+  }
+  
+  .athena-progress {
+    border: 1px solid var(--athena-text-primary) !important;
+  }
+}
+
+/* 键盘导航增强 */
+.athena-btn:focus-visible,
+.athena-theme-toggle:focus-visible,
+.athena-mode-toggle:focus-visible {
+  outline: 2px solid var(--athena-accent-blue) !important;
+  outline-offset: 2px !important;
+}
+
+/* 屏幕阅读器专用 */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* 跳过链接 */
+.skip-link {
+  position: absolute !important;
+  top: -40px !important;
+  left: 6px !important;
+  background: var(--athena-accent-blue) !important;
+  color: white !important;
+  padding: 8px !important;
+  text-decoration: none !important;
+  border-radius: 4px !important;
+  z-index: 1000 !important;
+}
+
+.skip-link:focus {
+  top: 6px !important;
+}
+
+/* 性能优化 */
+.athena-card,
+.athena-thinking-item,
+.athena-trade-card {
+  will-change: transform;
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+
+.athena-progress-fill {
+  will-change: width;
+  transform: translateZ(0);
+}
+
+/* 主题切换性能优化 */
+.animate-theme-transition {
+  transition: background-color 0.4s ease-in-out, color 0.4s ease-in-out;
+}
+
+/* 加载状态优化 */
+.athena-loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.athena-loading::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border: 2px solid var(--athena-accent-blue);
+  border-radius: 50%;
+  border-top-color: transparent;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

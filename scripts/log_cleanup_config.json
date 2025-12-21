@@ -1,0 +1,25 @@
+{
+  "cleanup_settings": {
+    "retention_days": 7,
+    "report_retention_days": 3,
+    "logs_directory": "logs",
+    "file_patterns": [
+      "*.log",
+      "*.txt"
+    ],
+    "exclude_patterns": [
+      "current.log",
+      "error.log"
+    ]
+  },
+  "schedule": {
+    "enabled": true,
+    "frequency": "daily",
+    "time": "02:00"
+  },
+  "notifications": {
+    "enabled": true,
+    "email_on_failure": false,
+    "log_summary": true
+  }
+}
