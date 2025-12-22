@@ -145,6 +145,11 @@ class LocalDevManager:
 
             # 启动服务进程
             cmd = service_config['command'].split()
+
+            # 将命令中的 'python' 替换为当前解释器的绝对路径
+            if cmd and cmd[0] == 'python':
+                cmd[0] = sys.executable
+
             process = subprocess.Popen(
                 cmd,
                 cwd=self.project_root,
