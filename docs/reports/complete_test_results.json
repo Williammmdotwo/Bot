@@ -1,0 +1,40 @@
+{
+  "test_suite": "data_manager_service_complete",
+  "timestamp": 1764906065.987942,
+  "total_execution_time": 16.741552114486694,
+  "summary": {
+    "total_tests": 3,
+    "passed_tests": 0,
+    "failed_tests": 3,
+    "success_rate": 0.0
+  },
+  "individual_results": [
+    {
+      "script": "tests/integration/test_api_endpoint.py",
+      "description": "API端点测试",
+      "exit_code": 1,
+      "execution_time": 4.459458827972412,
+      "stdout": "=== 测试数据管理服务API端点 ===\n服务地址: http://localhost:8004\n测试交易对: BTC-USDT\n\n1. 测试健康检查端点...\n\n测试执行失败: 'gbk' codec can't encode character '\\u2717' in position 0: illegal multibyte sequence\n",
+      "stderr": "",
+      "success": false
+    },
+    {
+      "script": "tests/unit/test_technical_indicators.py",
+      "description": "技术指标计算测试",
+      "exit_code": 2,
+      "execution_time": 0.06918978691101074,
+      "stdout": "",
+      "stderr": "C:\\Python314\\python.exe: can't open file 'D:\\\\AI\\\\B\\\\athena-trader\\\\tests\\\\unit\\\\test_technical_indicators.py': [Errno 2] No such file or directory\n",
+      "success": false
+    },
+    {
+      "script": "tests/integration/test_data_manager_service.py",
+      "description": "综合服务测试",
+      "exit_code": 1,
+      "execution_time": 0.6334738731384277,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"D:\\AI\\B\\athena-trader\\tests\\integration\\test_data_manager_service.py\", line 21, in <module>\n    from data_manager.technical_indicators import TechnicalIndicators\nModuleNotFoundError: No module named 'data_manager'\n",
+      "success": false
+    }
+  ]
+}

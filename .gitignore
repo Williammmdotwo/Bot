@@ -1,68 +1,48 @@
-# Environment variables
+# Environment variables - SENSITIVE INFORMATION
 .env
 .env.local
 .env.production
 .env.staging
 
-# Logs
-logs/
-*.log
-
-# Database
+# Database files - SENSITIVE INFORMATION
 *.db
 *.sqlite
 *.sqlite3
 
-# Cache
+# SSL certificates and keys - SENSITIVE INFORMATION
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+
+# SSH keys - SENSITIVE INFORMATION
+secrets/
+.secrets/
+
+# Cache and temporary files
 .cache/
 *.cache
 __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+tmp/
+temp/
+*.tmp
 
-# IDE
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
-
-# Docker
-.dockerignore
-
-# Node.js (for frontend)
-node_modules/
-.next/
-out/
-build/
-dist/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
 # Virtual environments
 venv/
@@ -73,15 +53,51 @@ ENV/
 backups/
 *.backup
 
-# SSL certificates
-*.pem
-*.key
-*.crt
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+*.whl
+*.tar.gz
+*.zip
 
-# Temporary files
-tmp/
-temp/
-*.tmp
+# Lock and PID files
+*.lock
+*.pid
+
+# Editor backup files
+.#*
+\#*#
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Node.js (for frontend)
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Python compiled files
+*.py[cod]
+*$py.class
+*.so
+.Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 
 # Database dumps
 *.sql
@@ -93,89 +109,42 @@ dump.rdb
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pytest
-.pytest_cache/
-.coverage
-htmlcov/
-
-# mypy
+# Type checking
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre
 .pyre/
-
-# pytype
 .pytype/
 
-# Security
-*.p12
-*.pfx
-id_rsa
-id_rsa.pub
-*.pem
-*.key
-
-# Monitoring
+# Monitoring data (sensitive)
 prometheus_data/
 grafana_data/
 
-# Kubernetes
+# Infrastructure files - SENSITIVE INFORMATION
 *.kubeconfig
-
-# Terraform
 *.tfstate
 *.tfvars
 
-# Ansible
-*.retry
-inventory
-
-# Local development
-local/
-dev/
-staging/
+# Load testing results
+load_tests/
+jmeter_results/
 
 # Documentation build
 docs/_build/
 site/
 
-# Package files
-*.egg
-*.whl
-*.tar.gz
-*.zip
-
-# Profiling
+# Profiling and dumps
 *.prof
 *.profile
-
-# Memory dumps
 *.hprof
 *.dump
+# core.* removed as it conflicts with scripts/core/
+/core.*
 
-# Core dumps
-core
-core.*
-
-# Lock files
-*.lock
-*.pid
-
-# Editor backup files
-*~
-.#*
-\#*#
-.*.swp
-.*.swo
-
-# MacOS
+# System specific
 .AppleDoubleUp
 .AppleDB
 .LSOverride
-
-# Windows
 *.cab
 *.dll
 *.exe
@@ -183,37 +152,25 @@ core.*
 *.msm
 *.msp
 *.sym
-
-# Linux
 *.rpm
 *.deb
-*.tar.gz
 
-# Secrets
-secrets/
-.secrets/
-
-# Monitoring and metrics
-metrics/
-monitoring/
-
-# Load testing
-load_tests/
-jmeter_results/
-
-# CI/CD
+# CI/CD configurations (may contain sensitive info)
 .gitlab-ci.yml
 .travis.yml
 .circleci/
 
-# Local development overrides
-docker-compose.override.yml
-docker-compose.local.yml
+# Local development directories
+local/
+dev/
+staging/
 
-# Debug tools output
-scripts/debug_tools/*.log
-scripts/legacy/*.log
-
-# Test reports (moved to docs/reports/)
-*_test_results.json
-*_TEST_RESULTS.md
+# Logs - keep for debugging but exclude sensitive patterns
+/logs/
+!logs/local_dev_manager.log
+!logs/trading_start.log
+!logs/data_manager.log
+!logs/executor.log
+!logs/risk_manager.log
+!logs/strategy_engine.log
+*.log
