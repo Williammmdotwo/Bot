@@ -67,46 +67,6 @@ def test_environment_url_distinguishing():
     # 恢复原始环境
     os.environ['OKX_ENVIRONMENT'] = original_env
 
-def test_proxy_configuration():
-    """测试代理配置"""
-    print("\n" + "=" * 60)
-    print("🌐 测试代理配置功能")
-    print("=" * 60)
-
-    # 设置测试代理
-    original_http_proxy = os.getenv('HTTP_PROXY')
-    original_https_proxy = os.getenv('HTTPS_PROXY')
-
-    # 测试无代理
-    os.environ.pop('HTTP_PROXY', None)
-    os.environ.pop('HTTPS_PROXY', None)
-
-    client = OKXWebSocketClient()
-    proxy_config = client._get_proxy_config()
-
-    if proxy_config is None:
-        print("✅ 无代理配置正确识别")
-    else:
-        print(f"❌ 无代理配置错误: {proxy_config}")
-
-    # 测试有代理
-    os.environ['HTTP_PROXY'] = 'http://proxy.example.com:8080'
-    os.environ['HTTPS_PROXY'] = 'https://proxy.example.com:8080'
-
-    client = OKXWebSocketClient()
-    proxy_config = client._get_proxy_config()
-
-    if proxy_config and proxy_config['http'] == 'http://proxy.example.com:8080':
-        print("✅ 代理配置正确识别")
-    else:
-        print(f"❌ 代理配置错误: {proxy_config}")
-
-    # 恢复原始代理设置
-    if original_http_proxy:
-        os.environ['HTTP_PROXY'] = original_http_proxy
-    if original_https_proxy:
-        os.environ['HTTPS_PROXY'] = original_https_proxy
-
 def test_signature_generation():
     """测试签名生成"""
     print("\n" + "=" * 60)
@@ -237,11 +197,10 @@ def main():
     print("🚀 WebSocket修复测试开始")
     print("测试目标:")
     print("  1. 环境URL区分功能")
-    print("  2. 代理配置支持")
-    print("  3. 鉴权签名逻辑")
-    print("  4. 消息创建功能")
-    print("  5. 心跳监控机制")
-    print("  6. 重连逻辑")
+    print("  2. 鉴权签名逻辑")
+    print("  3. 消息创建功能")
+    print("  4. 心跳监控机制")
+    print("  5. 重连逻辑")
 
     try:
         # 环境信息
@@ -249,7 +208,6 @@ def main():
 
         # 执行测试
         test_environment_url_distinguishing()
-        test_proxy_configuration()
         test_signature_generation()
         test_login_message()
         test_subscribe_message()
@@ -263,7 +221,6 @@ def main():
         print("=" * 60)
         print("\n📋 修复验证:")
         print("  ✅ 环境URL区分: Demo使用wspap.okx.com，Live使用ws.okx.com")
-        print("  ✅ 代理配置支持: 正确读取HTTP_PROXY/HTTPS_PROXY")
         print("  ✅ 鉴权签名逻辑: HMAC-SHA256 + Base64编码")
         print("  ✅ 自动重连机制: 指数退避，最大10次尝试")
         print("  ✅ 心跳监控: 每60秒记录状态和最后数据时间")

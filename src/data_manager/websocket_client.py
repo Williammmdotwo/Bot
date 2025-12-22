@@ -52,33 +52,12 @@ class OKXWebSocketClient:
         self._thread = None
         self._heartbeat_task = None
 
-        # 代理配置
-        self.proxy_config = self._get_proxy_config()
-
         # 环境配置
         self.env_config = get_environment_config()
         self.credentials, self.has_credentials = get_api_credentials()
         self.ws_urls = self._get_ws_urls()
 
         self.logger.info(f"WebSocket客户端初始化完成 - 环境: {self.env_config['environment_type']}")
-
-    def _get_proxy_config(self) -> Optional[Dict[str, str]]:
-        """获取代理配置"""
-        http_proxy = os.getenv('HTTP_PROXY')
-        https_proxy = os.getenv('HTTPS_PROXY')
-
-        if not http_proxy and not https_proxy:
-            return None
-
-        proxy = {}
-        if http_proxy:
-            proxy['http'] = http_proxy
-            proxy['https'] = http_proxy
-        if https_proxy and https_proxy != http_proxy:
-            proxy['https'] = https_proxy
-
-        self.logger.info(f"使用代理配置: {proxy}")
-        return proxy
 
     def _get_ws_urls(self) -> Dict[str, str]:
         """根据环境获取WebSocket URL"""
@@ -146,11 +125,6 @@ class OKXWebSocketClient:
 
             # 创建WebSocket连接
             kwargs = {"ping_interval": 30}
-            if self.proxy_config:
-                # 注意：websockets库的代理支持可能有限
-                self.logger.info("尝试使用代理连接WebSocket")
-                # 如果websockets库不支持代理，这里可能需要使用其他方式
-
             self.connection = await websockets.connect(ws_url, **kwargs)
 
             # 发送登录消息（如果有凭据）

@@ -67,22 +67,6 @@ _ccxt_exchange = None
 _postgres_pool = None
 _redis_client = None
 
-def get_proxy_config():
-    """获取代理配置"""
-    import os
-    http_proxy = os.getenv('HTTP_PROXY')
-    https_proxy = os.getenv('HTTPS_PROXY')
-
-    proxies = {}
-    if http_proxy:
-        proxies['http'] = http_proxy
-        proxies['https'] = http_proxy  # 通常HTTPS也使用HTTP代理地址
-
-    if https_proxy and https_proxy != http_proxy:
-        proxies['https'] = https_proxy
-
-    return proxies
-
 class DemoCCXTExchange:
     """OKX Demo交易实例"""
     def __init__(self):
@@ -94,9 +78,6 @@ class DemoCCXTExchange:
         api_key = os.getenv('OKX_DEMO_API_KEY')
         secret = os.getenv('OKX_DEMO_SECRET')
         passphrase = os.getenv('OKX_DEMO_PASSPHRASE')
-
-        # 获取代理配置
-        proxy_config = get_proxy_config()
 
         if not all([api_key, secret, passphrase]):
             logger.warning("OKX Demo API credentials not fully configured, using mock mode")
@@ -114,11 +95,6 @@ class DemoCCXTExchange:
                     'defaultType': 'spot',
                 }
             }
-
-            # 添加代理配置
-            if proxy_config:
-                ccxt_config['proxies'] = proxy_config
-                logger.info(f"Using proxy configuration for executor: {proxy_config}")
 
             self.exchange = ccxt.okx(ccxt_config)
             self.mock_mode = False
