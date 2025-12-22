@@ -51,6 +51,7 @@ class OKXWebSocketClient:
         self._loop = None
         self._thread = None
         self._heartbeat_task = None
+        self._heartbeat_sender_task = None
 
         # 环境配置
         self.env_config = get_environment_config()
@@ -147,6 +148,11 @@ class OKXWebSocketClient:
     async def _handle_message(self, message: str):
         """处理接收到的消息"""
         try:
+            # 处理服务器返回的 "pong" 响应
+            if message.strip() == "pong":
+                self.logger.debug("收到OKX服务器的pong响应")
+                return
+
             data = json.loads(message)
 
             # 处理登录响应
@@ -171,8 +177,12 @@ class OKXWebSocketClient:
                     if "instId" in item and item["instId"] == self.symbol:
                         self._process_ticker_data(item)
 
-        except json.JSONDecodeError as e:
-            self.logger.error(f"JSON解析错误: {e}")
+        except json.JSONDecodeError:
+            # 如果不是JSON格式，检查是否是 "pong" 响应
+            if message.strip() == "pong":
+                self.logger.debug("收到OKX服务器的pong响应")
+            else:
+                self.logger.debug(f"收到非JSON消息: {message}")
         except Exception as e:
             self.logger.error(f"消息处理错误: {e}")
 
@@ -223,8 +233,27 @@ class OKXWebSocketClient:
 
         self.is_connected = False
 
+    async def _heartbeat_sender(self):
+        """OKX心跳发送 - 每20秒向服务器发送'ping'"""
+        while self.is_connected and not self._stop_event.is_set():
+            try:
+                await asyncio.sleep(20)  # 每20秒发送一次心跳
+
+                if self.is_connected and self.connection and not self.connection.closed:
+                    # OKX要求发送纯字符串"ping"
+                    await self.connection.send("ping")
+                    self.last_heartbeat_time = time.time()
+                    self.logger.debug("已发送心跳ping到OKX服务器")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"心跳发送错误: {e}")
+                # 心跳发送失败，可能连接有问题
+                await self.disconnect()
+
     async def _heartbeat_monitor(self):
-        """心跳监控 - 每60秒记录状态"""
+        """心跳监控 - 每60秒记录状态和处理pong响应"""
         while self.is_connected and not self._stop_event.is_set():
             try:
                 await asyncio.sleep(60)
@@ -232,17 +261,26 @@ class OKXWebSocketClient:
                 current_time = time.time()
                 last_data = self.last_data_time or "never"
                 time_since_data = (current_time - (self.last_data_time or current_time))
+                last_ping = self.last_heartbeat_time or "never"
+                time_since_ping = (current_time - (self.last_heartbeat_time or current_time))
 
                 status = "connected" if self.is_connected else "disconnected"
                 self.logger.info(
                     f"心跳监控 - 状态: {status}, "
                     f"最后数据: {last_data}, "
-                    f"距最后数据: {time_since_data:.1f}秒"
+                    f"距最后数据: {time_since_data:.1f}秒, "
+                    f"最后ping: {last_ping}, "
+                    f"距最后ping: {time_since_ping:.1f}秒"
                 )
 
                 # 如果超过5分钟没有数据，可能连接有问题
                 if time_since_data > 300:
                     self.logger.warning("超过5分钟未收到数据，将重连")
+                    await self.disconnect()
+
+                # 如果心跳发送失败超过2分钟，可能连接有问题
+                if time_since_ping > 120:
+                    self.logger.warning("超过2分钟未成功发送心跳，将重连")
                     await self.disconnect()
 
             except asyncio.CancelledError:
@@ -268,6 +306,11 @@ class OKXWebSocketClient:
                 # 启动消息处理
                 asyncio.create_task(self._message_loop())
 
+                # 启动心跳发送
+                if self._heartbeat_sender_task:
+                    self._heartbeat_sender_task.cancel()
+                self._heartbeat_sender_task = asyncio.create_task(self._heartbeat_sender())
+
                 # 启动心跳监控
                 if self._heartbeat_task:
                     self._heartbeat_task.cancel()
@@ -288,6 +331,12 @@ class OKXWebSocketClient:
         self.should_reconnect = False
 
         try:
+            # 清理心跳发送任务
+            if self._heartbeat_sender_task:
+                self._heartbeat_sender_task.cancel()
+                self._heartbeat_sender_task = None
+
+            # 清理心跳监控任务
             if self._heartbeat_task:
                 self._heartbeat_task.cancel()
                 self._heartbeat_task = None
