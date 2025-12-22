@@ -1,61 +1,107 @@
-# 脚本目录
+# Athena Trader 脚本目录
 
-本目录包含 Athena Trader 项目的各种脚本文件。
+## 目录结构
 
-## 📁 目录结构
-
-### testing/ - 测试脚本
-用于自动化测试和验证的脚本。
-
-### deployment/ - 部署脚本
-- `deploy.sh` - 系统部署脚本
-
-### maintenance/ - 维护脚本
-- `init-db.sql` - 数据库初始化脚本
-
-## 🚀 脚本使用
-
-### 部署脚本
-```bash
-# 运行部署脚本
-chmod +x scripts/deployment/deploy.sh
-./scripts/deployment/deploy.sh
+```
+scripts/
+├── start.py                    # 统一启动脚本 (推荐使用)
+├── core/                       # 核心运行脚本
+│   ├── local_dev_manager.py     # 本地开发管理器
+│   └── start_trading.py        # 交易启动脚本
+├── maintenance/                # 维护脚本
+├── deployment/                 # 部署脚本
+├── windows/                    # Windows专用脚本
+├── deprecated/                 # 已弃用脚本
+├── log_cleanup_config.json     # 日志清理配置
+└── README.md                  # 本文档
 ```
 
-### 数据库初始化
+## 使用方法
+
+### 推荐方式：使用统一启动脚本
+
 ```bash
-# 执行数据库初始化
-psql -U username -d database -f scripts/maintenance/init-db.sql
+# 开发环境
+python scripts/start.py dev start    # 启动开发环境
+python scripts/start.py dev stop     # 停止开发环境
+python scripts/start.py dev status   # 查看状态
+python scripts/start.py dev cleanup  # 清理系统
+
+# 交易环境
+python scripts/start.py trading      # 启动交易系统
+
+# 测试环境
+python scripts/start.py test         # 运行所有测试
 ```
 
-## 📋 脚本说明
+### 传统方式：直接调用核心脚本
 
-### 🔧 部署脚本
-自动化系统部署流程，包括：
-- 环境检查
-- 依赖安装
-- 服务启动
-- 配置验证
+```bash
+# 开发环境管理
+python scripts/core/local_dev_manager.py start
+python scripts/core/local_dev_manager.py stop
+python scripts/core/local_dev_manager.py status
 
-### 🗄️ 数据库脚本
-数据库相关的操作脚本：
-- 表结构创建
-- 初始数据导入
-- 索引优化
+# 交易系统
+python scripts/core/start_trading.py
+```
 
-### 🧪 测试脚本
-自动化测试执行：
-- 单元测试
-- 集成测试
-- 性能测试
+## 脚本分类
 
-## 🔧 环境要求
+### 🚀 核心脚本 (core/)
+- `local_dev_manager.py` - 本地开发环境管理，支持服务的启动、停止、状态检查
+- `start_trading.py` - 生产交易系统启动器，包含前置条件检查和系统验证
 
-运行脚本前请确保：
-1. 具有相应的执行权限
-2. 环境变量已配置
-3. 依赖服务已启动
+### 🛠️ 维护脚本 (maintenance/)
+系统维护相关的脚本
 
-## 📝 脚本维护
+### 🚀 部署脚本 (deployment/)
+项目部署相关的脚本
 
-脚本会随着系统需求变化而更新，请使用最新版本。
+### 🪟 Windows脚本 (windows/)
+Windows平台专用的批处理脚本
+
+### ⚠️ 已弃用脚本 (deprecated/)
+不再推荐使用的旧版本脚本
+
+## 迁移说明
+
+以下文件已从 `scripts/debug_tools/` 迁移到 `tests/debug/`：
+- `test_*.py` - 各种测试脚本
+- `verify_*.py` - 验证脚本
+- `debug_*.py` - 调试工具
+
+这些文件现在属于测试范畴，建议通过测试框架运行。
+
+## 配置文件
+
+- `log_cleanup_config.json` - 日志清理配置
+- 各服务的配置文件位于 `config/` 目录
+
+## 环境变量
+
+关键环境变量：
+- `ATHENA_ENV` - 环境类型 (local/development/production)
+- `PYTHONPATH` - Python路径 (自动设置)
+- `CONFIG_PATH` - 配置文件路径
+- `INTERNAL_SERVICE_TOKEN` - 服务间认证令牌
+
+## 日志文件
+
+日志文件统一存放在 `logs/` 目录：
+- `local_dev_manager.log` - 开发管理器日志
+- `trading_start.log` - 交易启动日志
+- 各服务的日志文件
+
+## 故障排除
+
+1. **端口占用**：检查 8000-8003 端口是否被占用
+2. **环境变量**：确保 `.env` 文件配置正确
+3. **Python路径**：确保 src 目录在 PYTHONPATH 中
+4. **权限问题**：确保有创建日志目录的权限
+
+## 更新历史
+
+- 2025-12-22: 重新组织目录结构，分离核心脚本和测试文件
+- 2025-12-22: 添加统一启动脚本 `start.py`
+- 2025-12-22: 移动调试工具到 `tests/debug/`
