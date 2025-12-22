@@ -128,16 +128,13 @@ class OKXWebSocketClient:
             kwargs = {"ping_interval": 30}
             self.connection = await websockets.connect(ws_url, **kwargs)
 
-            # 发送登录消息（如果有凭据）
-            login_msg = self._create_login_message()
-            if login_msg:
-                await self.connection.send(json.dumps(login_msg))
-                self.logger.info("已发送登录消息")
+            # 修复：公共频道不需要登录，直接发送订阅消息
+            self.logger.info("🔓 使用公共频道，跳过登录步骤")
 
             # 发送订阅消息
             subscribe_msg = self._create_subscribe_message()
             await self.connection.send(json.dumps(subscribe_msg))
-            self.logger.info(f"已发送订阅消息: {self.symbol} {self.timeframe}")
+            self.logger.info(f"📡 已发送订阅消息: {self.symbol} {self.timeframe}")
 
             return True
 
