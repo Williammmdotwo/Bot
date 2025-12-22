@@ -112,7 +112,7 @@ class OKXWebSocketClient:
         return {
             "op": "subscribe",
             "args": [{
-                "channel": f"tickers5m",
+                "channel": "candle5m",  # 修复：使用正确的OKX v5 API频道名
                 "instId": self.symbol
             }]
         }
@@ -147,10 +147,6 @@ class OKXWebSocketClient:
 
     async def _handle_message(self, message: str):
         """处理接收到的消息"""
-        # --- 测试代码 ---
-        print(f"DEBUG: 收到原始数据: {message[:100]}...")
-        # ----------------
-
         try:
             # 处理服务器返回的 "pong" 响应
             if message.strip() == "pong":
@@ -158,6 +154,11 @@ class OKXWebSocketClient:
                 return
 
             data = json.loads(message)
+
+            # 修复：检查OKX错误消息
+            if "event" in data and data["event"] == "error":
+                self.logger.error(f"OKX API错误: {data}")
+                return
 
             # 处理登录响应
             if "event" in data and data["event"] == "login":
@@ -175,10 +176,13 @@ class OKXWebSocketClient:
                     self.logger.error(f"订阅失败: {data}")
                 return
 
-            # 处理数据消息
+            # 处理K线数据消息
             if "data" in data and isinstance(data["data"], list):
                 for item in data["data"]:
-                    if "instId" in item and item["instId"] == self.symbol:
+                    if isinstance(item, list) and len(item) >= 6:  # OKX K线数据是数组格式
+                        self._process_candle_data(item)
+                    elif "instId" in item and item["instId"] == self.symbol:
+                        # 兼容处理（如果收到的是对象格式）
                         self._process_ticker_data(item)
 
         except json.JSONDecodeError:
@@ -190,8 +194,44 @@ class OKXWebSocketClient:
         except Exception as e:
             self.logger.error(f"消息处理错误: {e}")
 
+    def _process_candle_data(self, candle: list):
+        """处理K线数据，转换为OHLCV格式"""
+        try:
+            # OKX K线数据格式: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
+            if isinstance(candle, list) and len(candle) >= 6:
+                ohlcv_data = {
+                    "timestamp": int(candle[0]),
+                    "open": float(candle[1]),
+                    "high": float(candle[2]),
+                    "low": float(candle[3]),
+                    "close": float(candle[4]),
+                    "volume": float(candle[5])
+                }
+
+                # 更新最后数据时间
+                self.last_data_time = time.time()
+
+                # 存储到Redis
+                if self.redis:
+                    redis_key = f"ohlcv:{self.symbol}:{self.timeframe}"
+                    self.redis.zadd(redis_key, {
+                        str(ohlcv_data["timestamp"]): json.dumps(ohlcv_data)
+                    })
+
+                    # 保持最近1000条数据
+                    self.redis.zremrangebyrank(redis_key, 0, -1001)
+
+                    self.logger.info(f"✅ 成功存储K线数据: {self.symbol} OHLCV={ohlcv_data}")
+                else:
+                    self.logger.info(f"✅ 收到K线数据: {self.symbol} OHLCV={ohlcv_data}")
+            else:
+                self.logger.warning(f"❌ K线数据格式错误: {candle}")
+
+        except Exception as e:
+            self.logger.error(f"❌ K线数据处理错误: {e}")
+
     def _process_ticker_data(self, ticker: Dict[str, Any]):
-        """处理ticker数据，转换为OHLCV格式"""
+        """处理ticker数据，转换为OHLCV格式（兼容性方法）"""
         try:
             # OKX ticker数据转换为OHLCV
             ohlcv_data = {
@@ -216,7 +256,7 @@ class OKXWebSocketClient:
                 # 保持最近1000条数据
                 self.redis.zremrangebyrank(redis_key, 0, -1001)
 
-                self.logger.debug(f"存储OHLCV数据: {self.symbol} {ohlcv_data}")
+                self.logger.debug(f"存储ticker数据: {self.symbol} {ohlcv_data}")
 
         except Exception as e:
             self.logger.error(f"ticker数据处理错误: {e}")
