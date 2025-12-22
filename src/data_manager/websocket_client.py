@@ -147,6 +147,10 @@ class OKXWebSocketClient:
 
     async def _handle_message(self, message: str):
         """处理接收到的消息"""
+        # --- 测试代码 ---
+        print(f"DEBUG: 收到原始数据: {message[:100]}...")
+        # ----------------
+
         try:
             # 处理服务器返回的 "pong" 响应
             if message.strip() == "pong":
