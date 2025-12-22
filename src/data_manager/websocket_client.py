@@ -19,11 +19,11 @@ class OKXWebSocketClient:
     # 环境URL配置
     WS_URLS = {
         "demo": {
-            "public": "wss://wspap.okx.com:8443/ws/v5/public",
+            "public": "wss://wspap.okx.com:8443/ws/v5/business",  # 修复：K线数据需要business端点
             "private": "wss://wspap.okx.com:8443/ws/v5/private"
         },
         "live": {
-            "public": "wss://ws.okx.com:8443/ws/v5/public",
+            "public": "wss://ws.okx.com:8443/ws/v5/business",     # 修复：K线数据需要business端点
             "private": "wss://ws.okx.com:8443/ws/v5/private"
         }
     }
@@ -124,9 +124,8 @@ class OKXWebSocketClient:
             ws_url = self.ws_urls["public"]
             self.logger.info(f"连接到WebSocket: {ws_url} (环境: {self.env_config['environment_type']})")
 
-            # 创建WebSocket连接
-            kwargs = {"ping_interval": 30}
-            self.connection = await websockets.connect(ws_url, **kwargs)
+            # 创建WebSocket连接 - 修复websockets库兼容性问题
+            self.connection = await websockets.connect(ws_url)
 
             # 修复：公共频道不需要登录，直接发送订阅消息
             self.logger.info("🔓 使用公共频道，跳过登录步骤")
