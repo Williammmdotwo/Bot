@@ -219,9 +219,9 @@ class OKXWebSocketClient:
 
                     self.logger.info(f"✅ 成功存储K线数据: {self.symbol} OHLCV={ohlcv_data}")
                 else:
-                    self.logger.info(f"✅ 收到K线数据: {self.symbol} OHLCV={ohlcv_data}")
+                    self.logger.debug(f"✅ 收到K线数据: {self.symbol} OHLCV={ohlcv_data}")
             else:
-                self.logger.warning(f"❌ K线数据格式错误: {candle}")
+                self.logger.debug(f"❌ K线数据格式错误: {candle}")
 
         except Exception as e:
             self.logger.error(f"❌ K线数据处理错误: {e}")
@@ -305,7 +305,7 @@ class OKXWebSocketClient:
                 time_since_ping = (current_time - (self.last_heartbeat_time or current_time))
 
                 status = "connected" if self.is_connected else "disconnected"
-                self.logger.info(
+                self.logger.debug(
                     f"心跳监控 - 状态: {status}, "
                     f"最后数据: {last_data}, "
                     f"距最后数据: {time_since_data:.1f}秒, "
