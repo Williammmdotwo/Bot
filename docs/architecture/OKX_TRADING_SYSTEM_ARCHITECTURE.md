@@ -2,9 +2,9 @@
 
 ## 🎯 系统概述
 
-Athena Trader 是一个完整的 OKX 加密货币交易系统，实现了从市场数据获取到 AI 智能决策的完整流程。
+Athena Trader 是一个完整的 OKX 加密货币交易系统，实现了从市场数据获取到技术分析决策的完整流程。
 
-**核心目标**: "获取一次或多次交易所某币种数据，并让 AI 给出当下市场的判断"
+**核心目标**: "获取一次或多次交易所某币种数据，并基于技术分析给出当下市场的判断"
 
 ## 🏗️ 系统架构
 
@@ -14,11 +14,11 @@ Athena Trader 是一个完整的 OKX 加密货币交易系统，实现了从市�
 ├─────────────────────────────────────────────────────────────────┤
 │                                                         │
 │  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐ │
-│  │   OKX API   │    │  数据处理层   │    │  AI 分析层  │ │
+│  │   OKX API   │    │  数据处理层   │    │  技术分析层  │ │
 │  │             │    │              │    │             │ │
-│  │ • 市场数据  │───▶│ • 技术指标   │───▶│ • 智能判断 │ │
-│  │ • 订单簿   │    │ • 市场情绪   │    │ • 交易建议 │ │
-│  │ • 成交记录  │    │ • 数据清洗   │    │ • 风险评估 │ │
+│  │ • 市场数据  │───▶│ • 技术指标   │───▶│ • 交易信号   │ │
+│  │ • 订单簿   │    │ • 市场情绪   │    │ • 风险评估   │ │
+│  │ • 成交记录  │    │ • 数据清洗   │    │ • 信号生成   │ │
 │  └─────────────┘    └──────────────┘    └─────────────┘ │
 │         │                   │                   │         │
 │         ▼                   ▼                   ▼         │
@@ -26,7 +26,7 @@ Athena Trader 是一个完整的 OKX 加密货币交易系统，实现了从市�
 │  │  Redis 缓存 │    │ PostgreSQL   │    │  风控系统  │ │
 │  │             │    │              │    │             │ │
 │  │ • 实时数据  │    │ • 历史记录  │    │ • 风险检查 │ │
-│  │ • 指标缓存  │    │ • 决策存储  │    │ • 仓位管理 │ │
+│  │ • 指标缓存  │    │ • 信号存储  │    │ • 仓位管理 │ │
 │  │ • 会话状态  │    │ • 性能统计  │    │ • 止损止盈 │ │
 │  └─────────────┘    └──────────────┘    └─────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
@@ -87,17 +87,17 @@ OKX_DEMO_PASSPHRASE=your_demo_passphrase
 - **成交量变化**: 活跃度指标
 - **价格冲击**: 大单影响
 
-### 4. AI 智能分析层
+### 4. 技术分析信号生成层
 
-#### DeepSeek AI 集成
-- **多维度输入**: 技术指标 + 市场情绪 + 宏观环境
+#### 双均线策略集成
+- **多维度输入**: 技术指标 + 市场情绪 + 历史趋势
 - **结构化输出**: JSON 格式交易信号
 - **风险评估**: 动态风险等级计算
-- **决策逻辑**: 透明的分析推理
+- **决策逻辑**: 基于技术分析的透明推理
 
-#### 提示词优化
+#### 信号生成优化
 ```python
-# 专业的中文提示词，包含：
+# 专业的技术分析提示词，包含：
 - 多时间框架技术分析
 - 市场情绪验证
 - 风险评估框架
@@ -112,7 +112,7 @@ OKX_DEMO_PASSPHRASE=your_demo_passphrase
    ```python
    # 获取综合市场数据
    market_data = data_manager.get_comprehensive_market_data(
-       symbol="BTC-USDT", 
+       symbol="BTC-USDT",
        use_demo=True
    )
    ```
@@ -131,12 +131,11 @@ OKX_DEMO_PASSPHRASE=your_demo_passphrase
    )
    ```
 
-4. **AI 决策阶段**
+4. **信号生成阶段**
    ```python
-   # AI 综合分析
+   # 技术分析综合决策
    signal = main_strategy_loop(
        data_manager=data_handler,
-       ai_client=ai_client,
        symbol="BTC-USDT",
        use_demo=True
    )
@@ -165,7 +164,7 @@ OKX_DEMO_PASSPHRASE=your_demo_passphrase
 }
 ```
 
-#### AI 信号结构
+#### 交易信号结构
 ```json
 {
   "action": "BUY" | "SELL" | "HOLD",
@@ -199,12 +198,7 @@ OKX_DEMO_PASSPHRASE=your_demo_passphrase
    - 多时间框架一致性
    - 历史回测验证
 
-3. **AI 响应验证**
-   - JSON 格式验证
-   - 价格合理性检查
-   - 风险参数约束
-
-4. **交易信号验证**
+3. **交易信号验证**
    - 止损距离限制 (1-5%)
    - 止盈比例约束 (1.5-3.0)
    - 仓位大小控制
@@ -223,7 +217,6 @@ OKX_DEMO_PASSPHRASE=your_demo_passphrase
 - **Redis**: 实时数据缓存 (必需)
 - **PostgreSQL**: 历史数据存储 (可选)
 - **OKX API**: 市场数据源 (必需)
-- **DeepSeek API**: AI 分析引擎 (必需)
 
 #### Python 包
 ```bash
@@ -237,7 +230,7 @@ pip install -r requirements.txt
    ```bash
    # 复制配置模板
    cp .env.example .env
-   
+
    # 编辑配置文件
    nano .env
    ```
@@ -246,10 +239,10 @@ pip install -r requirements.txt
    ```bash
    # 启动 Redis
    docker run -d -p 6379:6379 redis:alpine
-   
+
    # 启动数据管理器
    python -m src.data_manager.main
-   
+
    # 启动策略引擎
    python -m src.strategy_engine.main
    ```
@@ -258,7 +251,7 @@ pip install -r requirements.txt
    ```bash
    # 完整功能演示
    python demo_okx_trading.py
-   
+
    # 系统测试
    python test_okx_trading_system.py
    ```
@@ -268,8 +261,8 @@ pip install -r requirements.txt
 ### 实时性能
 - **数据更新**: 5秒级市场数据刷新
 - **指标计算**: 毫秒级技术指标更新
-- **AI 分析**: 10-15秒响应时间
-- **信号生成**: 实时交易信号输出
+- **信号生成**: 10-15秒响应时间
+- **信号输出**: 实时交易信号输出
 
 ### 可扩展性
 - **多币种支持**: 同时监控多个交易对
@@ -318,7 +311,7 @@ pip install -r requirements.txt
 
 ### 短期目标
 - [ ] 更多交易所支持 (Binance, Bybit)
-- [ ] 机器学习模型集成
+- [ ] 更多技术指标集成
 - [ ] 移动端应用开发
 - [ ] 社交情绪分析
 
@@ -344,7 +337,7 @@ pip install -r requirements.txt
 
 ---
 
-*文档版本: v1.0*  
-*最后更新: 2025-11-28*  
-*系统状态: 生产就绪*  
+*文档版本: v1.0*
+*最后更新: 2025-12-23*
+*系统状态: 生产就绪*
 *维护状态: 活跃开发*
