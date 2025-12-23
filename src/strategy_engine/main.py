@@ -153,13 +153,20 @@ if __name__ == "__main__":
     from src.strategy_engine.api_server import app
     from src.data_manager.main import DataHandler
 
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    logger = logging.getLogger(__name__)
+    # Configure comprehensive logging system
+    try:
+        from src.utils.logging_config import setup_logging
+        setup_logging()
+        logger = logging.getLogger(__name__)
+        logger.info("Comprehensive logging system initialized successfully")
+    except Exception as e:
+        # Fallback to basic logging
+        logging.basicConfig(
+            level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to initialize comprehensive logging, using basic config: {e}")
     logger.info("Starting Strategy Engine Service...")
     logger.info(f"DEBUG: INTERNAL_SERVICE_TOKEN = {repr(os.getenv('INTERNAL_SERVICE_TOKEN'))}")
 

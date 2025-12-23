@@ -1,5 +1,6 @@
 import os
 import logging
+import logging.config
 import logging.handlers
 import sys
 import json
@@ -115,7 +116,7 @@ def setup_logging():
         # 如果有 webhook URL，添加 webhook handler
         if webhook_url:
             config['handlers']['webhook_error'] = {
-                'class': '__main__.WebhookErrorHandler',
+                '()': WebhookErrorHandler,
                 'level': 'ERROR',
                 'formatter': 'standard',
                 'webhook_url': webhook_url

@@ -33,7 +33,7 @@ class DataHandler:
             data_source_config = get_data_source_config()
             self.data_source_type = data_source_config['data_source_type']
             self.data_source_label = data_source_config['data_source_label']
-            
+
             # 根据数据源配置初始化REST客户端
             if data_source_config['use_mock']:
                 # Mock数据模式 - 不需要REST客户端
@@ -44,7 +44,7 @@ class DataHandler:
                 use_demo = data_source_config['use_demo']
                 self.rest_client = RESTClient(use_demo=use_demo)
                 self.logger.info(f"[{self.data_source_label}] REST客户端初始化成功 (use_demo={use_demo})")
-                
+
         except (ConnectionError, ValueError, KeyError) as e:
             self.logger.error(f"[{self.data_source_label}] REST客户端初始化失败: {e}")
             raise
@@ -84,22 +84,22 @@ class DataHandler:
                     redis_host = os.getenv("REDIS_HOST", "localhost")
                     redis_port = os.getenv("REDIS_PORT", "6379")
                     redis_password = os.getenv("REDIS_PASSWORD")
-                    
+
                     # Connect with password if provided
                     if redis_password:
                         self.redis_client = redis.Redis(
-                            host=redis_host, 
-                            port=redis_port, 
+                            host=redis_host,
+                            port=redis_port,
                             password=redis_password,
                             decode_responses=True
                         )
                     else:
                         self.redis_client = redis.Redis(
-                            host=redis_host, 
-                            port=redis_port, 
+                            host=redis_host,
+                            port=redis_port,
                             decode_responses=True
                         )
-                    
+
                     self.logger.info(f"Connected to Redis at {redis_host}:{redis_port}")
 
             # 优化的缓存策略配置
@@ -111,7 +111,7 @@ class DataHandler:
                 "4h": 7200,     # 2小时
                 "1d": 14400      # 4小时
             }
-            
+
             # Test Redis connection
             self.redis_client.ping()
             self.logger.info("Redis connection test successful")
@@ -127,10 +127,10 @@ class DataHandler:
 
         # Connect to PostgreSQL (with database switch)
         use_database = os.getenv('USE_DATABASE', 'false').lower() == 'true'
-        
+
         # Always initialize pg_pool attribute
         self.pg_pool = None
-        
+
         if use_database:
             try:
                 postgres_db = os.getenv("POSTGRES_DB")
@@ -138,15 +138,15 @@ class DataHandler:
                 postgres_password = os.getenv("POSTGRES_PASSWORD")
                 postgres_host = os.getenv("POSTGRES_HOST", "localhost")
                 postgres_port = os.getenv("POSTGRES_PORT", "5432")
-                
+
                 if not all([postgres_db, postgres_user, postgres_password]):
                     self.logger.warning("Database credentials not provided, skipping database connection")
                     return
-                
+
                 # Create async connection pool
                 try:
                     self.pg_pool = asyncio.run(self._create_pg_pool(
-                        postgres_host, postgres_port, postgres_db, 
+                        postgres_host, postgres_port, postgres_db,
                         postgres_user, postgres_password
                     ))
                 except Exception as e:
@@ -162,7 +162,7 @@ class DataHandler:
         # WebSocket client will be initialized in start method
         self.ws_client = None
 
-    async def _create_pg_pool(self, host: str, port: str, database: str, 
+    async def _create_pg_pool(self, host: str, port: str, database: str,
                             user: str, password: str) -> asyncpg.Pool:
         """Create PostgreSQL connection pool"""
         return await asyncpg.create_pool(
@@ -192,23 +192,23 @@ class DataHandler:
     def get_comprehensive_market_data(self, symbol: str, use_demo: bool = False) -> Dict[str, Any]:
         """Get comprehensive market data with technical analysis"""
         start_time = time.time()
-        
+
         try:
             self.logger.info(f"[{self.data_source_label}] 获取 {symbol} 综合市场数据")
-            
+
             # 根据数据源类型处理
             if self.data_source_type == "MOCK_DATA":
                 # Mock数据模式
                 self.logger.info(f"[{self.data_source_label}] 使用本地Mock数据")
                 return self._generate_mock_market_data(symbol, use_demo)
-            
+
             # OKX API模式 - 初始化REST客户端
             try:
                 rest_client = RESTClient(use_demo=use_demo)
             except Exception as e:
                 self.logger.error(f"[{self.data_source_label}] REST客户端初始化失败: {e}")
                 return self._get_fallback_data(symbol, "REST_CLIENT_INIT_FAILED")
-            
+
             # Get market information with service degradation
             market_info = None
             try:
@@ -220,22 +220,22 @@ class DataHandler:
                 self.logger.error(f"Failed to get market info for {symbol}: {e}")
                 self.logger.info("Attempting service degradation...")
                 market_info = self._get_degraded_market_data(rest_client, symbol)
-            
+
             if not market_info:
                 self.logger.error(f"OKX API failed to get market info for {symbol}")
                 return self._get_fallback_data(symbol, "OKX_API_FAILED")
-            
+
             # Calculate technical indicators for each timeframe with error handling
             technical_analysis = {}
             successful_timeframes = []
             failed_timeframes = []
-            
+
             # 确保有OHLCV数据
             ohlcv_data = market_info.get("ohlcv", {})
             if not ohlcv_data:
                 self.logger.error(f"No OHLCV data from OKX API for {symbol}")
                 return self._get_fallback_data(symbol, "NO_OHLCV_DATA")
-            
+
             for tf, candles in ohlcv_data.items():
                 try:
                     if candles and len(candles) >= 10:  # 确保有足够的数据
@@ -249,13 +249,13 @@ class DataHandler:
                     self.logger.error(f"Failed to calculate indicators for {symbol} {tf}: {e}")
                     failed_timeframes.append(tf)
                     # 继续处理其他时间框架
-            
+
             # 记录时间框架处理结果
             if successful_timeframes:
                 self.logger.info(f"Successfully calculated indicators for {symbol}: {successful_timeframes}")
             if failed_timeframes:
                 self.logger.warning(f"Failed to calculate indicators for {symbol}: {failed_timeframes}")
-            
+
             # Analyze volume profile with error handling
             volume_profile = {}
             try:
@@ -265,17 +265,17 @@ class DataHandler:
                     self.logger.warning(f"No recent trades data for {symbol}")
             except Exception as e:
                 self.logger.error(f"Failed to analyze volume profile for {symbol}: {e}")
-            
+
             # Get current market state with validation
             current_price = 0
             orderbook = {}
             ticker = {}
-            
+
             try:
                 ticker = market_info.get("ticker", {})
                 current_price = ticker.get("last", 0) if ticker else 0
                 orderbook = market_info.get("orderbook", {})
-                
+
                 # 验证价格合理性
                 if current_price <= 0:
                     self.logger.warning(f"Invalid current price for {symbol}: {current_price}")
@@ -286,10 +286,10 @@ class DataHandler:
                         if best_bid > 0 and best_ask > 0:
                             current_price = (best_bid + best_ask) / 2
                             self.logger.info(f"Derived price from orderbook for {symbol}: {current_price}")
-                
+
             except Exception as e:
                 self.logger.error(f"Failed to extract market state for {symbol}: {e}")
-            
+
             # Calculate market sentiment with error handling
             sentiment = {}
             try:
@@ -297,17 +297,17 @@ class DataHandler:
             except Exception as e:
                 self.logger.error(f"Failed to calculate market sentiment for {symbol}: {e}")
                 sentiment = {"overall_sentiment": "neutral", "sentiment_score": 0.0}
-            
+
             # 确定数据状态
             data_status = "COMPREHENSIVE"
             if failed_timeframes:
                 data_status = "PARTIAL"
             if len(successful_timeframes) == 0:
                 data_status = "DEGRADED"
-            
+
             processing_time = time.time() - start_time
             self.logger.info(f"Market data processing for {symbol} completed in {processing_time:.2f}s, status: {data_status}")
-            
+
             comprehensive_data = {
                 "symbol": symbol,
                 "current_price": current_price,
@@ -324,16 +324,16 @@ class DataHandler:
                 "successful_timeframes": successful_timeframes,
                 "failed_timeframes": failed_timeframes
             }
-            
+
             # Cache in Redis with error handling
             try:
                 self._cache_market_data(symbol, comprehensive_data)
             except Exception as e:
                 self.logger.error(f"Failed to cache market data for {symbol}: {e}")
                 # 缓存失败不影响主流程，只记录错误
-            
+
             return comprehensive_data
-            
+
         except Exception as e:
             processing_time = time.time() - start_time
             self.logger.error(f"Critical error in get_comprehensive_market_data for {symbol} after {processing_time:.2f}s: {e}")
@@ -431,31 +431,31 @@ class DataHandler:
         try:
             orderbook = market_info.get("orderbook", {})
             recent_trades = market_info.get("recent_trades", [])
-            
+
             # Analyze orderbook imbalance
             bids = orderbook.get("bids", [])
             asks = orderbook.get("asks", [])
-            
+
             total_bid_volume = sum(bid[1] for bid in bids[:5]) if len(bids) >= 5 else 0
             total_ask_volume = sum(ask[1] for ask in asks[:5]) if len(asks) >= 5 else 0
-            
+
             orderbook_imbalance = (total_bid_volume - total_ask_volume) / (total_bid_volume + total_ask_volume) if (total_bid_volume + total_ask_volume) > 0 else 0
-            
+
             # Analyze trade direction
             buy_volume = sum(trade.get("amount", 0) for trade in recent_trades if trade.get("side") == "buy")
             sell_volume = sum(trade.get("amount", 0) for trade in recent_trades if trade.get("side") == "sell")
-            
+
             trade_imbalance = (buy_volume - sell_volume) / (buy_volume + sell_volume) if (buy_volume + sell_volume) > 0 else 0
-            
+
             # Get technical sentiment from 5m timeframe
             tf_5m = technical_analysis.get("5m", {})
             momentum = tf_5m.get("momentum", "neutral")
             trend = tf_5m.get("trend", "sideways")
-            
+
             # Overall sentiment score
-            sentiment_score = (orderbook_imbalance * 0.3 + trade_imbalance * 0.4 + 
+            sentiment_score = (orderbook_imbalance * 0.3 + trade_imbalance * 0.4 +
                              (1 if "bullish" in momentum else -1 if "bearish" in momentum else 0) * 0.3)
-            
+
             return {
                 "sentiment_score": float(sentiment_score),
                 "orderbook_imbalance": float(orderbook_imbalance),
@@ -464,19 +464,19 @@ class DataHandler:
                 "technical_trend": trend,
                 "overall_sentiment": "bullish" if sentiment_score > 0.2 else "bearish" if sentiment_score < -0.2 else "neutral"
             }
-            
+
         except Exception as e:
             self.logger.warning(f"Failed to calculate market sentiment: {e}")
             return {"overall_sentiment": "neutral", "sentiment_score": 0.0}
-    
+
     def _cache_market_data(self, symbol: str, data: Dict[str, Any]):
         """Cache market data in Redis with improved strategy"""
         if not self.redis_client:
             return  # Skip caching if Redis is not available
-            
+
         try:
             timestamp = int(time.time())
-            
+
             # Cache comprehensive market data with version control
             cache_key = f"market_data:{symbol}:v2"
             cache_data = {
@@ -486,7 +486,7 @@ class DataHandler:
                 "symbol": symbol
             }
             self.redis_client.setex(cache_key, 300, json.dumps(cache_data))  # Cache for 5 minutes
-            
+
             # Cache technical analysis separately with detailed metadata
             technical_key = f"technical_analysis:{symbol}:v2"
             technical_data = data.get("technical_analysis", {})
@@ -499,7 +499,7 @@ class DataHandler:
                     "version": "2.0"
                 }
                 self.redis_client.setex(technical_key, 300, json.dumps(technical_cache))
-            
+
             # Cache OHLCV data for each timeframe with quality metrics
             ohlcv_data = data.get("ohlcv", {})
             for timeframe, candles in ohlcv_data.items():
@@ -515,7 +515,7 @@ class DataHandler:
                     }
                     # OHLCV data cached for longer (15 minutes)
                     self.redis_client.setex(ohlcv_key, 900, json.dumps(ohlcv_cache))
-            
+
             # Cache market sentiment separately
             sentiment_data = data.get("market_sentiment", {})
             if sentiment_data:
@@ -527,17 +527,17 @@ class DataHandler:
                     "version": "2.0"
                 }
                 self.redis_client.setex(sentiment_key, 180, json.dumps(sentiment_cache))  # 3 minutes
-            
+
             self.logger.info(f"Successfully cached market data for {symbol} with {len(ohlcv_data)} timeframes")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to cache market data for {symbol}: {e}")
-    
+
     def _get_degraded_market_data(self, rest_client: RESTClient, symbol: str) -> Optional[Dict[str, Any]]:
         """Get degraded market data when full market info fails"""
         try:
             self.logger.info(f"Attempting degraded data fetch for {symbol}")
-            
+
             # 尝试获取基本数据
             degraded_data = {
                 "symbol": symbol,
@@ -547,7 +547,7 @@ class DataHandler:
                 "ohlcv": {},
                 "timestamp": int(time.time() * 1000)
             }
-            
+
             # 尝试获取ticker数据
             try:
                 ticker = rest_client.fetch_ticker(symbol)
@@ -556,7 +556,7 @@ class DataHandler:
                     self.logger.info(f"Successfully fetched ticker for {symbol}")
             except Exception as e:
                 self.logger.warning(f"Failed to fetch ticker for {symbol}: {e}")
-            
+
             # 尝试获取订单簿数据
             try:
                 orderbook = rest_client.fetch_orderbook(symbol, 10)
@@ -565,12 +565,12 @@ class DataHandler:
                     self.logger.info(f"Successfully fetched orderbook for {symbol}")
             except Exception as e:
                 self.logger.warning(f"Failed to fetch orderbook for {symbol}: {e}")
-            
+
             # 尝试获取OHLCV数据（仅关键时间框架）
             try:
                 critical_timeframes = ["5m", "15m", "1h"]
                 ohlcv_data = {}
-                
+
                 for tf in critical_timeframes:
                     try:
                         since = int((time.time() - 300 * 50) * 1000)  # 最近50个K线
@@ -580,12 +580,12 @@ class DataHandler:
                             self.logger.info(f"Successfully fetched {tf} OHLCV for {symbol}: {len(ohlcv)} candles")
                     except Exception as e:
                         self.logger.warning(f"Failed to fetch {tf} OHLCV for {symbol}: {e}")
-                
+
                 degraded_data["ohlcv"] = ohlcv_data
-                
+
             except Exception as e:
                 self.logger.warning(f"Failed to fetch OHLCV data for {symbol}: {e}")
-            
+
             # 尝试获取最近交易
             try:
                 trades = rest_client.fetch_recent_trades(symbol, 20)
@@ -594,48 +594,48 @@ class DataHandler:
                     self.logger.info(f"Successfully fetched recent trades for {symbol}: {len(trades)} trades")
             except Exception as e:
                 self.logger.warning(f"Failed to fetch recent trades for {symbol}: {e}")
-            
+
             # 检查是否有任何数据
             has_data = (
-                degraded_data["ticker"] or 
-                degraded_data["orderbook"] or 
-                degraded_data["ohlcv"] or 
+                degraded_data["ticker"] or
+                degraded_data["orderbook"] or
+                degraded_data["ohlcv"] or
                 degraded_data["recent_trades"]
             )
-            
+
             if has_data:
                 self.logger.info(f"Degraded data fetch successful for {symbol}")
                 return degraded_data
             else:
                 self.logger.warning(f"No data available in degraded fetch for {symbol}")
                 return None
-                
+
         except Exception as e:
             self.logger.error(f"Degraded market data fetch failed for {symbol}: {e}")
             return None
-    
+
     def _generate_mock_market_data(self, symbol: str, use_demo: bool = False) -> Dict[str, Any]:
         """Generate mock market data for testing when real data is unavailable"""
         try:
             self.logger.info(f"[{self.data_source_label}] 生成 {symbol} Mock市场数据")
-            
+
             # 生成模拟价格数据
             import random
             base_price = 50000.0 if "BTC" in symbol else 3000.0 if "ETH" in symbol else 100.0
-            
+
             # 生成模拟OHLCV数据
             mock_ohlcv = {}
             timeframes = ["5m", "15m", "1h", "4h"]
-            
+
             for tf in timeframes:
                 candles = []
                 current_time = int(time.time() * 1000)
                 tf_minutes = self._timeframe_to_minutes(tf)
-                
+
                 # 生成50根K线
                 for i in range(50):
                     timestamp = current_time - (50 - i) * tf_minutes * 60 * 1000
-                    
+
                     # 模拟价格波动
                     price_change = random.uniform(-0.02, 0.02)  # ±2%波动
                     open_price = base_price * (1 + price_change)
@@ -643,15 +643,15 @@ class DataHandler:
                     high_price = max(open_price, close_price) * random.uniform(1.0, 1.01)
                     low_price = min(open_price, close_price) * random.uniform(0.99, 1.0)
                     volume = random.uniform(100, 1000)
-                    
+
                     candles.append([timestamp, open_price, high_price, low_price, close_price, volume])
-                
+
                 mock_ohlcv[tf] = candles
-            
+
             # 计算技术指标
             technical_analysis = {}
             successful_timeframes = []
-            
+
             for tf, candles in mock_ohlcv.items():
                 try:
                     if candles and len(candles) >= 10:
@@ -660,7 +660,7 @@ class DataHandler:
                         self.logger.info(f"Successfully calculated mock indicators for {symbol} {tf}: {len(candles)} candles")
                 except Exception as e:
                     self.logger.error(f"Failed to calculate mock indicators for {symbol} {tf}: {e}")
-            
+
             # 生成模拟ticker
             current_price = base_price * random.uniform(0.98, 1.02)
             ticker = {
@@ -674,14 +674,14 @@ class DataHandler:
                 "percentage": random.uniform(-5, 5),
                 "timestamp": int(time.time() * 1000)
             }
-            
+
             # 确保current_price不为0
             if current_price <= 0:
                 current_price = base_price
                 ticker["last"] = current_price
                 ticker["bid"] = current_price * 0.999
                 ticker["ask"] = current_price * 1.001
-            
+
             # 生成模拟订单簿
             orderbook = {
                 "symbol": symbol,
@@ -689,19 +689,19 @@ class DataHandler:
                 "asks": [],
                 "timestamp": int(time.time() * 1000)
             }
-            
+
             # 生成买单
             for i in range(10):
                 price = current_price * (1 - (i + 1) * 0.001)
                 volume = random.uniform(0.1, 10)
                 orderbook["bids"].append([price, volume])
-            
+
             # 生成卖单
             for i in range(10):
                 price = current_price * (1 + (i + 1) * 0.001)
                 volume = random.uniform(0.1, 10)
                 orderbook["asks"].append([price, volume])
-            
+
             # 生成模拟交易记录
             recent_trades = []
             for i in range(20):
@@ -709,23 +709,23 @@ class DataHandler:
                 trade_price = current_price * random.uniform(0.999, 1.001)
                 trade_amount = random.uniform(0.1, 5)
                 trade_side = random.choice(["buy", "sell"])
-                
+
                 recent_trades.append({
                     "timestamp": trade_time,
                     "price": trade_price,
                     "amount": trade_amount,
                     "side": trade_side
                 })
-            
+
             # 计算市场情绪
             sentiment = self._calculate_market_sentiment(
                 {"orderbook": orderbook, "recent_trades": recent_trades},
                 technical_analysis
             )
-            
+
             # 分析成交量分布
             volume_profile = TechnicalIndicators.analyze_volume_profile(recent_trades)
-            
+
             mock_data = {
                 "symbol": symbol,
                 "current_price": current_price,
@@ -743,10 +743,10 @@ class DataHandler:
                 "failed_timeframes": [],
                 "mock_data": True
             }
-            
+
             self.logger.info(f"Successfully generated mock market data for {symbol} with {len(successful_timeframes)} timeframes")
             return mock_data
-            
+
         except Exception as e:
             self.logger.error(f"Failed to generate mock market data for {symbol}: {e}")
             return {"error": "MOCK_DATA_FAILED", "symbol": symbol}
@@ -780,17 +780,17 @@ class DataHandler:
             if self.pg_pool:
                 await self.pg_pool.close()
                 self.logger.info("PostgreSQL connection pool closed")
-            
+
             # Close Redis connection
             if self.redis_client:
                 self.redis_client.close()
                 self.logger.info("Redis connection closed")
-                
+
             # Close WebSocket client
             if self.ws_client:
                 await self.ws_client.disconnect()
                 self.logger.info("WebSocket client closed")
-                
+
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
@@ -804,129 +804,129 @@ class DataHandler:
             # Start WebSocket client in background
             self.logger.info("Starting WebSocket monitoring...")
             self.ws_client.start()
-            
+
         except Exception as e:
             self.logger.error(f"Failed to start WebSocket monitoring: {e}")
             # Don't raise exception - allow service to continue without WebSocket
             self.logger.warning("Continuing without WebSocket monitoring...")
 
-    def get_historical_klines(self, symbol: str, timeframe: str, limit: int = 1000, 
+    def get_historical_klines(self, symbol: str, timeframe: str, limit: int = 1000,
                             since: Optional[int] = None, use_demo: bool = False) -> List[List]:
         """
         获取历史K线数据，支持多时间框架和智能采样
-        
+
         Args:
             symbol: 交易对符号
             timeframe: 时间框架 (5m, 15m, 1h, 4h, 1d)
             limit: 获取数量限制
             since: 开始时间戳（毫秒）
             use_demo: 是否使用模拟环境
-            
+
         Returns:
             List of OHLCV data: [[timestamp, open, high, low, close, volume], ...]
         """
         try:
             self.logger.info(f"Fetching historical klines for {symbol} {timeframe}, limit={limit}")
-            
+
             # 检查缓存中是否有历史数据
             cache_key = f"historical_klines:{symbol}:{timeframe}"
             cached_data = self._get_cached_historical_data(cache_key, since, limit)
-            
+
             if cached_data:
                 self.logger.info(f"Found cached historical data for {symbol} {timeframe}: {len(cached_data)} candles")
                 return cached_data
-            
+
             # 从交易所API获取数据
             rest_client = RESTClient(use_demo=use_demo)
-            
+
             # 计算时间范围
             if not since:
                 # 根据时间框架和数量计算开始时间
                 timeframe_minutes = self._timeframe_to_minutes(timeframe)
                 since = int((time.time() - timeframe_minutes * limit * 60) * 1000)
-            
+
             # 分批获取数据以避免API限制
             all_klines = []
             batch_size = 500  # 每批获取500个K线
             current_since = since
-            
+
             while len(all_klines) < limit:
                 batch_limit = min(batch_size, limit - len(all_klines))
-                
+
                 try:
                     batch_klines = rest_client.fetch_ohlcv(symbol, current_since, batch_limit, timeframe)
-                    
+
                     if not batch_klines:
                         self.logger.warning(f"No more historical data available for {symbol} {timeframe}")
                         break
-                    
+
                     # 数据去重和验证
                     combined_klines = self._deduplicate_klines(all_klines + batch_klines)
                     # 只取新的数据
                     new_klines = combined_klines[len(all_klines):]
                     all_klines.extend(new_klines)
-                    
+
                     # 更新下次获取的开始时间
                     if batch_klines:
                         current_since = batch_klines[-1][0] + 1  # 下一个时间点
-                    
+
                     self.logger.info(f"Fetched batch for {symbol} {timeframe}: {len(new_klines)} new candles, total: {len(all_klines)}")
-                    
+
                     # 避免API频率限制
                     time.sleep(0.1)
-                    
+
                 except Exception as e:
                     self.logger.error(f"Failed to fetch batch for {symbol} {timeframe}: {e}")
                     break
-            
+
             # 智能采样：保留关键转折点
             if len(all_klines) > limit:
                 all_klines = self._smart_sampling(all_klines, limit)
-            
+
             # 缓存历史数据
             self._cache_historical_data(cache_key, all_klines, timeframe)
-            
+
             self.logger.info(f"Successfully fetched historical data for {symbol} {timeframe}: {len(all_klines)} candles")
             return all_klines
-            
+
         except Exception as e:
             self.logger.error(f"Failed to get historical klines for {symbol} {timeframe}: {e}")
             return []
-    
-    def get_multi_timeframe_data(self, symbol: str, timeframes: List[str] = None, 
+
+    def get_multi_timeframe_data(self, symbol: str, timeframes: List[str] = None,
                                 limit: int = 500, use_demo: bool = False) -> Dict[str, List[List]]:
         """
         获取多时间框架数据，实现分层存储策略
-        
+
         Args:
             symbol: 交易对符号
             timeframes: 时间框架列表，默认为 ["5m", "15m", "1h", "4h"]
             limit: 每个时间框架的数据量
             use_demo: 是否使用模拟环境
-            
+
         Returns:
             Dict: {timeframe: OHLCV data}
         """
         if timeframes is None:
             timeframes = ["5m", "15m", "1h", "4h"]
-        
+
         try:
             self.logger.info(f"Fetching multi-timeframe data for {symbol}: {timeframes}")
-            
+
             multi_data = {}
             successful_timeframes = []
             failed_timeframes = []
-            
+
             # 按优先级顺序获取数据（细粒度优先）
             for timeframe in timeframes:
                 try:
                     # 根据时间框架调整数据量
                     timeframe_limit = self._adjust_limit_by_timeframe(limit, timeframe)
-                    
+
                     klines = self.get_historical_klines(
                         symbol, timeframe, timeframe_limit, use_demo=use_demo
                     )
-                    
+
                     if klines:
                         multi_data[timeframe] = klines
                         successful_timeframes.append(timeframe)
@@ -934,54 +934,54 @@ class DataHandler:
                     else:
                         failed_timeframes.append(timeframe)
                         self.logger.warning(f"No data available for {symbol} {timeframe}")
-                        
+
                 except Exception as e:
                     failed_timeframes.append(timeframe)
                     self.logger.error(f"Failed to get {timeframe} data for {symbol}: {e}")
-            
+
             # 记录获取结果
             if successful_timeframes:
                 self.logger.info(f"Multi-timeframe data fetch completed for {symbol}: {successful_timeframes}")
             if failed_timeframes:
                 self.logger.warning(f"Failed timeframes for {symbol}: {failed_timeframes}")
-            
+
             return multi_data
-            
+
         except Exception as e:
             self.logger.error(f"Failed to get multi-timeframe data for {symbol}: {e}")
             return {}
-    
+
     def get_historical_with_indicators(self, symbol: str, timeframes: List[str] = None,
                                      limit: int = 200, use_demo: bool = False) -> Dict[str, Any]:
         """
         获取历史数据并计算技术指标，避免重复计算
-        
+
         Args:
             symbol: 交易对符号
             timeframes: 时间框架列表
             limit: 数据量限制
             use_demo: 是否使用模拟环境
-            
+
         Returns:
             Dict: 包含OHLCV数据和技术指标的完整数据结构
         """
         try:
             self.logger.info(f"Getting historical data with indicators for {symbol}")
-            
+
             # 获取多时间框架数据
             multi_timeframe_data = self.get_multi_timeframe_data(
                 symbol, timeframes, limit, use_demo
             )
-            
+
             if not multi_timeframe_data:
                 self.logger.warning(f"No historical data available for {symbol}")
                 return {"error": "No historical data available"}
-            
+
             # 计算技术指标（统一计算，避免重复）
             historical_analysis = {}
             successful_calculations = []
             failed_calculations = []
-            
+
             for timeframe, klines in multi_timeframe_data.items():
                 try:
                     if klines and len(klines) >= 10:  # 最少需要10个K线
@@ -997,11 +997,11 @@ class DataHandler:
                     else:
                         failed_calculations.append(timeframe)
                         self.logger.warning(f"Insufficient data for {symbol} {timeframe}: {len(klines)} candles")
-                        
+
                 except Exception as e:
                     failed_calculations.append(timeframe)
                     self.logger.error(f"Failed to calculate indicators for {symbol} {timeframe}: {e}")
-            
+
             # 添加元数据
             result = {
                 "symbol": symbol,
@@ -1012,14 +1012,14 @@ class DataHandler:
                 "data_freshness": int(time.time() * 1000),
                 "use_demo": use_demo
             }
-            
+
             self.logger.info(f"Historical analysis completed for {symbol}: {len(successful_calculations)}/{len(timeframes) if timeframes else 4} timeframes")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Failed to get historical data with indicators for {symbol}: {e}")
             return {"error": str(e)}
-    
+
     def _timeframe_to_minutes(self, timeframe: str) -> int:
         """将时间框架转换为分钟数"""
         timeframe_map = {
@@ -1028,11 +1028,11 @@ class DataHandler:
             "1d": 1440, "3d": 4320, "1w": 10080
         }
         return timeframe_map.get(timeframe, 5)  # 默认5分钟
-    
+
     def _adjust_limit_by_timeframe(self, base_limit: int, timeframe: str) -> int:
         """根据时间框架调整数据量限制"""
         timeframe_minutes = self._timeframe_to_minutes(timeframe)
-        
+
         # 基于时间框架调整数据量，确保覆盖相似的时间范围
         if timeframe_minutes <= 15:  # 短时间框架
             return base_limit
@@ -1042,60 +1042,60 @@ class DataHandler:
             return max(base_limit // 4, 50)
         else:  # 超长时间框架
             return max(base_limit // 8, 30)
-    
+
     def _deduplicate_klines(self, klines: List[List]) -> List[List]:
         """去除重复的K线数据"""
         if not klines:
             return []
-        
+
         # 先按时间戳排序
         sorted_klines = sorted(klines, key=lambda x: x[0])
-        
+
         # 按时间戳去重，保留最新的数据
         seen_timestamps = set()
         deduplicated = []
-        
+
         for kline in sorted_klines:
             timestamp = kline[0]
             if timestamp not in seen_timestamps:
                 seen_timestamps.add(timestamp)
                 deduplicated.append(kline)
-        
+
         return deduplicated
-    
+
     def _smart_sampling(self, klines: List[List], target_count: int) -> List[List]:
         """智能采样：保留关键转折点"""
         if len(klines) <= target_count:
             return klines
-        
+
         try:
             import numpy as np
-            
+
             # 计算价格变化率
             closes = np.array([kline[4] for kline in klines])  # 收盘价
             volumes = np.array([kline[5] for kline in klines])  # 成交量
-            
+
             # 计算价格变化幅度
             price_changes = np.abs(np.diff(closes))
             volume_changes = np.abs(np.diff(volumes))
-            
+
             # 综合变化分数（价格变化 + 成交量变化）
             change_scores = price_changes + volume_changes * 0.1  # 成交量权重较低
-            
+
             # 总是需要包含第一个和最后一个K线
             important_indices = {0, len(klines) - 1}
-            
+
             # 选择变化最大的点
             remaining_slots = target_count - 2  # 减去首尾两个固定点
             if remaining_slots > 0:
                 # 获取变化最大的点的索引
                 top_indices = np.argsort(change_scores)[-remaining_slots:]
                 important_indices.update(top_indices + 1)  # +1 因为diff减少了长度
-            
+
             # 按时间顺序排序并返回
             sorted_indices = sorted(important_indices)
             sampled_klines = [klines[i] for i in sorted_indices]
-            
+
             # 确保返回正确数量的数据
             if len(sampled_klines) > target_count:
                 sampled_klines = sampled_klines[:target_count]
@@ -1106,62 +1106,62 @@ class DataHandler:
                 additional = [klines[i] for i in range(1, len(klines)-1, step) if i not in important_indices]
                 sampled_klines.extend(additional[:needed])
                 sampled_klines = sorted(sampled_klines, key=lambda x: x[0])[:target_count]
-            
+
             self.logger.info(f"Smart sampling: {len(klines)} -> {len(sampled_klines)} klines")
             return sampled_klines
-            
+
         except Exception as e:
             self.logger.warning(f"Smart sampling failed, using simple sampling: {e}")
             # 回退到简单均匀采样
             step = max(1, len(klines) // target_count)
             return klines[::step][:target_count]
-    
+
     def _get_cached_historical_data(self, cache_key: str, since: Optional[int], limit: int) -> Optional[List[List]]:
         """从缓存获取历史数据"""
         if not self.redis_client:
             return None
-            
+
         try:
             cached = self.redis_client.get(cache_key)
             if not cached:
                 return None
-            
+
             cache_data = json.loads(cached)
             cached_klines = cache_data.get("klines", [])
-            
+
             if not cached_klines:
                 return None
-            
+
             # 检查数据新鲜度
             cache_time = cache_data.get("timestamp", 0)
             current_time = int(time.time() * 1000)
-            
+
             # 根据时间框架设置不同的缓存有效期
             timeframe = cache_key.split(":")[-1]
             cache_duration = self._get_cache_duration(timeframe)
-            
+
             if current_time - cache_time > cache_duration:
                 self.logger.info(f"Cached data expired for {cache_key}")
                 return None
-            
+
             # 如果指定了开始时间，过滤数据
             if since:
                 filtered_klines = [k for k in cached_klines if k[0] >= since]
                 if len(filtered_klines) >= limit:
                     return filtered_klines[-limit:]
-            
+
             # 返回最新的数据
             return cached_klines[-limit:] if len(cached_klines) >= limit else cached_klines
-            
+
         except Exception as e:
             self.logger.warning(f"Failed to get cached historical data: {e}")
             return None
-    
+
     def _cache_historical_data(self, cache_key: str, klines: List[List], timeframe: str):
         """缓存历史数据"""
         if not self.redis_client:
             return  # Skip caching if Redis is not available
-            
+
         try:
             cache_data = {
                 "klines": klines,
@@ -1169,25 +1169,25 @@ class DataHandler:
                 "timeframe": timeframe,
                 "count": len(klines)
             }
-            
+
             # 根据时间框架设置缓存过期时间
             cache_duration = self._get_cache_duration(timeframe) // 1000  # 转换为秒
-            
+
             self.redis_client.setex(cache_key, cache_duration, json.dumps(cache_data))
             self.logger.info(f"Cached historical data for {cache_key}: {len(klines)} klines, TTL: {cache_duration}s")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to cache historical data: {e}")
-    
+
     def _get_cache_duration(self, timeframe: str) -> int:
         """获取缓存持续时间（毫秒）- 优化版本"""
         # 使用优化的缓存策略
         if hasattr(self, 'OPTIMIZED_CACHE_DURATION') and timeframe in self.OPTIMIZED_CACHE_DURATION:
             return self.OPTIMIZED_CACHE_DURATION[timeframe] * 1000
-        
+
         # 回退到原有逻辑
         timeframe_minutes = self._timeframe_to_minutes(timeframe)
-        
+
         # 短时间框架缓存时间较短，长时间框架缓存时间较长
         if timeframe_minutes <= 15:
             return 5 * 60 * 1000  # 5分钟
@@ -1197,36 +1197,36 @@ class DataHandler:
             return 30 * 60 * 1000  # 30分钟
         else:
             return 60 * 60 * 1000  # 1小时
-    
+
     def _get_smart_cache_duration(self, timeframe: str, data_age: int = 0) -> int:
         """根据数据新鲜度智能调整缓存时间"""
         base_duration = self._get_cache_duration(timeframe)
-        
+
         # 如果数据较旧，减少缓存时间
         if data_age > 3600000:  # 1小时
             return base_duration // 2
-        
+
         # 如果是高频交易时间，减少缓存时间
         current_hour = time.localtime().tm_hour
         if 9 <= current_hour <= 16:  # 交易活跃时间
             return base_duration // 2
-        
+
         return base_duration
     def get_account_balance(self, use_demo: bool = False) -> Dict[str, Any]:
         """Get account balance from OKX"""
         try:
             self.logger.info(f"[{self.data_source_label}] 获取账户余额 (use_demo={use_demo})")
-            
+
             # 如果是Mock数据模式，返回模拟余额
             if self.data_source_type == "MOCK_DATA":
                 return self._generate_mock_balance()
-            
+
             # 初始化REST客户端
             rest_client = RESTClient(use_demo=use_demo)
-            
+
             # 获取账户余额
             balance_data = rest_client.fetch_balance()
-            
+
             if balance_data:
                 self.logger.info(f"[{self.data_source_label}] 成功获取账户余额")
                 return {
@@ -1245,7 +1245,7 @@ class DataHandler:
                     "timestamp": int(time.time() * 1000),
                     "status": "error"
                 }
-                
+
         except Exception as e:
             self.logger.error(f"[{self.data_source_label}] 获取账户余额异常: {e}")
             return {
@@ -1255,22 +1255,22 @@ class DataHandler:
                 "timestamp": int(time.time() * 1000),
                 "status": "error"
             }
-    
+
     def get_account_positions(self, use_demo: bool = False) -> Dict[str, Any]:
         """Get account positions from OKX"""
         try:
             self.logger.info(f"[{self.data_source_label}] 获取账户持仓 (use_demo={use_demo})")
-            
+
             # 如果是Mock数据模式，返回模拟持仓
             if self.data_source_type == "MOCK_DATA":
                 return self._generate_mock_positions()
-            
+
             # 初始化REST客户端
             rest_client = RESTClient(use_demo=use_demo)
-            
+
             # 获取账户持仓
             positions_data = rest_client.fetch_positions()
-            
+
             if positions_data:
                 self.logger.info(f"[{self.data_source_label}] 成功获取账户持仓: {len(positions_data)} 个持仓")
                 return {
@@ -1290,7 +1290,7 @@ class DataHandler:
                     "timestamp": int(time.time() * 1000),
                     "status": "error"
                 }
-                
+
         except Exception as e:
             self.logger.error(f"[{self.data_source_label}] 获取账户持仓异常: {e}")
             return {
@@ -1300,11 +1300,11 @@ class DataHandler:
                 "timestamp": int(time.time() * 1000),
                 "status": "error"
             }
-    
+
     def _generate_mock_balance(self) -> Dict[str, Any]:
         """生成模拟账户余额数据"""
         import random
-        
+
         mock_balance = {
             "info": {"mock": True},
             "free": {
@@ -1319,13 +1319,13 @@ class DataHandler:
             },
             "total": {}
         }
-        
+
         # 计算总额
         for currency in mock_balance["free"]:
             mock_balance["total"][currency] = (
                 mock_balance["free"][currency] + mock_balance["used"].get(currency, 0)
             )
-        
+
         return {
             "balance": mock_balance,
             "use_demo": True,
@@ -1333,11 +1333,11 @@ class DataHandler:
             "timestamp": int(time.time() * 1000),
             "status": "mock_success"
         }
-    
+
     def _generate_mock_positions(self) -> Dict[str, Any]:
         """生成模拟账户持仓数据"""
         import random
-        
+
         mock_positions = [
             {
                 "info": {"mock": True},
@@ -1356,11 +1356,11 @@ class DataHandler:
                 "timestamp": int(time.time() * 1000)
             }
         ]
-        
+
         # 随机决定是否有持仓
         if random.random() > 0.7:  # 30%概率有持仓
             mock_positions = []
-        
+
         return {
             "positions": mock_positions,
             "count": len(mock_positions),
@@ -1374,7 +1374,7 @@ class DataHandler:
         """Stop data handler"""
         self.logger.info("Stopping data handler...")
         self._stop_event.set()
-        
+
         # Stop WebSocket client if it exists
         if self.ws_client:
             try:
@@ -1392,16 +1392,23 @@ if __name__ == "__main__":
     from flask import Flask, jsonify, request
     import signal
     import sys
-    
-    # Configure logging first
-    logging.basicConfig(
-        level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    logger = logging.getLogger(__name__)
+
+    # Configure comprehensive logging system
+    try:
+        from src.utils.logging_config import setup_logging
+        setup_logging()
+        logger = logging.getLogger(__name__)
+        logger.info("Comprehensive logging system initialized successfully")
+    except Exception as e:
+        # Fallback to basic logging
+        logging.basicConfig(
+            level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to initialize comprehensive logging, using basic config: {e}")
     logger.info("Starting Data Manager Service...")
-    
+
     # Import unified configuration system
     try:
         from src.utils.config_loader import get_config_manager
@@ -1412,10 +1419,10 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"Failed to load unified configuration, using environment variables: {e}")
         service_config = {}
-    
+
     # Create Flask app for health checks
     app = Flask(__name__)
-    
+
     @app.route('/health')
     def health_check():
         """Health check endpoint"""
@@ -1424,7 +1431,7 @@ if __name__ == "__main__":
             "service": "data-manager",
             "timestamp": time.time()
         })
-    
+
     @app.route('/')
     def root():
         """Root endpoint"""
@@ -1432,7 +1439,7 @@ if __name__ == "__main__":
             "service": "data-manager",
             "status": "running"
         })
-    
+
     @app.route('/api/market-data/<symbol>')
     def get_market_data_api(symbol):
         """Get market data API endpoint"""
@@ -1443,7 +1450,7 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Error in market data API: {e}")
             return jsonify({"error": str(e)}), 500
-    
+
     @app.route('/api/account/balance')
     def get_account_balance_api():
         """Get account balance API endpoint"""
@@ -1454,7 +1461,7 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Error in account balance API: {e}")
             return jsonify({"error": str(e)}), 500
-    
+
     @app.route('/api/account/positions')
     def get_account_positions_api():
         """Get account positions API endpoint"""
@@ -1465,10 +1472,10 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Error in account positions API: {e}")
             return jsonify({"error": str(e)}), 500
-    
+
     # Global data handler instance
     data_handler = None
-    
+
     def signal_handler(signum, frame):
         """Handle shutdown signals"""
         logger.info(f"Received signal {signum}, shutting down...")
@@ -1476,11 +1483,11 @@ if __name__ == "__main__":
             data_handler.stop()
             logger.info("Data Manager Service stopped")
         sys.exit(0)
-    
+
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     def run_websocket_service():
         """Run WebSocket service in background"""
         global data_handler
@@ -1488,19 +1495,19 @@ if __name__ == "__main__":
             data_handler.start_websocket()
         except Exception as e:
             logger.error(f"WebSocket service failed: {e}")
-    
+
     try:
         # Initialize data handler once
         data_handler = DataHandler()
-        
+
         # Start WebSocket service in background thread
         ws_thread = threading.Thread(target=run_websocket_service, daemon=True)
         ws_thread.start()
-        
+
         # Get port from unified configuration or environment variable
         port = service_config.get('port', int(os.getenv('SERVICE_PORT', '8000')))
         host = service_config.get('host', os.getenv('SERVICE_HOST', '0.0.0.0'))
-        
+
         # Start Flask server for health checks (main thread)
         logger.info(f"Starting Data Manager HTTP server on {host}:{port}...")
         app.run(
@@ -1510,7 +1517,7 @@ if __name__ == "__main__":
             threaded=True,
             use_reloader=False
         )
-        
+
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
     except Exception as e:

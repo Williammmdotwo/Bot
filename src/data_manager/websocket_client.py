@@ -117,6 +117,22 @@ class OKXWebSocketClient:
             }]
         }
 
+    async def _send_subscribe_message(self):
+        """发送订阅消息 - 确保每次重连都会重新订阅"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.logger.warning("WebSocket连接不可用，无法发送订阅消息")
+                return False
+
+            subscribe_msg = self._create_subscribe_message()
+            await self.connection.send(json.dumps(subscribe_msg))
+            self.logger.info(f"📡 已发送订阅消息: {self.symbol} {self.timeframe}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"发送订阅消息失败: {e}")
+            return False
+
     async def _connect_websocket(self) -> bool:
         """建立WebSocket连接"""
         try:
@@ -130,10 +146,9 @@ class OKXWebSocketClient:
             # 修复：公共频道不需要登录，直接发送订阅消息
             self.logger.info("🔓 使用公共频道，跳过登录步骤")
 
-            # 发送订阅消息
-            subscribe_msg = self._create_subscribe_message()
-            await self.connection.send(json.dumps(subscribe_msg))
-            self.logger.info(f"📡 已发送订阅消息: {self.symbol} {self.timeframe}")
+            # 🔥 关键修复：连接成功后立即发送订阅消息
+            # 这样确保每次重连都会重新订阅
+            await self._send_subscribe_message()
 
             return True
 
@@ -266,12 +281,19 @@ class OKXWebSocketClient:
 
                 await self._handle_message(message)
 
-        except websockets.exceptions.ConnectionClosed:
-            self.logger.warning("WebSocket连接已关闭")
+        except websockets.exceptions.ConnectionClosed as e:
+            self.logger.warning(f"WebSocket连接已关闭: {e}")
+            self.logger.info("🔄 连接关闭，将触发重连机制")
+        except websockets.exceptions.ConnectionClosedError as e:
+            self.logger.error(f"WebSocket连接关闭错误: {e}")
+            self.logger.info("🔄 连接异常，将触发重连机制")
         except Exception as e:
             self.logger.error(f"消息循环错误: {e}")
+            self.logger.info("🔄 消息循环异常，将触发重连机制")
 
+        # 🔥 关键修复：确保连接状态正确更新
         self.is_connected = False
+        self.logger.info("📊 连接状态已更新为: 断开")
 
     async def _heartbeat_sender(self):
         """OKX心跳发送 - 每20秒向服务器发送'ping'"""

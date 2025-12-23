@@ -24,38 +24,38 @@ logger = logging.getLogger(__name__)
 async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, redis_client):
     """
     Execute a trading order based on the provided signal
-    
+
     Args:
         signal: Dictionary containing order signal information
         ccxt_exchange: CCXT exchange instance
         postgres_pool: PostgreSQL connection pool (asyncpg)
         redis_client: Redis client (redis.asyncio.Redis)
-        
+
     Returns:
         dict: Order information from exchange
-        
+
     Raises:
         ValueError: If order validation fails
         Exception: For other execution errors
     """
     try:
         logger.info(f"Starting order execution for signal: {signal}")
-        
+
         # 安全检查：验证当前运行环境
         okx_environment = os.getenv("OKX_ENVIRONMENT", "production").lower()
         use_demo = okx_environment in ["demo", "demo环境", "demo-trading"]
-        
+
         if not use_demo:
             logger.critical(f"🚨 安全阻止: 拒绝在非模拟环境下执行交易订单")
             logger.critical(f"当前环境: {okx_environment}, 要求: demo环境")
             raise ValueError("Trading only allowed in demo environment for safety")
-        
+
         logger.info(f"✅ 环境安全检查通过: {okx_environment} (模拟模式: {use_demo})")
-        
+
         # 1. Get market snapshot and account equity
         logger.info("Fetching market snapshot and account data")
         use_database = os.getenv('USE_DATABASE', 'false').lower() == 'true'
-        
+
         if use_database:
             data_handler = DataHandler()
             snapshot = data_handler.get_snapshot(signal['symbol'])
@@ -69,7 +69,7 @@ async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, re
                 "data_status": "DEGRADED"
             }
             logger.info("Database disabled, using minimal snapshot")
-        
+
         # 2. Validate order signal
         logger.info("Validating order signal")
         try:
@@ -78,7 +78,7 @@ async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, re
         except ValueError as e:
             logger.error(f"Order validation failed: {e}")
             raise
-        
+
         # 3. Create market order
         logger.info(f"Creating market order: {signal['action']} {signal['size']} {signal['symbol']}")
         try:
@@ -91,7 +91,7 @@ async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, re
         except Exception as e:
             logger.error(f"Failed to create market order: {e}")
             raise
-        
+
         # 4. Insert initial order information into trades table
         if postgres_pool:
             logger.info("Inserting order into database")
@@ -101,14 +101,14 @@ async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, re
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                 """
                 await postgres_pool.execute(
-                    insert_sql, 
-                    signal.get('decision_id'), 
-                    order['id'], 
+                    insert_sql,
+                    signal.get('decision_id'),
+                    order['id'],
                     signal['symbol'],
-                    signal['side'], 
-                    'market', 
-                    signal['size'], 
-                    None, 
+                    signal['side'],
+                    'market',
+                    signal['size'],
+                    None,
                     'open'
                 )
                 logger.info(f"Order {order['id']} inserted into trades table")
@@ -117,12 +117,12 @@ async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, re
                 # Continue without database insertion
         else:
             logger.info("Database disabled, skipping order insertion")
-        
+
         # 5. Publish new position opened message to Redis
         logger.info("Publishing position opened message to Redis")
         try:
             message = {
-                'symbol': signal['symbol'], 
+                'symbol': signal['symbol'],
                 'order_id': order['id']
             }
             await redis_client.publish('new_position_opened', json.dumps(message))
@@ -130,7 +130,7 @@ async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, re
         except Exception as e:
             logger.error(f"Failed to publish message to Redis: {e}")
             # Continue with tracking even if Redis publish fails
-        
+
         # 6. Start order tracking
         logger.info("Starting order tracking")
         try:
@@ -139,10 +139,10 @@ async def execute_order(signal: Dict[str, Any], ccxt_exchange, postgres_pool, re
         except Exception as e:
             logger.error(f"Failed to start order tracking: {e}")
             # Continue even if tracking fails, as order is already placed
-        
+
         logger.info(f"Order execution completed successfully for {order['id']}")
         return order
-        
+
     except ValueError as e:
         logger.error(f"Order execution failed due to validation error: {e}")
         raise
@@ -159,31 +159,38 @@ if __name__ == "__main__":
     import sys
     import asyncio
     import uvicorn
-    
+
     # Fix relative imports for direct execution
     try:
         from .api_server import app, initialize_dependencies
     except ImportError:
         from src.executor.api_server import app, initialize_dependencies
-    
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    logger = logging.getLogger(__name__)
+
+    # Configure comprehensive logging system
+    try:
+        from src.utils.logging_config import setup_logging
+        setup_logging()
+        logger = logging.getLogger(__name__)
+        logger.info("Comprehensive logging system initialized successfully")
+    except Exception as e:
+        # Fallback to basic logging
+        logging.basicConfig(
+            level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to initialize comprehensive logging, using basic config: {e}")
     logger.info("Starting Executor Service...")
-    
+
     def signal_handler(signum, frame):
         """Handle shutdown signals"""
         logger.info(f"Received signal {signum}, shutting down...")
         sys.exit(0)
-    
+
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     try:
         # Import unified configuration system
         try:
@@ -195,20 +202,20 @@ if __name__ == "__main__":
         except Exception as e:
             logger.warning(f"Failed to load unified configuration, using environment variables: {e}")
             service_config = {}
-        
+
         # Get service configuration from unified config or environment variables
         host = service_config.get('host', os.getenv('SERVICE_HOST', '0.0.0.0'))
         port = service_config.get('port', int(os.getenv('SERVICE_PORT', '8002')))
-        
+
         logger.info(f"Starting Executor Service on {host}:{port}")
-        
+
         # Initialize real DemoCCXTExchange for testing
         # Import the real DemoCCXTExchange from api_server
         try:
             from .api_server import DemoCCXTExchange
         except ImportError:
             from src.executor.api_server import DemoCCXTExchange
-        
+
         class MockPostgresPool:
             async def execute(self, query, *args):
                 return None
@@ -216,17 +223,17 @@ if __name__ == "__main__":
                 return None
             async def fetchrow(self, query, *args):
                 return None
-        
+
         class MockRedisClient:
             async def publish(self, channel, message):
                 return None
-        
+
         initialize_dependencies(DemoCCXTExchange(), MockPostgresPool(), MockRedisClient())
-        
+
         # Run API server
         import uvicorn
         uvicorn.run(app, host=host, port=port, log_level="info")
-        
+
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
     except Exception as e:
