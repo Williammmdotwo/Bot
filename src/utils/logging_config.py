@@ -21,6 +21,16 @@ class WebhookErrorHandler(logging.Handler):
         self.session = requests.Session()
         self.session.timeout = 3  # 3秒超时
 
+        # 🔥 强制禁用代理，避免代理连接问题
+        self.session.proxies = {
+            'http': None,
+            'https': None,
+        }
+
+        # 防循环机制：记录上次发送时间
+        self.last_send_time = 0
+        self.min_send_interval = 60  # 最小发送间隔60秒
+
     def emit(self, record: logging.LogRecord):
         """发送日志记录到 webhook"""
         # 只处理 ERROR 及以上级别
@@ -29,6 +39,15 @@ class WebhookErrorHandler(logging.Handler):
 
         if not self.webhook_url:
             return
+
+        # 🔥 防循环机制：避免webhook错误引发更多webhook调用
+        current_time = time.time()
+        if current_time - self.last_send_time < self.min_send_interval:
+            return  # 跳过频繁发送
+
+        # 🔥 防止处理自己的错误日志
+        if 'Webhook 发送' in record.getMessage():
+            return  # 跳过webhook相关的错误日志
 
         try:
             # 格式化日志消息
@@ -51,13 +70,17 @@ class WebhookErrorHandler(logging.Handler):
                 timeout=3
             )
 
+            # 更新最后发送时间
+            self.last_send_time = current_time
+
             if response.status_code != 200:
-                # 使用logging模块直接记录，避免循环依赖
-                logging.error(f"Webhook 发送失败: {response.status_code}")
+                # 🔥 静默处理，避免循环记录错误
+                print(f"Webhook 发送失败: {response.status_code}", file=sys.stderr)
 
         except Exception as e:
-            # 使用logging模块直接记录，避免循环依赖
-            logging.error(f"Webhook 发送异常: {e}")
+            # 🔥 静默处理，避免循环记录错误
+            print(f"Webhook 发送异常: {e}", file=sys.stderr)
+            self.last_send_time = current_time
 
     def close(self):
         """关闭处理器"""
