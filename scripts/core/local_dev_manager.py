@@ -341,8 +341,18 @@ class LocalDevManager:
         """清理日志文件"""
         logger.info("清理日志文件...")
 
+        # 🔥 获取日志目录配置
+        logs_directory = os.getenv('LOGS_DIRECTORY')
+        if logs_directory:
+            target_dir = Path(logs_directory)
+        else:
+            target_dir = self.logs_dir
+
+        # 确保目标目录存在
+        target_dir.mkdir(exist_ok=True)
+
         # 保留最新的5个日志文件
-        log_files = list(self.logs_dir.glob("*.log"))
+        log_files = list(target_dir.glob("*.log"))
         log_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
 
         for log_file in log_files[5:]:

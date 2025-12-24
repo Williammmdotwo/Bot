@@ -95,6 +95,18 @@ def setup_logging():
         log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
         webhook_url = os.getenv('ALERT_WEBHOOK_URL')
 
+        # 🔥 获取日志目录配置
+        logs_directory = os.getenv('LOGS_DIRECTORY')
+        if logs_directory:
+            # 使用自定义日志目录
+            log_file = os.path.join(logs_directory, 'app.log')
+        else:
+            # 使用默认日志目录
+            log_file = 'logs/app.log'
+
+        # 确保日志目录存在
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
         # 验证日志级别
         valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
         if log_level not in valid_levels:
@@ -122,7 +134,7 @@ def setup_logging():
                     'class': 'logging.handlers.RotatingFileHandler',
                     'level': 'DEBUG',
                     'formatter': 'standard',
-                    'filename': 'logs/app.log',
+                    'filename': log_file,  # 🔥 使用动态路径
                     'maxBytes': 10485760,  # 10MB
                     'backupCount': 5,
                     'encoding': 'utf-8'
@@ -154,7 +166,7 @@ def setup_logging():
         setup_logger.info("日志系统初始化完成:")
         setup_logger.info(f"  - 日志级别: {log_level}")
         setup_logger.info(f"  - 控制台输出: {'启用' if log_level != 'DEBUG' else '禁用'}")
-        setup_logger.info(f"  - 文件输出: logs/app.log (轮转，最大10MB，保留5个备份)")
+        setup_logger.info(f"  - 文件输出: {log_file} (轮转，最大10MB，保留5个备份)")
         if webhook_url:
             setup_logger.info(f"  - Webhook 告警: {webhook_url} (ERROR及以上级别)")
         else:

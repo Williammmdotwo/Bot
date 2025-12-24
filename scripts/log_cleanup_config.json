@@ -2,7 +2,7 @@
   "cleanup_settings": {
     "retention_days": 7,
     "report_retention_days": 3,
-    "logs_directory": "logs",
+    "logs_directory": "",
     "file_patterns": [
       "*.log",
       "*.txt"
