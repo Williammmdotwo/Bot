@@ -19,11 +19,11 @@ class OKXWebSocketClient:
     # 环境URL配置
     WS_URLS = {
         "demo": {
-            "public": "wss://wspap.okx.com:8443/ws/v5/business",  # 修复：K线数据需要business端点
+            "public": "wss://wspap.okx.com:8443/ws/v5/public",    # 🔥 修复：K线数据使用public端点
             "private": "wss://wspap.okx.com:8443/ws/v5/private"
         },
         "live": {
-            "public": "wss://ws.okx.com:8443/ws/v5/business",     # 修复：K线数据需要business端点
+            "public": "wss://ws.okx.com:8443/ws/v5/public",       # 🔥 修复：K线数据使用public端点
             "private": "wss://ws.okx.com:8443/ws/v5/private"
         }
     }
