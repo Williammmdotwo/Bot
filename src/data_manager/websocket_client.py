@@ -134,43 +134,60 @@ class OKXWebSocketClient:
             return False
 
     async def _connect_websocket(self) -> bool:
-        """建立WebSocket连接"""
+        """建立WebSocket连接 - 修复死锁问题"""
         try:
             # 使用public URL进行连接
             ws_url = self.ws_urls["public"]
             self.logger.info(f"连接到WebSocket: {ws_url} (环境: {self.env_config['environment_type']})")
 
-            # 创建WebSocket连接 - 修复websockets库兼容性问题
-            self.connection = await websockets.connect(ws_url)
+            # 🔥 使用 async with 上下文管理器 - 修复死锁问题
+            async with websockets.connect(ws_url) as ws:
+                self.connection = ws
+                self.is_connected = True
+                self.logger.info("🔓 WebSocket连接建立成功")
 
-            # 修复：公共频道不需要登录，直接发送订阅消息
-            self.logger.info("🔓 使用公共频道，跳过登录步骤")
+                # ==========================================
+                # ✅ 必须放在这里 (循环之前)
+                # ==========================================
+                # 1. 构造字典对象（绝对标准格式）
+                subscribe_payload = {
+                    "op": "subscribe",
+                    "args": [
+                        {
+                            "channel": "candle5m",
+                            "instId": "BTC-USDT"
+                        }
+                    ]
+                }
 
-            # 🚨 防弹代码：强制使用标准JSON库生成订阅消息
-            # ------------------------------------------------
-            # 1. 构造字典对象（绝对标准格式）
-            subscribe_payload = {
-                "op": "subscribe",
-                "args": [
-                    {
-                        "channel": "candle5m",
-                        "instId": "BTC-USDT"
-                    }
-                ]
-            }
+                # 2. 转换成 JSON 字符串
+                # ensure_ascii=False 防止中文乱码（虽然这里没中文）
+                # separators=(',', ':') 去掉多余空格，压缩体积，防止有些服务器对空格敏感
+                json_str = json.dumps(subscribe_payload, ensure_ascii=False, separators=(',', ':'))
 
-            # 2. 转换成 JSON 字符串
-            # ensure_ascii=False 防止中文乱码（虽然这里没中文）
-            # separators=(',', ':') 去掉多余空格，压缩体积，防止有些服务器对空格敏感
-            json_str = json.dumps(subscribe_payload, ensure_ascii=False, separators=(',', ':'))
+                # 3. 打印最终发出去的字符串（这是关键！）
+                # 务必在日志里看这行，看看到底长什么样
+                self.logger.info(f"🚀 [DEBUG] 正在发送订阅: {json_str}")
 
-            # 3. 打印最终发出去的字符串（这是关键！）
-            # 务必在日志里看这行，看看到底长什么样
-            self.logger.info(f"🚀 [DEBUG] 最终发送的订阅包内容: {json_str}")
+                # 4. 发送订阅消息
+                await ws.send(json_str)
+                self.logger.info("✅ 订阅消息发送完成")
 
-            # 4. 发送
-            await self.connection.send(json_str)
-            # ------------------------------------------------
+                # ==========================================
+
+                # 🔄 现在才进入接收循环
+                async for message in ws:
+                    if not self.is_connected:
+                        break
+
+                    # 🔍 调试输出：打印原始消息前200个字符
+                    print(f"DEBUG_RAW: {message[:200]}")
+
+                    await self._handle_message(message)
+
+                # 🔥 如果循环正常结束，标记连接关闭
+                self.is_connected = False
+                self.logger.info("📊 WebSocket连接正常结束")
 
             return True
 
@@ -294,31 +311,8 @@ class OKXWebSocketClient:
         except Exception as e:
             self.logger.error(f"ticker数据处理错误: {e}")
 
-    async def _message_loop(self):
-        """消息接收循环"""
-        try:
-            async for message in self.connection:
-                if not self.is_connected:
-                    break
-
-                # 🔍 调试输出：打印原始消息前200个字符
-                print(f"DEBUG_RAW: {message[:200]}")
-
-                await self._handle_message(message)
-
-        except websockets.exceptions.ConnectionClosed as e:
-            self.logger.warning(f"WebSocket连接已关闭: {e}")
-            self.logger.info("🔄 连接关闭，将触发重连机制")
-        except websockets.exceptions.ConnectionClosedError as e:
-            self.logger.error(f"WebSocket连接关闭错误: {e}")
-            self.logger.info("🔄 连接异常，将触发重连机制")
-        except Exception as e:
-            self.logger.error(f"消息循环错误: {e}")
-            self.logger.info("🔄 消息循环异常，将触发重连机制")
-
-        # 🔥 关键修复：确保连接状态正确更新
-        self.is_connected = False
-        self.logger.info("📊 连接状态已更新为: 断开")
+    # 🚨 删除分离的_message_loop函数，避免多线程混乱
+    # 现在消息处理逻辑已经集成到_connect_websocket中
 
     async def _heartbeat_sender(self):
         """OKX心跳发送 - 每20秒向服务器发送'ping'"""
@@ -376,33 +370,19 @@ class OKXWebSocketClient:
                 self.logger.error(f"心跳监控错误: {e}")
 
     async def connect(self) -> bool:
-        """连接到WebSocket"""
+        """连接到WebSocket - 修复死锁问题"""
         if self.is_connected:
             self.logger.warning("已经连接，跳过连接")
             return True
 
         try:
-            # 尝试连接
+            # 🔥 直接运行_connect_websocket，因为它已经包含了完整的连接和消息处理逻辑
+            # 不再需要额外的消息处理循环，因为已经集成在_connect_websocket中
             connected = await self._connect_websocket()
 
             if connected:
-                self.is_connected = True
                 self.reconnect_attempts = 0
                 self.last_heartbeat_time = time.time()
-
-                # 启动消息处理
-                asyncio.create_task(self._message_loop())
-
-                # 启动心跳发送
-                if self._heartbeat_sender_task:
-                    self._heartbeat_sender_task.cancel()
-                self._heartbeat_sender_task = asyncio.create_task(self._heartbeat_sender())
-
-                # 启动心跳监控
-                if self._heartbeat_task:
-                    self._heartbeat_task.cancel()
-                self._heartbeat_task = asyncio.create_task(self._heartbeat_monitor())
-
                 self.logger.info(f"WebSocket连接成功: {self.symbol}")
                 return True
             else:
