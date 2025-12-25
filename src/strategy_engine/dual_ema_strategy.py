@@ -87,6 +87,19 @@ class DualEMAStrategy:
                 current_price, symbol
             )
 
+            # --- 新增代码：让机器人每分钟都报个平安 ---
+            # 哪怕是 HOLD，也打印出来，但为了不刷屏，可以只打印关键信息
+            if signal['signal'] == 'HOLD':
+                # 使用 INFO 级别，这样肯定能被记录下来
+                # 打印当前的 EMA 值，让你知道离交叉还有多远
+                logger.info(f"[HEARTBEAT] {symbol} 正在监控 | 价格: {current_price:.2f} | "
+                            f"快线: {current_ema_fast:.2f} | 慢线: {current_ema_slow:.2f} | "
+                            f"状态: 等待交叉")
+            else:
+                # 如果是交易信号，加倍醒目
+                logger.info(f"🚀 [SIGNAL] 触发交易！{signal['signal']} @ {current_price}")
+            # ----------------------------------------
+
             # 更新历史状态
             self.previous_ema_fast = current_ema_fast
             self.previous_ema_slow = current_ema_slow

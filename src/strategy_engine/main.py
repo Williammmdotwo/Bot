@@ -629,6 +629,21 @@ def _generate_fallback_signal(enhanced_analysis: Dict, market_data: Dict, symbol
         signal["available_margin"] = 1000
 
         logger.info(f"Dual EMA signal generated: {signal['side']} with confidence {signal['confidence']}")
+
+        # --- 新增代码：在返回信号前强制打印一行日志 ---
+        # 哪怕是 HOLD，也打印出来，但为了不刷屏，可以只打印关键信息
+        if signal['side'] == 'HOLD':
+            current_price = signal.get('current_price', 0)
+            ema_fast = signal.get('ema_fast', 0)
+            ema_slow = signal.get('ema_slow', 0)
+            logger.info(f"[HEARTBEAT] 主策略循环返回 HOLD | 价格: {current_price:.2f} | "
+                        f"快线: {ema_fast:.2f} | 慢线: {ema_slow:.2f} | "
+                        f"状态: 等待交易机会")
+        else:
+            current_price = signal.get('current_price', 0)
+            logger.info(f"🚀 [MAIN_SIGNAL] 主策略循环触发 {signal['side']} @ {current_price:.2f}!")
+        # ----------------------------------------
+
         return signal
 
     except Exception as e:
