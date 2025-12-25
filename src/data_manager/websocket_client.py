@@ -146,9 +146,15 @@ class OKXWebSocketClient:
             # 修复：公共频道不需要登录，直接发送订阅消息
             self.logger.info("🔓 使用公共频道，跳过登录步骤")
 
-            # 🔥 关键修复：连接成功后立即发送订阅消息
-            # 这样确保每次重连都会重新订阅
-            await self._send_subscribe_message()
+            # 🚨 强制发送订阅消息 - 连接成功后立即订阅
+            # ------------------------------------------------
+            subscribe_msg = {
+                "op": "subscribe",
+                "args": [{"channel": "candle5m", "instId": "BTC-USDT"}]
+            }
+            await self.connection.send(json.dumps(subscribe_msg))
+            self.logger.info(f"📤 强制发送订阅: {subscribe_msg}")
+            # ------------------------------------------------
 
             return True
 
@@ -278,6 +284,9 @@ class OKXWebSocketClient:
             async for message in self.connection:
                 if not self.is_connected:
                     break
+
+                # 🔍 调试输出：打印原始消息前200个字符
+                print(f"DEBUG_RAW: {message[:200]}")
 
                 await self._handle_message(message)
 
