@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 class DualEMAStrategy:
     """双均线突破策略类"""
-    
+
     def __init__(self, ema_fast: int = 9, ema_slow: int = 21):
         """
         初始化双均线策略
-        
+
         Args:
             ema_fast: 快线周期，默认9
             ema_slow: 慢线周期，默认21
@@ -28,43 +28,43 @@ class DualEMAStrategy:
         self.previous_ema_slow = None
         self.last_signal = None
         self.last_signal_time = None
-        
+
         logger.info(f"Dual EMA Strategy initialized: EMA_{ema_fast} / EMA_{ema_slow}")
-    
+
     def generate_signal(self, historical_data: Dict[str, Any], symbol: str) -> Dict[str, Any]:
         """
         生成交易信号
-        
+
         Args:
             historical_data: 包含历史数据的字典
             symbol: 交易对符号
-            
+
         Returns:
             Dict: 交易信号字典
         """
         try:
-            # 获取15分钟时间框架的数据
-            timeframe_15m = historical_data.get("historical_analysis", {}).get("15m", {})
-            
-            if not timeframe_15m or "ohlcv" not in timeframe_15m:
-                logger.warning(f"No 15m OHLCV data available for {symbol}")
-                return self._create_hold_signal(symbol, "No 15m data available")
-            
-            ohlcv_data = timeframe_15m["ohlcv"]
-            
+            # 获取5分钟时间框架的数据
+            timeframe_data = historical_data.get("historical_analysis", {}).get("5m", {})
+
+            if not timeframe_data or "ohlcv" not in timeframe_data:
+                logger.warning(f"No 5m OHLCV data available for {symbol}")
+                return self._create_hold_signal(symbol, "No 5m data available")
+
+            ohlcv_data = timeframe_data["ohlcv"]
+
             # 检查数据量是否足够
             if len(ohlcv_data) < self.ema_slow + 1:
-                logger.warning(f"Insufficient 15m data for {symbol}: {len(ohlcv_data)} candles (need {self.ema_slow + 1})")
+                logger.warning(f"Insufficient 5m data for {symbol}: {len(ohlcv_data)} candles (need {self.ema_slow + 1})")
                 return self._create_hold_signal(symbol, f"Insufficient data: {len(ohlcv_data)} candles")
-            
+
             # 提取收盘价
             closes = [candle[4] for candle in ohlcv_data]
             current_price = closes[-1]
-            
+
             # 计算当前EMA值
             current_ema_fast = TechnicalIndicators.calculate_ema(closes, self.ema_fast)
             current_ema_slow = TechnicalIndicators.calculate_ema(closes, self.ema_slow)
-            
+
             # 计算上一时刻的EMA值（去掉最后一根K线）
             if len(closes) >= self.ema_slow + 1:
                 prev_closes = closes[:-1]  # 去掉最后一根K线
@@ -74,33 +74,35 @@ class DualEMAStrategy:
                 # 如果数据不够，使用当前值作为前一个值
                 prev_ema_fast = current_ema_fast
                 prev_ema_slow = current_ema_slow
-            
-            logger.info(f"EMA values for {symbol}: FAST={current_ema_fast:.2f} (prev={prev_ema_fast:.2f}), "
-                       f"SLOW={current_ema_slow:.2f} (prev={prev_ema_slow:.2f})")
-            
+
+            logger.info(f"[STRATEGY] {symbol} 5m分析: 当前价格={current_price:.2f} | "
+                        f"快线EMA_{self.ema_fast}={current_ema_fast:.2f} | "
+                        f"慢线EMA_{self.ema_slow}={current_ema_slow:.2f} | "
+                        f"差值={(current_ema_fast - current_ema_slow):.4f}")
+
             # 检测交叉信号
             signal = self._detect_crossover(
                 current_ema_fast, current_ema_slow,
                 prev_ema_fast, prev_ema_slow,
                 current_price, symbol
             )
-            
+
             # 更新历史状态
             self.previous_ema_fast = current_ema_fast
             self.previous_ema_slow = current_ema_slow
-            
+
             return signal
-            
+
         except Exception as e:
             logger.error(f"Error generating signal for {symbol}: {e}")
             return self._create_hold_signal(symbol, f"Strategy error: {str(e)}")
-    
+
     def _detect_crossover(self, current_fast: float, current_slow: float,
                          prev_fast: float, prev_slow: float,
                          current_price: float, symbol: str) -> Dict[str, Any]:
         """
         检测EMA交叉信号
-        
+
         Args:
             current_fast: 当前快线EMA值
             current_slow: 当前慢线EMA值
@@ -108,23 +110,23 @@ class DualEMAStrategy:
             prev_slow: 前一时刻慢线EMA值
             current_price: 当前价格
             symbol: 交易对符号
-            
+
         Returns:
             Dict: 交易信号
         """
         decision_id = str(uuid.uuid4())
         current_time = int(time.time())
-        
+
         # 金叉：快线从下往上穿过慢线
-        if (current_fast > current_slow and 
-            prev_fast <= prev_slow and 
+        if (current_fast > current_slow and
+            prev_fast <= prev_slow and
             self.last_signal != "BUY"):
-            
+
             logger.info(f"🟢 GOLDEN CROSS detected for {symbol}: EMA_{self.ema_fast} ({current_fast:.2f}) > EMA_{self.ema_slow} ({current_slow:.2f})")
-            
+
             self.last_signal = "BUY"
             self.last_signal_time = current_time
-            
+
             return {
                 "signal": "BUY",
                 "symbol": symbol,
@@ -139,17 +141,17 @@ class DualEMAStrategy:
                 "ema_slow": current_slow,
                 "current_price": current_price
             }
-        
+
         # 死叉：快线从上往下穿过慢线
-        elif (current_fast < current_slow and 
-              prev_fast >= prev_slow and 
+        elif (current_fast < current_slow and
+              prev_fast >= prev_slow and
               self.last_signal != "SELL"):
-            
+
             logger.info(f"🔴 DEATH CROSS detected for {symbol}: EMA_{self.ema_fast} ({current_fast:.2f}) < EMA_{self.ema_slow} ({current_slow:.2f})")
-            
+
             self.last_signal = "SELL"
             self.last_signal_time = current_time
-            
+
             return {
                 "signal": "SELL",
                 "symbol": symbol,
@@ -164,29 +166,29 @@ class DualEMAStrategy:
                 "ema_slow": current_slow,
                 "current_price": current_price
             }
-        
+
         # 无信号
         else:
             return self._create_hold_signal(
-                symbol, 
+                symbol,
                 f"No crossover: EMA_{self.ema_fast}={current_fast:.2f}, EMA_{self.ema_slow}={current_slow:.2f}",
                 current_price,
                 current_fast,
                 current_slow
             )
-    
+
     def _create_hold_signal(self, symbol: str, reason: str, current_price: float = 0,
                            ema_fast: float = 0, ema_slow: float = 0) -> Dict[str, Any]:
         """
         创建持有信号
-        
+
         Args:
             symbol: 交易对符号
             reason: 持有原因
             current_price: 当前价格
             ema_fast: 快线EMA值
             ema_slow: 慢线EMA值
-            
+
         Returns:
             Dict: 持有信号
         """
@@ -204,7 +206,7 @@ class DualEMAStrategy:
             "ema_slow": ema_slow,
             "current_price": current_price
         }
-    
+
     def reset_state(self):
         """重置策略状态"""
         self.previous_ema_fast = None
@@ -226,11 +228,11 @@ def get_dual_ema_strategy() -> DualEMAStrategy:
 def generate_dual_ema_signal(historical_data: Dict[str, Any], symbol: str) -> Dict[str, Any]:
     """
     生成双均线交易信号的便捷函数
-    
+
     Args:
         historical_data: 历史数据
         symbol: 交易对符号
-        
+
     Returns:
         Dict: 交易信号
     """
