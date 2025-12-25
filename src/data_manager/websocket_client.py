@@ -28,6 +28,9 @@ class OKXWebSocketClient:
         }
     }
 
+    # ✅ 强制使用business频道
+    BUSINESS_URL = "wss://ws.okx.com:8443/ws/v5/business"
+
     def __init__(self, redis_client: Optional[redis.Redis] = None):
         self.redis = redis_client
         self.logger = logging.getLogger(__name__)
@@ -136,9 +139,9 @@ class OKXWebSocketClient:
     async def _connect_websocket(self) -> bool:
         """建立WebSocket连接 - 修复死锁问题"""
         try:
-            # 使用public URL进行连接
-            ws_url = self.ws_urls["public"]
-            self.logger.info(f"连接到WebSocket: {ws_url} (环境: {self.env_config['environment_type']})")
+            # ✅ 强制使用business频道
+            ws_url = self.BUSINESS_URL
+            self.logger.info(f"连接到WebSocket: {ws_url} (环境: {self.env_config['environment_type']}) - 使用BUSINESS频道")
 
             # 🔥 使用 async with 上下文管理器 - 修复死锁问题
             async with websockets.connect(ws_url) as ws:
