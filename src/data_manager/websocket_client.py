@@ -64,17 +64,24 @@ class OKXWebSocketClient:
         self.logger.info(f"WebSocket客户端初始化完成 - 环境: {self.env_config['environment_type']}")
 
     def _get_ws_urls(self) -> Dict[str, str]:
-        """根据环境获取WebSocket URL"""
-        env_type = self.env_config["environment_type"]
+        """根据环境获取WebSocket URL - 已废弃，强制使用business频道"""
+        # 🚨 注释掉所有动态URL判断逻辑
+        # env_type = self.env_config["environment_type"]
+        #
+        # if env_type == "demo":
+        #     return self.WS_URLS["demo"]
+        # elif env_type == "production" or env_type == "live":
+        #     return self.WS_URLS["live"]
+        # else:
+        #     # 默认使用demo环境（安全优先）
+        #     self.logger.warning(f"未知环境类型: {env_type}，使用demo环境")
+        #     return self.WS_URLS["demo"]
 
-        if env_type == "demo":
-            return self.WS_URLS["demo"]
-        elif env_type == "production" or env_type == "live":
-            return self.WS_URLS["live"]
-        else:
-            # 默认使用demo环境（安全优先）
-            self.logger.warning(f"未知环境类型: {env_type}，使用demo环境")
-            return self.WS_URLS["demo"]
+        # 🚨 不管原来的代码是怎么根据 is_demo 自动判断 URL 的，全部注释掉
+        # 🚨 不管是 ws.okx.com 还是 wspap.okx.com，全部禁用
+
+        # 强制使用实盘业务频道（这是唯一能通的路）
+        return {"public": self.BUSINESS_URL, "private": self.BUSINESS_URL}
 
     def _generate_signature(self, timestamp: str, method: str, request_path: str, body: str = "") -> str:
         """生成OKX API签名"""
