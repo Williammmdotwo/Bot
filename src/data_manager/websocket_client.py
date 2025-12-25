@@ -146,14 +146,30 @@ class OKXWebSocketClient:
             # 修复：公共频道不需要登录，直接发送订阅消息
             self.logger.info("🔓 使用公共频道，跳过登录步骤")
 
-            # 🚨 强制发送订阅消息 - 连接成功后立即订阅
+            # 🚨 防弹代码：强制使用标准JSON库生成订阅消息
             # ------------------------------------------------
-            subscribe_msg = {
+            # 1. 构造字典对象（绝对标准格式）
+            subscribe_payload = {
                 "op": "subscribe",
-                "args": [{"channel": "candle5m", "instId": "BTC-USDT"}]
+                "args": [
+                    {
+                        "channel": "candle5m",
+                        "instId": "BTC-USDT"
+                    }
+                ]
             }
-            await self.connection.send(json.dumps(subscribe_msg))
-            self.logger.info(f"📤 强制发送订阅: {subscribe_msg}")
+
+            # 2. 转换成 JSON 字符串
+            # ensure_ascii=False 防止中文乱码（虽然这里没中文）
+            # separators=(',', ':') 去掉多余空格，压缩体积，防止有些服务器对空格敏感
+            json_str = json.dumps(subscribe_payload, ensure_ascii=False, separators=(',', ':'))
+
+            # 3. 打印最终发出去的字符串（这是关键！）
+            # 务必在日志里看这行，看看到底长什么样
+            self.logger.info(f"🚀 [DEBUG] 最终发送的订阅包内容: {json_str}")
+
+            # 4. 发送
+            await self.connection.send(json_str)
             # ------------------------------------------------
 
             return True
