@@ -113,88 +113,46 @@ class RESTClient:
             self.logger.error(f"Failed to fetch positions: {e}")
             raise
 
-    def fetch_ohlcv(self, symbol: str, since: int, limit: int, timeframe="5m", max_retries: int = 3):
-        """Fetch OHLCV data from OKX for data backfill with retry mechanism and data validation"""
-        # 确保最少获取50个K线数据
-        actual_limit = max(limit, 50)
+    def fetch_ohlcv(self, symbol: str, timeframe: str = '5m', limit: int = 100, since: int = None):
+        try:
+            self.logger.info(f"Fetching OHLCV for {symbol}")
 
-        for attempt in range(max_retries):
-            try:
-                self.logger.debug(f"OHLCV fetch attempt {attempt + 1}/{max_retries} for {symbol} {timeframe}")
+            # 映射 timeframe 格式 (OKX 格式和 CCXT 基本一样，不用大改)
+            params = {
+                'instId': symbol,
+                'bar': timeframe,
+                'limit': limit
+            }
+            if since:
+                params['after'] = since # OKX 的 after 其实是请求更旧的数据，这里可能逻辑不同
+                # 如果你需要"从某个时间点之后"，OKX 只有 'after' (过去) 和 'before' (未来)
+                # 为了简单起见，冷启动通常只需要"最新的 N 根"，所以不传 since 也可以
 
-                # 验证参数
-                if not symbol or not isinstance(symbol, str):
-                    raise ValueError(f"Invalid symbol: {symbol}")
+            # 🚀 直接调用 mark-price-candle (标记价格K线，最稳)
+            # 或者用 public_get_market_candles
+            response = self.public_exchange.public_get_market_candles(params)
 
-                if not timeframe or timeframe not in ["1m", "5m", "15m", "1h", "4h", "1d"]:
-                    raise ValueError(f"Invalid timeframe: {timeframe}")
-
-                if since <= 0:
-                    # 如果since无效，计算合理的时间范围
-                    timeframe_ms = self.exchange.parse_timeframe(timeframe) * 1000
-                    since = self.exchange.milliseconds() - actual_limit * timeframe_ms
-                    self.logger.warning(f"Invalid since parameter, calculated new since: {since}")
-
-                self.logger.info(f"Fetching OHLCV data for {symbol}, timeframe: {timeframe}, since: {since}, limit: {actual_limit}")
-
-                # 尝试获取数据
-                ohlcv_data = self.public_exchange.fetch_ohlcv(symbol, timeframe, since, actual_limit)
-
-                # 验证和清理数据
-                validated_data = self._validate_ohlcv_data(ohlcv_data, symbol, timeframe)
-
-
-
-                # 数据去重
-                validated_data = self._deduplicate_ohlcv_data(validated_data)
-
-                if validated_data:
-                    self.logger.info(f"Successfully fetched and validated {len(validated_data)} OHLCV candles for {symbol} {timeframe}")
-                    return validated_data
-                else:
-                    self.logger.warning(f"Data validation failed for {symbol} {timeframe} on attempt {attempt + 1}")
-                    if attempt < max_retries - 1:
-                        # 指数退避重试
-                        wait_time = 2 ** attempt
-                        self.logger.info(f"Retrying in {wait_time} seconds...")
-                        time.sleep(wait_time)
-                    continue
-
-            except ccxt.NetworkError as e:
-                self.logger.warning(f"Network error fetching OHLCV data for {symbol} {timeframe} on attempt {attempt + 1}: {e}")
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    self.logger.info(f"Retrying in {wait_time} seconds due to network error...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    self.logger.error(f"All {max_retries} attempts failed due to network error for {symbol} {timeframe}")
-                    raise
-
-            except ccxt.ExchangeError as e:
-                self.logger.warning(f"Exchange error fetching OHLCV data for {symbol} {timeframe} on attempt {attempt + 1}: {e}")
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    self.logger.info(f"Retrying in {wait_time} seconds due to exchange error...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    self.logger.error(f"All {max_retries} attempts failed due to exchange error for {symbol} {timeframe}")
-                    raise
-
-            except Exception as e:
-                self.logger.warning(f"Unexpected error fetching OHLCV data for {symbol} {timeframe} on attempt {attempt + 1}: {e}")
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    self.logger.info(f"Retrying in {wait_time} seconds due to unexpected error...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    self.logger.error(f"All {max_retries} attempts failed due to unexpected error for {symbol} {timeframe}")
-                    raise
-
-        self.logger.error(f"Failed to fetch OHLCV data for {symbol} {timeframe} after {max_retries} attempts")
-        return []
+            if response['code'] == '0' and response['data']:
+                # OKX 返回的数据格式: [ts, o, h, l, c, vol, ...] (字符串)
+                # 我们需要转成 [int, float, float, float, float, float]
+                ohlcvs = []
+                for item in response['data']:
+                    ohlcvs.append([
+                        int(item[0]),      # Timestamp
+                        float(item[1]),    # Open
+                        float(item[2]),    # High
+                        float(item[3]),    # Low
+                        float(item[4]),    # Close
+                        float(item[5])     # Volume
+                    ])
+                # OKX 返回是倒序的（最新的在前），CCXT 习惯正序，翻转一下
+                return sorted(ohlcvs, key=lambda x: x[0])
+            else:
+                self.logger.error(f"OHLCV API error: {response}")
+                return []
+        except Exception as e:
+            self.logger.error(f"Failed to fetch OHLCV: {e}")
+            return []
 
     def _validate_ohlcv_data(self, ohlcv_data: List, symbol: str, timeframe: str) -> List:
         """验证和清理OHLCV数据"""
@@ -349,26 +307,53 @@ class RESTClient:
 
         return data
 
-    def fetch_orderbook(self, symbol: str, limit: int = 100):
-        """Fetch order book depth data"""
+    def fetch_orderbook(self, symbol: str, limit: int = 10):
         try:
-            self.logger.info(f"Fetching order book for {symbol}, limit: {limit}")
-            return self.public_exchange.fetch_order_book(symbol, limit)
+            params = {'instId': symbol, 'sz': limit}
+            response = self.public_exchange.public_get_market_books(params)
+
+            if response['code'] == '0' and response['data']:
+                book = response['data'][0]
+                # 简单构造返回
+                return {
+                    'bids': [[float(p), float(v)] for p, v, _ in book['bids']],
+                    'asks': [[float(p), float(v)] for p, v, _ in book['asks']],
+                    'timestamp': int(book['ts'])
+                }
+            return None
         except Exception as e:
-            self.logger.error(f"Failed to fetch order book: {e}")
-            raise
+            self.logger.error(f"Failed to fetch orderbook: {e}")
+            return None
 
     def fetch_ticker(self, symbol: str):
         """Fetch 24hr ticker data"""
-        if self.use_mock:
-            return self._generate_mock_ticker(symbol)
-
         try:
             self.logger.info(f"Fetching ticker for {symbol}")
-            return self.public_exchange.fetch_ticker(symbol)
+            # 🚀 绕过 CCXT 解析，直接调 OKX 接口
+            # 注意：symbol 这里必须传 'BTC-USDT-SWAP' 这种格式
+            response = self.public_exchange.public_get_market_ticker({'instId': symbol})
+
+            # 手动提取我们需要的数据
+            if response['code'] == '0' and response['data']:
+                ticker_data = response['data'][0]
+                # 构造成 CCXT 风格的字典，保持兼容性
+                return {
+                    'symbol': symbol,
+                    'last': float(ticker_data['last']),
+                    'bid': float(ticker_data['bidPx']),
+                    'ask': float(ticker_data['askPx']),
+                    'high': float(ticker_data['high24h']),
+                    'low': float(ticker_data['low24h']),
+                    'volume': float(ticker_data['vol24h']),
+                    'quoteVolume': float(ticker_data['volCcy24h']),
+                    'timestamp': int(ticker_data['ts']),
+                }
+            else:
+                self.logger.error(f"Ticker API error: {response}")
+                return None
         except Exception as e:
             self.logger.error(f"Failed to fetch ticker: {e}")
-            raise
+            return None
 
     def fetch_recent_trades(self, symbol: str, limit: int = 100):
         """Fetch recent trades data"""
