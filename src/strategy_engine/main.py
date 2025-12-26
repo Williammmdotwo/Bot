@@ -46,7 +46,7 @@ def main_strategy_loop(data_manager, symbol="BTC-USDT", use_demo=False, postgres
         except NameError:
             # 临时修复：直接使用 technical_analysis
             logger.warning("_merge_historical_with_current function not found, using technical_analysis directly")
-            enhanced_analysis = technical_analysis
+            enhanced_analysis = historical_data.get("historical_analysis", {})
 
         # Generate trading signal based on technical analysis
         parsed_signal = _generate_fallback_signal(enhanced_analysis, market_data, symbol)
