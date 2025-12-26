@@ -117,22 +117,22 @@ class RESTClient:
         try:
             self.logger.info(f"Fetching OHLCV for {symbol}")
 
-            # 映射 timeframe 格式 (OKX 格式和 CCXT 基本一样，不用大改)
+            # 1. 修正时间周期格式 (把 h 变成 H)
+            okx_timeframe = timeframe.replace('h', 'H')
+
             params = {
                 'instId': symbol,
-                'bar': timeframe,
+                'bar': okx_timeframe,
                 'limit': limit
             }
-            # 🔥 修复：删除时间戳参数，避免51000错误
-            # 冷启动只需要最新的K线数据，不需要传时间参数
 
-            # 🚀 直接调用 mark-price-candle (标记价格K线，最稳)
-            # 或者用 public_get_market_candles
-            response = self.public_exchange.public_get_market_candles(params)
+            # 2. 改用"标记价格K线"接口 (Mark Price Candles)
+            # 这在模拟盘合约交易中通常更可靠
+            response = self.public_exchange.public_get_market_mark_price_candles(params)
 
             if response['code'] == '0' and response['data']:
                 # OKX 返回的数据格式: [ts, o, h, l, c, vol, ...] (字符串)
-                # 我们需要转成 [int, float, float, float, float, float]
+                # 标记价格K线没有成交量，填充0
                 ohlcvs = []
                 for item in response['data']:
                     ohlcvs.append([
@@ -141,7 +141,7 @@ class RESTClient:
                         float(item[2]),    # High
                         float(item[3]),    # Low
                         float(item[4]),    # Close
-                        float(item[5])     # Volume
+                        0.0                # Volume (标记价格没有成交量，填0即可)
                     ])
                 # OKX 返回是倒序的（最新的在前），CCXT 习惯正序，翻转一下
                 return sorted(ohlcvs, key=lambda x: x[0])

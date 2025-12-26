@@ -91,6 +91,44 @@ def main_strategy_loop(data_manager, symbol="BTC-USDT", use_demo=False, postgres
         logger.error(f"Strategy loop error: {e}")
         return {"signal": "HOLD", "reason": f"Unexpected error: {str(e)}", "decision_id": decision_id if "decision_id" in locals() else "unknown", "timestamp": int(time.time())}
 
+def _generate_fallback_signal(enhanced_analysis: Dict, market_data: Dict, symbol: str) -> Dict[str, Any]:
+    """使用双均线策略生成交易信号"""
+    try:
+        logger.info("Generating signal using Dual EMA Crossover Strategy")
+
+        # 动态导入防止循环依赖
+        try:
+            from .dual_ema_strategy import generate_dual_ema_signal
+        except ImportError:
+            from src.strategy_engine.dual_ema_strategy import generate_dual_ema_signal
+
+        # 构造策略需要的历史数据格式
+        # 注意：这里我们确保传给策略的是它能读懂的格式
+        historical_input = {
+            "historical_analysis": enhanced_analysis
+        }
+
+        # 生成双均线信号
+        ema_signal = generate_dual_ema_signal(historical_input, symbol)
+
+        if not ema_signal:
+            logger.warning("Dual EMA strategy failed to generate signal")
+            return {"signal": "HOLD", "reason": "Strategy returned None"}
+
+        # 转换信号格式以匹配主逻辑
+        return {
+            "side": ema_signal.get("signal", "HOLD"),
+            "confidence": ema_signal.get("confidence", 0),
+            "reasoning": ema_signal.get("reasoning", ""),
+            "position_size": ema_signal.get("position_size", 0),
+            "stop_loss": ema_signal.get("stop_loss", 0),
+            "take_profit": ema_signal.get("take_profit", 0)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to generate Dual EMA signal: {e}")
+        return {"signal": "HOLD", "reason": f"Error: {str(e)}"}
+
 def _format_indicators_for_display(indicators: Dict) -> str:
     """Format technical indicators for display"""
     if not indicators or "error" in indicators:
