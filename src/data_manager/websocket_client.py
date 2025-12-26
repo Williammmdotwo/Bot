@@ -34,7 +34,7 @@ class OKXWebSocketClient:
     def __init__(self, redis_client: Optional[redis.Redis] = None):
         self.redis = redis_client
         self.logger = logging.getLogger(__name__)
-        self.symbol = "BTC-USDT"  # OKX使用BTC-USDT格式
+        self.symbol = "BTC-USDT-SWAP"  # OKX使用BTC-USDT-SWAP格式
         self.timeframe = "5m"
 
         # 连接状态管理
@@ -165,7 +165,7 @@ class OKXWebSocketClient:
                     "args": [
                         {
                             "channel": "candle5m",
-                            "instId": "BTC-USDT"
+                            "instId": "BTC-USDT-SWAP"
                         }
                     ]
                 }

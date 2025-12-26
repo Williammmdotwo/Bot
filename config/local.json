@@ -59,7 +59,7 @@
     "test_duration_minutes": 30,
     "signal_interval_seconds": 15,
     "progress_interval_seconds": 30,
-    "default_symbols": ["BTC-USDT", "ETH-USDT"],
+    "default_symbols": ["BTC-USDT-SWAP", "ETH-USDT"],
     "default_timeframes": ["5m", "15m", "1h"]
   },
   "risk_limits": {

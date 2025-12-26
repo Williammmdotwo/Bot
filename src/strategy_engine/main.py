@@ -240,7 +240,7 @@ if __name__ == "__main__":
             logger.info("Running strategy loop in test mode...")
             while True:
                 try:
-                    signal = main_strategy_loop(data_manager=data_handler, symbol="BTC-USDT")
+                    signal = main_strategy_loop(data_manager=data_handler, symbol="BTC-USDT-SWAP")
                     logger.info(f"Generated signal: {signal}")
                     time.sleep(60)  # Run every minute
                 except KeyboardInterrupt:
