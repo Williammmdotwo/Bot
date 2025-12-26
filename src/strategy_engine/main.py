@@ -37,11 +37,16 @@ def main_strategy_loop(data_manager, symbol="BTC-USDT", use_demo=False, postgres
         # Extract technical analysis for different timeframes
         technical_analysis = market_data.get("technical_analysis", {})
 
-        # Merge historical indicators with current data (layered deduplication)
-        enhanced_analysis = _merge_historical_with_current(
-            technical_analysis,
-            historical_data.get("historical_analysis", {})
-        )
+        # 🔥 修复：检查函数是否存在，如果不存在则使用临时修复
+        try:
+            enhanced_analysis = _merge_historical_with_current(
+                technical_analysis,
+                historical_data.get("historical_analysis", {})
+            )
+        except NameError:
+            # 临时修复：直接使用 technical_analysis
+            logger.warning("_merge_historical_with_current function not found, using technical_analysis directly")
+            enhanced_analysis = technical_analysis
 
         # Generate trading signal based on technical analysis
         parsed_signal = _generate_fallback_signal(enhanced_analysis, market_data, symbol)

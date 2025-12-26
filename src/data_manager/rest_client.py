@@ -123,10 +123,8 @@ class RESTClient:
                 'bar': timeframe,
                 'limit': limit
             }
-            if since:
-                params['after'] = since # OKX 的 after 其实是请求更旧的数据，这里可能逻辑不同
-                # 如果你需要"从某个时间点之后"，OKX 只有 'after' (过去) 和 'before' (未来)
-                # 为了简单起见，冷启动通常只需要"最新的 N 根"，所以不传 since 也可以
+            # 🔥 修复：删除时间戳参数，避免51000错误
+            # 冷启动只需要最新的K线数据，不需要传时间参数
 
             # 🚀 直接调用 mark-price-candle (标记价格K线，最稳)
             # 或者用 public_get_market_candles
