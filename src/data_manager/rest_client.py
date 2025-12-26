@@ -34,22 +34,39 @@ class RESTClient:
         credentials, has_credentials = get_api_credentials()
         ccxt_config = get_ccxt_config()
 
+        # 🔥 核心修复：准备配置字典
+        exchange_config = {
+            'apiKey': credentials['api_key'] if has_credentials else '',
+            'secret': credentials['secret'] if has_credentials else '',
+            'password': credentials['passphrase'] if has_credentials else '',
+            'enableRateLimit': True,
+            'sandbox': ccxt_config['sandbox']
+        }
+
+        # 🔥 核心修复：如果是模拟盘，必须加这个 Header
+        if ccxt_config['sandbox']:
+            exchange_config['headers'] = {
+                'x-simulated-trading': '1'
+            }
+            # 也可以加上这个，双重保险
+            exchange_config['options'] = {'defaultType': 'spot'}
+
         # Initialize ccxt.okx exchange instance
         if has_credentials:
-            self.exchange = ccxt.okx(ccxt_config)
-            # 使用CCXT默认的sandbox配置，不强制修改域名
+            self.exchange = ccxt.okx(exchange_config)
+            # 使用我们自己的配置，包含headers
             if ccxt_config['sandbox']:
-                self.logger.info(f"RESTClient initialized with OKX API credentials (demo environment) - using CCXT default sandbox")
+                self.logger.info(f"RESTClient initialized with OKX API credentials (demo environment) - with simulated trading header")
             else:
-                self.logger.info(f"RESTClient initialized with OKX API credentials (production environment) - using CCXT default")
+                self.logger.info(f"RESTClient initialized with OKX API credentials (production environment)")
         else:
             # Create client without credentials for public data only
-            self.exchange = ccxt.okx(ccxt_config)
-            # 使用CCXT默认的sandbox配置，不强制修改域名
+            self.exchange = ccxt.okx(exchange_config)
+            # 使用我们自己的配置，包含headers
             if ccxt_config['sandbox']:
-                self.logger.warning(f"RESTClient initialized without API credentials (demo environment) - public data only - using CCXT default sandbox")
+                self.logger.warning(f"RESTClient initialized without API credentials (demo environment) - public data only - with simulated trading header")
             else:
-                self.logger.warning(f"RESTClient initialized without API credentials (production environment) - public data only - using CCXT default")
+                self.logger.warning(f"RESTClient initialized without API credentials (production environment) - public data only")
 
         self.use_demo = ccxt_config["sandbox"]
         self.has_credentials = has_credentials
