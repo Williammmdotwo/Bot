@@ -117,6 +117,9 @@ class RESTClient:
         try:
             self.logger.info(f"Fetching OHLCV for {symbol}")
 
+            # 🔥 新增这一行：强制转为字符串，防止 int 报错
+            timeframe = str(timeframe)
+
             # 1. 修正时间周期格式 (把 h 变成 H)
             okx_timeframe = timeframe.replace('h', 'H')
 

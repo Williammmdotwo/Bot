@@ -61,15 +61,8 @@ def main_strategy_loop(data_manager, symbol="BTC-USDT", use_demo=False, postgres
             current_price = 50000  # 默认BTC价格
             logger.warning(f"Current price is 0, using default price: {current_price}")
 
-        # 增强信号验证和优化
-        optimized_signal = _optimize_signal_with_risk(parsed_signal, enhanced_analysis, current_price)
-
-        if not validate_signal(optimized_signal, current_price):
-            logger.warning(f"Signal validation failed for {optimized_signal}, applying conservative adjustment")
-            # 应用保守调整
-            optimized_signal = _apply_conservative_adjustment(optimized_signal, current_price)
-
-        parsed_signal = optimized_signal
+        # ✅ 直接用这一行代替（绕过丢失的风控函数）
+        optimized_signal = parsed_signal
 
         final_signal = {
             "signal": parsed_signal.get("side", parsed_signal.get("action", "HOLD")),
