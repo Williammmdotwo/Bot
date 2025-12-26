@@ -54,6 +54,9 @@ class DualEMAStrategy:
 
             # 检查数据量是否足够
             if len(ohlcv_data) < self.ema_slow + 1:
+                # 🔥 加上这句
+                logger.info(f"⏳ [LOADING] 数据积累中: 当前 {len(ohlcv_data)} / 需要 {self.ema_slow + 1}")
+
                 logger.warning(f"Insufficient 5m data for {symbol}: {len(ohlcv_data)} candles (need {self.ema_slow + 1})")
                 return self._create_hold_signal(symbol, f"Insufficient data: {len(ohlcv_data)} candles")
 
