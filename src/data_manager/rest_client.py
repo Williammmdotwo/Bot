@@ -68,6 +68,22 @@ class RESTClient:
             else:
                 self.logger.warning(f"RESTClient initialized without API credentials (production environment) - public data only")
 
+        # 🔥🔥🔥 新增：创建一个"匿名"的公共客户端 🔥🔥🔥
+        public_config = {
+            'enableRateLimit': True,
+            'options': {'defaultType': 'swap'},  # 默认为合约
+        }
+
+        # 如果是模拟盘，必须带上Header，但绝不带Key！
+        if ccxt_config['sandbox']:
+            public_config['headers'] = {'x-simulated-trading': '1'}
+
+        self.public_exchange = ccxt.okx(public_config)
+        if ccxt_config['sandbox']:
+            self.public_exchange.set_sandbox_mode(True)
+
+        self.logger.info("RESTClient: Public (Anonymous) client initialized for market data")
+
         self.use_demo = ccxt_config["sandbox"]
         self.has_credentials = has_credentials
 
@@ -122,7 +138,7 @@ class RESTClient:
                 self.logger.info(f"Fetching OHLCV data for {symbol}, timeframe: {timeframe}, since: {since}, limit: {actual_limit}")
 
                 # 尝试获取数据
-                ohlcv_data = self.exchange.fetch_ohlcv(symbol, timeframe, since, actual_limit)
+                ohlcv_data = self.public_exchange.fetch_ohlcv(symbol, timeframe, since, actual_limit)
 
                 # 验证和清理数据
                 validated_data = self._validate_ohlcv_data(ohlcv_data, symbol, timeframe)
@@ -337,7 +353,7 @@ class RESTClient:
         """Fetch order book depth data"""
         try:
             self.logger.info(f"Fetching order book for {symbol}, limit: {limit}")
-            return self.exchange.fetch_order_book(symbol, limit)
+            return self.public_exchange.fetch_order_book(symbol, limit)
         except Exception as e:
             self.logger.error(f"Failed to fetch order book: {e}")
             raise
@@ -349,7 +365,7 @@ class RESTClient:
 
         try:
             self.logger.info(f"Fetching ticker for {symbol}")
-            return self.exchange.fetch_ticker(symbol)
+            return self.public_exchange.fetch_ticker(symbol)
         except Exception as e:
             self.logger.error(f"Failed to fetch ticker: {e}")
             raise
