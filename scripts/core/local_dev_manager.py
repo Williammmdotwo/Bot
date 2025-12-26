@@ -114,7 +114,8 @@ class LocalDevManager:
             'ATHENA_ENV': 'local',
             'DISABLE_REDIS': 'true',  # 本地开发禁用Redis
             'USE_DATABASE': 'false',  # 本地开发使用模拟数据
-            'INTERNAL_SERVICE_TOKEN': 'athena-local-dev-token'
+            'INTERNAL_SERVICE_TOKEN': 'athena-local-dev-token',
+            'RUN_STRATEGY_LOOP': 'true'  # 🔥 强制开启策略循环模式！
         })
 
         success_count = 0
@@ -126,6 +127,11 @@ class LocalDevManager:
         for service_name in startup_order:
             if service_name in self.services and self.services[service_name].get('enabled', True):
                 total_count += 1
+                if service_name == "strategy_engine":  # 🔥 特殊处理策略引擎
+                    # 强制设置策略循环环境变量
+                    env['RUN_STRATEGY_LOOP'] = 'true'  # 🔥 强制开启循环模式！
+                    logger.info(f"🔥 强制为 {service_name} 设置 RUN_STRATEGY_LOOP=true")
+
                 if self._start_service(service_name, self.services[service_name], env):
                     success_count += 1
 
@@ -221,7 +227,7 @@ class LocalDevManager:
 
     def stop_services(self):
         """停止所有服务"""
-        logger.info("🛑 停止所有服务...")
+        logger.info("� 停止所有服务...")
 
         for service_name, process in self.service_processes.items():
             try:
