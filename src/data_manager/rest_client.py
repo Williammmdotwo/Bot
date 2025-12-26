@@ -129,13 +129,16 @@ class RESTClient:
                 'limit': limit
             }
 
-            # 2. 改用"标记价格K线"接口 (Mark Price Candles)
-            # 这在模拟盘合约交易中通常更可靠
-            response = self.public_exchange.public_get_market_mark_price_candles(params)
+            # 🔥 调试打印：看看参数到底长啥样
+            self.logger.info(f"👉 K-Line Params: {params}")
+
+            # 🔥 改回标准 K 线接口 (public_get_market_candles)
+            # 因为我们现在是 SWAP，标准接口是支持的
+            response = self.public_exchange.public_get_market_candles(params)
 
             if response['code'] == '0' and response['data']:
                 # OKX 返回的数据格式: [ts, o, h, l, c, vol, ...] (字符串)
-                # 标记价格K线没有成交量，填充0
+                # 标准K线接口有真实成交量
                 ohlcvs = []
                 for item in response['data']:
                     ohlcvs.append([
@@ -144,7 +147,7 @@ class RESTClient:
                         float(item[2]),    # High
                         float(item[3]),    # Low
                         float(item[4]),    # Close
-                        0.0                # Volume (标记价格没有成交量，填0即可)
+                        float(item[5])     # Volume (标准接口有真实成交量)
                     ])
                 # OKX 返回是倒序的（最新的在前），CCXT 习惯正序，翻转一下
                 return sorted(ohlcvs, key=lambda x: x[0])
