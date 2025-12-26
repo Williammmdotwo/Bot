@@ -115,6 +115,14 @@ class RESTClient:
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = '5m', limit: int = 100, since: int = None):
         try:
+            # 🔥🔥🔥 智能纠错开始 🔥🔥🔥
+            # 如果 timeframe 看起来像个时间戳（纯数字且很长），说明参数传歪了
+            if str(timeframe).replace('.', '').isdigit() and len(str(timeframe)) > 8:
+                self.logger.warning(f"⚠️ 参数错位检测: timeframe={timeframe} 看起来像时间戳，正在自动修正...")
+                since = int(float(timeframe))  # 把这个值赋给 since
+                timeframe = '5m'               # 强制把 timeframe 设回默认值 5m
+            # 🔥🔥🔥 智能纠错结束 🔥🔥🔥
+
             self.logger.info(f"Fetching OHLCV for {symbol}")
 
             # 🔥 新增这一行：强制转为字符串，防止 int 报错
