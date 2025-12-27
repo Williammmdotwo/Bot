@@ -285,8 +285,8 @@ if __name__ == "__main__":
                 except Exception as e:
                     logger.error(f"Strategy loop error: {e}", exc_info=True)
 
-                # 🔥 必须要有心跳日志，方便后面做日志监控
-                logger.info("[HEARTBEAT] Strategy is running normally...")
+                # 🔥 心跳日志改为 DEBUG 级别，减少日志刷屏
+                logger.debug("[HEARTBEAT] Strategy is running normally...")
 
                 time.sleep(60)  # 1分钟跑一次
         else:

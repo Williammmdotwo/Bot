@@ -132,9 +132,9 @@ def setup_logging():
                 },
                 'rotating_file': {
                     'class': 'logging.handlers.RotatingFileHandler',
-                    'level': 'DEBUG',
+                    'level': log_level,  # 🔥 改用变量，遵循环境变量配置
                     'formatter': 'standard',
-                    'filename': log_file,  # 🔥 使用动态路径
+                    'filename': log_file,
                     'maxBytes': 10485760,  # 10MB
                     'backupCount': 5,
                     'encoding': 'utf-8'
@@ -160,6 +160,14 @@ def setup_logging():
 
         # 应用配置
         logging.config.dictConfig(config)
+
+        # 🔥 屏蔽第三方库的繁琐日志（只显示WARNING及以上）
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        logging.getLogger('requests').setLevel(logging.WARNING)
+        logging.getLogger('websockets').setLevel(logging.WARNING)
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('ccxt').setLevel(logging.WARNING)
+        logging.getLogger('aiohttp').setLevel(logging.WARNING)
 
         # 记录配置信息
         setup_logger = logging.getLogger(__name__)

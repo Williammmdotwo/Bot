@@ -76,6 +76,7 @@ dist/
 docker-compose.override.yml
 docker-compose.local.yml
 
+quant_bot.egg-info/
 # Node.js (for frontend)
 node_modules/
 .next/
