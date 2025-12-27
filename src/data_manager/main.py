@@ -12,14 +12,14 @@ from datetime import datetime, timedelta
 
 # Fix relative imports for direct execution
 try:
-    from .websocket_client import OKXWebSocketClient
-    from .rest_client import RESTClient
-    from .technical_indicators import TechnicalIndicators
+    from .clients.websocket_client import OKXWebSocketClient
+    from .clients.rest_client import RESTClient
+    from .core.technical_indicators import TechnicalIndicators
     from src.utils.environment_utils import get_data_source_config, get_data_source_label, is_using_mock_data
 except ImportError:
-    from src.data_manager.websocket_client import OKXWebSocketClient
-    from src.data_manager.rest_client import RESTClient
-    from src.data_manager.technical_indicators import TechnicalIndicators
+    from src.data_manager.clients.websocket_client import OKXWebSocketClient
+    from src.data_manager.clients.rest_client import RESTClient
+    from src.data_manager.core.technical_indicators import TechnicalIndicators
     from src.utils.environment_utils import get_data_source_config, get_data_source_label, is_using_mock_data
 
 class DataHandler:
