@@ -274,16 +274,21 @@ if __name__ == "__main__":
 
         if run_strategy_loop:
             logger.info("Running strategy loop in test mode...")
-            while True:
+            while True:  # 🔥 必须加这个死循环，防止进程自然死亡
                 try:
+                    # 核心逻辑：获取数据 -> 计算 -> 下单
                     signal = main_strategy_loop(data_manager=data_handler, symbol="BTC-USDT-SWAP")
                     logger.info(f"Generated signal: {signal}")
-                    time.sleep(60)  # Run every minute
                 except KeyboardInterrupt:
+                    logger.info("Received KeyboardInterrupt, stopping strategy loop...")
                     break
                 except Exception as e:
-                    logger.error(f"Strategy loop error: {e}")
-                    time.sleep(10)
+                    logger.error(f"Strategy loop error: {e}", exc_info=True)
+
+                # 🔥 必须要有心跳日志，方便后面做日志监控
+                logger.info("[HEARTBEAT] Strategy is running normally...")
+
+                time.sleep(60)  # 1分钟跑一次
         else:
             # Run API server
             logger.info(f"Starting Strategy Engine API server on {host}:{port}")

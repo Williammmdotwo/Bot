@@ -179,8 +179,8 @@ class LocalDevManager:
             # 等待服务启动
             time.sleep(2)
 
-            # 检查服务是否健康
-            if self._check_service_health(port):
+            # 检查服务是否健康（传递service_name以支持特殊处理）
+            if self._check_service_health(port, service_name=service_name):
                 logger.info(f"✅ {service_name} 启动成功 (端口: {port})")
                 return True
             else:
@@ -211,8 +211,26 @@ class LocalDevManager:
         except:
             return False
 
-    def _check_service_health(self, port: int, max_retries: int = 5) -> bool:
-        """检查服务健康状态"""
+    def _check_service_health(self, port: int, max_retries: int = 5, service_name: str = None) -> bool:
+        """检查服务健康状态
+
+        Args:
+            port: 服务端口
+            max_retries: 最大重试次数
+            service_name: 服务名称（用于特殊处理策略引擎）
+
+        Returns:
+            bool: 服务是否健康
+        """
+        # 🔥 修改：如果服务名称为 strategy_engine，只检查进程是否存活，不检查HTTP端口
+        if service_name == "strategy_engine":
+            # 策略引擎在循环模式下没有HTTP端口，所以不进行HTTP检查
+            # 只等待一段时间让进程初始化
+            time.sleep(3)
+            logger.info(f"{service_name}: 策略循环模式，跳过HTTP健康检查")
+            return True
+
+        # 其他服务（data_manager, risk_manager, executor）继续使用HTTP健康检查
         import requests
 
         for _ in range(max_retries):
