@@ -294,7 +294,8 @@ class RESTClient:
                 since = self.exchange.milliseconds() - limit * timeframe_ms
 
                 self.logger.debug(f"Fetching {tf} data for {symbol}: since={since}, limit={limit}")
-                ohlcv_data = self.fetch_ohlcv(symbol, since, limit, tf)
+                # 🔥 修复：参数顺序正确！symbol, timeframe, limit, since
+                ohlcv_data = self.fetch_ohlcv(symbol, tf, limit, since)
 
                 if ohlcv_data:
                     data[tf] = ohlcv_data

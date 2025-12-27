@@ -195,8 +195,8 @@ class OKXWebSocketClient:
                     if not self.is_connected:
                         break
 
-                    # 🔍 调试输出：打印原始消息前200个字符
-                    print(f"DEBUG_RAW: {message[:200]}")
+                    # 🔍 调试输出：已关闭（避免日志刷屏）
+                    # print(f"DEBUG_RAW: {message[:200]}")
 
                     await self._handle_message(message)
 
