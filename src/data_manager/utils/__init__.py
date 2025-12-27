@@ -7,9 +7,9 @@ Data Manager - 工具类模块
 """
 
 from .cache_manager import CacheManager
-from .service_degradation import ServiceDegradationHandler
+from .service_degradation import ServiceDegradationManager
 
 __all__ = [
     'CacheManager',
-    'ServiceDegradationHandler'
+    'ServiceDegradationManager'
 ]

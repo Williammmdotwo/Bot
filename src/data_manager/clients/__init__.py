@@ -6,10 +6,10 @@ Data Manager - 网络客户端模块
 - websocket_client: WebSocket客户端
 """
 
-from .rest_client import RestClient
-from .websocket_client import WebSocketClient
+from .rest_client import RESTClient
+from .websocket_client import OKXWebSocketClient as WebSocketClient
 
 __all__ = [
-    'RestClient',
+    'RESTClient',
     'WebSocketClient'
 ]

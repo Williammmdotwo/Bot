@@ -11,7 +11,7 @@
 from .main import DataHandler
 from .clients import RESTClient, WebSocketClient
 from .core import MarketDataFetcher, TechnicalIndicators
-from .utils import CacheManager, ServiceDegradationHandler
+from .utils import CacheManager, ServiceDegradationManager
 
 __all__ = [
     # 主类
@@ -27,5 +27,5 @@ __all__ = [
 
     # 工具类
     'CacheManager',
-    'ServiceDegradationHandler'
+    'ServiceDegradationManager'
 ]
