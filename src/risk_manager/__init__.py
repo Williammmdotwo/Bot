@@ -4,11 +4,18 @@
 """
 
 from .config import get_config, Config, RiskLimits
-from .main import get_risk_manager
+from .checks import is_order_rational, validate_order_size
+from .actions import emergency_close_position
+from .interface import check_order, trigger_emergency_close, health_check
 
 __all__ = [
     'get_config',
-    'Config', 
+    'Config',
     'RiskLimits',
-    'get_risk_manager'
+    'is_order_rational',
+    'validate_order_size',
+    'emergency_close_position',
+    'check_order',
+    'trigger_emergency_close',
+    'health_check'
 ]
