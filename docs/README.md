@@ -8,6 +8,10 @@
 - `LOCAL_DEVELOPMENT.md` - **本地开发指南**（推荐新用户从这里开始）
 - `PRODUCTION_DEPLOYMENT_GUIDE.md` - 生产环境部署指南
 
+### strategy/ - 策略文档
+- `TREND_PULLBACK_STRATEGY.md` - **趋势回调策略**完整文档（推荐）
+- `POSITION_MANAGEMENT.md` - **仓位管理模型**文档
+
 ### architecture/ - 架构文档
 - `OKX_TRADING_SYSTEM_ARCHITECTURE.md` - OKX 交易系统架构文档
 - `HISTORICAL_KLINE_ARCHITECTURE.md` - 历史K线数据架构文档

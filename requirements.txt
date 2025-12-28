@@ -4,7 +4,9 @@ pandas==2.2.3
 numpy==1.23.5
 
 # Technical Analysis
-TA-Lib==0.6.8
+# TA-Lib is deprecated in favor of pandas-ta
+# TA-Lib==0.6.8
+pandas-ta==0.3.14b0
 
 # Data Validation and Settings
 pydantic==2.8.2

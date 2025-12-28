@@ -8,8 +8,9 @@ import logging
 import os
 import sys
 import signal
-from typing import Optional
+from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
+import pandas as pd
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -41,6 +42,276 @@ modules = {
 }
 
 
+class TradingLoop:
+    """交易循环类 - 持续监控市场并执行交易策略"""
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        self._running = False
+        self._task = None
+        self._last_signal = None
+
+        # 策略实例
+        self.strategy = None
+
+        # 交易参数
+        self.trading_config = config.get('trading', {})
+        self.symbol = self.trading_config.get('trading_symbol', 'SOL-USDT-SWAP')
+        self.use_demo = self.trading_config.get('use_demo', True)
+        self.interval = self.trading_config.get('signal_interval_seconds', 60)
+
+    async def initialize(self):
+        """初始化交易循环"""
+        self.logger.info("=" * 80)
+        self.logger.info("Initializing Trading Loop...")
+        self.logger.info("=" * 80)
+
+        # 初始化趋势回调策略
+        try:
+            from src.strategy_engine.core.trend_pullback_strategy import create_trend_pullback_strategy
+            self.strategy = create_trend_pullback_strategy(self.config)
+            self.logger.info("✓ Trend Pullback Strategy initialized")
+        except Exception as e:
+            self.logger.error(f"✗ Strategy initialization failed: {e}")
+            raise
+
+        self.logger.info("Trading Loop initialized successfully")
+        self.logger.info(f"  Symbol: {self.symbol}")
+        self.logger.info(f"  Demo Mode: {self.use_demo}")
+        self.logger.info(f"  Interval: {self.interval}s")
+
+    async def start(self):
+        """启动交易循环"""
+        if self._running:
+            self.logger.warning("Trading loop is already running")
+            return
+
+        self._running = True
+        self._task = asyncio.create_task(self._trading_loop())
+        self.logger.info("Trading loop started")
+
+    async def stop(self):
+        """停止交易循环"""
+        if not self._running:
+            return
+
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+        self.logger.info("Trading loop stopped")
+
+    async def _trading_loop(self):
+        """主交易循环"""
+        self.logger.info(f"Starting trading loop for {self.symbol}...")
+
+        while self._running:
+            try:
+                # 1. 获取市场数据
+                market_data = await self._get_market_data()
+
+                if market_data is None:
+                    self.logger.warning("Failed to get market data, retrying...")
+                    await asyncio.sleep(self.interval)
+                    continue
+
+                # 2. 转换为DataFrame
+                df = self._convert_to_dataframe(market_data)
+
+                # 3. 查询当前持仓
+                current_position = await self._get_current_position()
+
+                # 4. 策略分析
+                signal = self.strategy.analyze(df, current_position)
+
+                self.logger.info(f"Strategy Signal: {signal['signal']} | "
+                               f"Reason: {signal['reasoning']}")
+
+                # 5. 执行交易决策
+                await self._execute_decision(signal, current_position)
+
+                # 6. 等待下一次循环
+                await asyncio.sleep(self.interval)
+
+            except asyncio.CancelledError:
+                self.logger.info("Trading loop cancelled")
+                break
+            except Exception as e:
+                self.logger.error(f"Error in trading loop: {e}", exc_info=True)
+                await asyncio.sleep(self.interval)
+
+    async def _get_market_data(self) -> Optional[Dict[str, Any]]:
+        """获取市场数据"""
+        try:
+            if not modules["data_manager"]:
+                self.logger.error("Data Manager not available")
+                return None
+
+            # 获取历史K线数据
+            data = modules["data_manager"].get_historical_klines(
+                symbol=self.symbol,
+                timeframe='1h',  # 使用1小时周期
+                limit=200,        # 获取足够的数据用于计算EMA 144
+                use_demo=self.use_demo
+            )
+
+            if not data or len(data) == 0:
+                self.logger.warning(f"No market data received for {self.symbol}")
+                return None
+
+            return data
+
+        except Exception as e:
+            self.logger.error(f"Error fetching market data: {e}")
+            return None
+
+    def _convert_to_dataframe(self, data: Dict[str, Any]) -> pd.DataFrame:
+        """转换市场数据为DataFrame"""
+        try:
+            # 提取K线数据
+            klines = data.get('klines', [])
+
+            if not klines:
+                raise ValueError("No klines data available")
+
+            # 转换为DataFrame
+            df = pd.DataFrame(klines, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'quote_volume', 'trades', 'taker_buy_base', 'taker_buy_quote'
+            ])
+
+            # 转换数值类型
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            # 转换时间戳
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error converting data to DataFrame: {e}")
+            raise
+
+    async def _get_current_position(self) -> Optional[Dict[str, Any]]:
+        """获取当前持仓"""
+        try:
+            if not modules["data_manager"]:
+                return None
+
+            # 获取账户持仓
+            positions = modules["data_manager"].get_account_positions(use_demo=self.use_demo)
+
+            if not positions:
+                return None
+
+            # 查找目标交易对的持仓
+            for position in positions:
+                if position.get('symbol') == self.symbol:
+                    size = float(position.get('size', 0))
+                    if abs(size) > 0:
+                        return {
+                            'symbol': position['symbol'],
+                            'size': size,
+                            'entry_price': float(position.get('avg_entry_price', 0)),
+                            'side': 'long' if size > 0 else 'short'
+                        }
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error fetching current position: {e}")
+            return None
+
+    async def _execute_decision(self, signal: Dict[str, Any], current_position: Optional[Dict]):
+        """执行交易决策"""
+        signal_type = signal['signal']
+
+        # BUY 信号
+        if signal_type == 'BUY':
+            if current_position is None or current_position.get('size', 0) == 0:
+                await self._execute_buy_order(signal)
+            else:
+                self.logger.info("Already have a position, ignoring BUY signal")
+
+        # SELL 信号
+        elif signal_type == 'SELL':
+            if current_position is not None and current_position.get('size', 0) != 0:
+                await self._execute_sell_order(signal, current_position)
+            else:
+                self.logger.info("No position to sell, ignoring SELL signal")
+
+        # HOLD 信号
+        elif signal_type == 'HOLD':
+            self.logger.info("HOLD signal - no action taken")
+
+    async def _execute_buy_order(self, signal: Dict[str, Any]):
+        """执行买入订单"""
+        try:
+            # 检查执行器是否可用
+            if not modules["executor"]:
+                self.logger.error("Executor not available")
+                return
+
+            # 准备订单数据
+            order_data = {
+                'symbol': self.symbol,
+                'side': 'buy',
+                'amount': signal.get('position_size', 0),
+                'type': 'market',
+                'use_demo': self.use_demo,
+                'stop_loss': signal.get('stop_loss', 0),
+                'take_profit': signal.get('take_profit', 0),
+                'leverage': signal.get('leverage', 1.0),
+                'risk_amount': signal.get('risk_amount', 0)
+            }
+
+            self.logger.info(f"Executing BUY order: {order_data}")
+
+            # 调用执行器
+            result = await modules["executor"]["execute_trade"](
+                order_data,
+                use_demo=self.use_demo,
+                stop_loss_pct=self.config.get('strategy', {}).get('stop_loss_pct', 0.03),
+                take_profit_pct=self.config.get('strategy', {}).get('take_profit_pct', 0.06)
+            )
+
+            if result.get('status') in ['executed', 'simulated']:
+                self.logger.info(f"✓ BUY order executed successfully: {result}")
+            else:
+                self.logger.error(f"✗ BUY order failed: {result}")
+
+        except Exception as e:
+            self.logger.error(f"Error executing buy order: {e}", exc_info=True)
+
+    async def _execute_sell_order(self, signal: Dict[str, Any], position: Dict):
+        """执行卖出订单（平仓）"""
+        try:
+            # 检查执行器是否可用
+            if not modules["executor"]:
+                self.logger.error("Executor not available")
+                return
+
+            # 调用强制平仓接口
+            result = await modules["executor"]["force_close_position"](
+                symbol=self.symbol,
+                side=position.get('side', 'long')
+            )
+
+            if result.get('status') == 'success':
+                self.logger.info(f"✓ Position closed successfully: {result}")
+            else:
+                self.logger.error(f"✗ Position close failed: {result}")
+
+        except Exception as e:
+            self.logger.error(f"Error executing sell order: {e}", exc_info=True)
+
+
 class AthenaMonolith:
     """Athena单体应用主类"""
 
@@ -49,6 +320,7 @@ class AthenaMonolith:
         self._running = False
         self._shutdown_event = asyncio.Event()
         self.config = None
+        self.trading_loop = None
 
     async def initialize(self):
         """初始化所有模块"""
@@ -136,6 +408,18 @@ class AthenaMonolith:
             except Exception as e:
                 self.logger.error(f"✗ Monitoring initialization failed: {e}")
 
+        # 6. 初始化TradingLoop（交易循环）
+        trading_config = self.config.get('trading', {})
+        strategy_config = self.config.get('strategy', {})
+
+        if strategy_config.get('enabled', True) and trading_config.get('use_demo', True):
+            try:
+                self.trading_loop = TradingLoop(self.config)
+                await self.trading_loop.initialize()
+                self.logger.info("✓ Trading Loop initialized")
+            except Exception as e:
+                self.logger.error(f"✗ Trading Loop initialization failed: {e}")
+
     async def shutdown(self):
         """关闭所有模块"""
         self.logger.info("=" * 80)
@@ -143,6 +427,14 @@ class AthenaMonolith:
         self.logger.info("=" * 80)
 
         self._running = False
+
+        # 关闭交易循环
+        if self.trading_loop is not None:
+            try:
+                await self.trading_loop.stop()
+                self.logger.info("✓ Trading Loop shutdown complete")
+            except Exception as e:
+                self.logger.error(f"✗ Trading Loop shutdown failed: {e}")
 
         # 关闭各个模块
         for module_name, module_instance in modules.items():
@@ -182,6 +474,11 @@ async def lifespan(app: FastAPI):
     # 启动时初始化
     monolith_app = AthenaMonolith()
     await monolith_app.initialize()
+
+    # 启动交易循环
+    if monolith_app.trading_loop is not None:
+        await monolith_app.trading_loop.start()
+        logger.info("Trading loop started in background")
 
     yield
 

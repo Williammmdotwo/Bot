@@ -33,7 +33,33 @@
     "file_path": "/var/log/athena/app.log"
   },
   "trading": {
-    "use_demo": false
+    "use_demo": false,
+    "simulation_mode": false,
+    "signal_interval_seconds": 60,
+    "progress_interval_seconds": 60,
+    "default_symbols": ["SOL-USDT-SWAP"],
+    "default_timeframes": ["1h"],
+    "capital": 100.0,
+    "max_risk_pct": 0.02,
+    "max_position_pct": 0.95,
+    "position_size_pct": 0.5,
+    "trading_symbol": "SOL-USDT-SWAP"
+  },
+  "strategy": {
+    "type": "trend_pullback",
+    "enabled": true,
+    "ema_period": 144,
+    "rsi_period": 14,
+    "rsi_oversold": 30,
+    "rsi_overbought": 70,
+    "stop_loss_pct": 0.03,
+    "take_profit_pct": 0.06,
+    "use_bollinger_exit": true,
+    "bollinger_period": 20,
+    "bollinger_std_dev": 2,
+    "only_long": true,
+    "max_leverage": 3.0,
+    "min_leverage": 2.0
   },
   "auth": {
     "internal_token": "athena-internal-token-change-in-production"
