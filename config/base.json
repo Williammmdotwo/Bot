@@ -1,24 +1,25 @@
 {
-  "services": {
+  "app": {
+    "name": "athena_trader",
+    "version": "1.0.0",
+    "port": 8000,
+    "host": "0.0.0.0"
+  },
+  "modules": {
     "data_manager": {
-      "port": 8000,
-      "enabled": true,
-      "host": "localhost"
+      "enabled": true
     },
     "strategy_engine": {
-      "port": 8003,
-      "enabled": true,
-      "host": "localhost"
+      "enabled": true
     },
     "risk_manager": {
-      "port": 8001,
-      "enabled": true,
-      "host": "localhost"
+      "enabled": true
     },
     "executor": {
-      "port": 8002,
-      "enabled": true,
-      "host": "localhost"
+      "enabled": true
+    },
+    "monitoring": {
+      "enabled": true
     }
   },
   "database": {
