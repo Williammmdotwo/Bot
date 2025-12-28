@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from typing import Dict, Any, List, Optional
-from src.data_manager.technical_indicators import TechnicalIndicators
+from src.data_manager.core.technical_indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 

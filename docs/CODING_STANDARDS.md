@@ -10,20 +10,20 @@
    - 特别是在使用 shebang (`#!/usr/bin/env python`) 的文件中
 
 2. **检查和修复工具**
-   - 使用项目提供的 `scripts/fix_bom.py` 脚本检查和修复 BOM 问题
+   - 使用项目提供的 `scripts/legacy/fix_bom.py` 脚本检查和修复 BOM 问题
    - Git pre-commit hook 会自动检查暂存的 Python 文件
 
 ### 检查命令
 
 ```bash
 # 扫描所有 Python 文件的 BOM 状态
-python scripts/fix_bom.py --dry-run
+python scripts/legacy/fix_bom.py --dry-run
 
 # 修复发现的 BOM 问题
-python scripts/fix_bom.py
+python scripts/legacy/fix_bom.py
 
 # 不创建备份的修复（谨慎使用）
-python scripts/fix_bom.py --no-backup
+python scripts/legacy/fix_bom.py --no-backup
 ```
 
 ## 编辑器配置
@@ -85,14 +85,14 @@ A: UTF-8 BOM 可能导致以下问题：
 ### Q: 如何检查文件是否包含 BOM？
 
 A: 使用以下方法：
-1. 运行 `python scripts/fix_bom.py --dry-run`
+1. 运行 `python scripts/legacy/fix_bom.py --dry-run`
 2. 使用十六进制编辑器查看文件开头是否有 `\xef\xbb\xbf`
 3. 使用 `file` 命令（Linux/Mac）检查文件编码
 
 ### Q: 如果不小心提交了带 BOM 的文件怎么办？
 
 A: 按以下步骤修复：
-1. 运行 `python scripts/fix_bom.py` 修复 BOM
+1. 运行 `python scripts/legacy/fix_bom.py` 修复 BOM
 2. 提交修复后的文件
 3. 如果需要，使用 `git rebase` 修复历史提交
 

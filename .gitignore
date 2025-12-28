@@ -87,6 +87,7 @@ dist/
 # Python compiled files
 *.py[cod]
 *$py.class
+*.pyo
 *.so
 .Python
 develop-eggs/

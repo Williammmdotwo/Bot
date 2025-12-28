@@ -19,41 +19,46 @@
 
 ## 快速开始
 
-### 方法1: 使用自动化脚本（推荐）
+### 方法1: 使用统一启动脚本（推荐）
 
-#### Windows用户
 ```bash
-# 双击运行或在命令行中执行
-scripts\windows\run_test.bat
-```
+# 开发环境测试
+python scripts/start.py dev --action test
 
-#### Linux/Mac用户
-```bash
-# 运行自动化测试
-python scripts/run_test_with_services.py
+# 测试环境测试
+python scripts/start.py test
 
-# 或者仅启动服务
-python scripts/run_test_with_services.py --services-only
+# 部署验证测试
+python scripts/verify_deployment.py
 ```
 
 ### 方法2: 手动步骤
 
 #### 1. 启动服务
 ```bash
-# 启动所有测试服务
-python scripts/start_test_services.py start --wait
+# 使用本地开发管理器启动服务
+python scripts/core/local_dev_manager.py start
 ```
 
 #### 2. 运行测试（新终端）
 ```bash
-# 运行简化交易测试
-python -m tests.system.simple_trading_test
+# 运行所有测试
+python -m pytest
+
+# 运行特定测试文件
+python -m pytest tests/system/simple_trading_test.py
+
+# 运行特定测试类
+python -m pytest tests/unit/data_manager/test_main.py
+
+# 显示详细输出
+python -m pytest -v
 ```
 
 #### 3. 停止服务
 ```bash
 # 停止所有服务
-python scripts/start_test_services.py stop
+python scripts/core/local_dev_manager.py stop
 ```
 
 ## 服务端口配置

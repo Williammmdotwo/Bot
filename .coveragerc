@@ -1,46 +1,43 @@
 [run]
 # 覆盖率运行配置
 source = src
-omit = 
+omit =
     # 排除测试文件
     */tests/*
     */test_*
     *_test.py
-    
+
     # 排除第三方库
     */site-packages/*
     */dist-packages/*
-    
+
     # 排除__pycache__
     */__pycache__/*
-    
+
     # 排除迁移文件
     */migrations/*
-    
+
     # 排除配置文件
     */config/*
-    
+
     # 排除脚本文件
     scripts/*
-    
+
     # 排除文档文件
     docs/*
-    
+
     # 排除前端文件
     frontend/*
-    
+
     # 排除日志文件
     logs/*
-    
+
     # 排除特定文件
     setup.py
     conftest.py
 
 # 分支覆盖率
 branch = True
-
-# 显示缺失的行
-show_missing = True
 
 # 并行模式
 parallel = True
@@ -50,25 +47,25 @@ parallel = True
 exclude_lines =
     # 排除调试代码
     pragma: no cover
-    
+
     # 排除异常处理
     except:
     except ImportError:
     except Exception:
-    
+
     # 排除抽象方法
     raise NotImplementedError
     @abstract*
-    
+
     # 排除类型检查
     if TYPE_CHECKING:
-    
+
     # 排除断言
     assert
-    
+
     # 排除pass语句
     pass
-    
+
     # 排除文档字符串
     """*"""
     '''*'''
@@ -90,7 +87,7 @@ directory = tests/reports/html/coverage
 show_contexts = True
 
 # 额外CSS
-extra_css = 
+extra_css =
 
 # 标题
 title = Athena Trader 测试覆盖率报告

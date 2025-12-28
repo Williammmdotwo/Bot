@@ -10,12 +10,26 @@
 - 本地开发环境（Windows/Linux/macOS）
 
 ### 一键启动
+
+#### 方式一：使用统一启动脚本（推荐）
+```bash
+# 开发环境
+python scripts/start.py dev --action start
+
+# 交易环境
+python scripts/start.py trading
+
+# 测试环境
+python scripts/start.py test
+```
+
+#### 方式二：使用本地开发管理器
 ```bash
 # Windows用户
 scripts\windows\local_dev.bat
 
 # Linux/macOS用户
-python scripts/local_dev_manager.py start
+python scripts/core/local_dev_manager.py start
 ```
 
 ## 📋 开发环境配置
@@ -76,7 +90,7 @@ Windows用户可以使用 `scripts/windows/local_dev.bat` 获得图形化菜单�
 
 ### 本地服务端口
 - **数据管理器**: http://localhost:8000
-- **风险管理器**: http://localhost:8001  
+- **风险管理器**: http://localhost:8001
 - **执行器**: http://localhost:8002
 - **策略引擎**: http://localhost:8003
 - **前端界面**: http://localhost:3000
