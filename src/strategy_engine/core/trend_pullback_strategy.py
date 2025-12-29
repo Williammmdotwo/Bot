@@ -27,15 +27,9 @@ import logging
 from typing import Dict, Any, Optional, List
 import pandas as pd
 import numpy as np
+from src.data_manager.core.technical_indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
-
-try:
-    import pandas_ta as ta
-    PANDAS_TA_AVAILABLE = True
-except ImportError:
-    PANDAS_TA_AVAILABLE = False
-    logger.warning("pandas-ta not available, using fallback calculations")
 
 
 class TrendPullbackStrategy:
@@ -135,28 +129,26 @@ class TrendPullbackStrategy:
             'low': float(df['low'].iloc[-1]),
         }
 
-        # 计算EMA 144
-        if PANDAS_TA_AVAILABLE:
-            indicators['ema_144'] = float(df.ta.ema(length=self.ema_period).iloc[-1])
-        else:
-            indicators['ema_144'] = self._calculate_ema_fallback(df['close'], self.ema_period)
+        # 计算EMA 144 - 统一使用TechnicalIndicators
+        indicators['ema_144'] = TechnicalIndicators.calculate_ema(
+            df['close'].tolist(),
+            self.ema_period
+        )
 
-        # 计算RSI
-        if PANDAS_TA_AVAILABLE:
-            indicators['rsi'] = float(df.ta.rsi(length=self.rsi_period).iloc[-1])
-        else:
-            indicators['rsi'] = self._calculate_rsi_fallback(df['close'], self.rsi_period)
+        # 计算RSI - 统一使用TechnicalIndicators
+        indicators['rsi'] = TechnicalIndicators.calculate_rsi(
+            df['close'].tolist(),
+            self.rsi_period
+        )
 
-        # 计算布林带
+        # 计算布林带 - 统一使用TechnicalIndicators
         if self.use_bollinger_exit:
-            if PANDAS_TA_AVAILABLE:
-                bb = df.ta.bbands(length=self.bollinger_period, std=self.bollinger_std_dev)
-                indicators['bollinger_upper'] = float(bb[f'BBL_{self.bollinger_period}_{self.bollinger_std_dev}'].iloc[-1])
-                indicators['bollinger_lower'] = float(bb[f'BBU_{self.bollinger_period}_{self.bollinger_std_dev}'].iloc[-1])
-                indicators['bollinger_middle'] = float(bb[f'BBM_{self.bollinger_period}_{self.bollinger_std_dev}'].iloc[-1])
-            else:
-                bb = self._calculate_bollinger_bands_fallback(df['close'], self.bollinger_period, self.bollinger_std_dev)
-                indicators.update(bb)
+            bb = TechnicalIndicators.calculate_bollinger_bands(
+                df['close'].tolist(),
+                self.bollinger_period,
+                self.bollinger_std_dev
+            )
+            indicators.update(bb)
 
         return indicators
 
@@ -473,34 +465,6 @@ class TrendPullbackStrategy:
         logger.info(f"不死鸟仓位计算: {result['reasoning']}")
 
         return result
-
-    # ========== Fallback 方法（当pandas-ta不可用时） ==========
-
-    def _calculate_ema_fallback(self, prices: pd.Series, period: int) -> float:
-        """计算EMA的备用方法"""
-        return float(prices.ewm(span=period, adjust=False).mean().iloc[-1])
-
-    def _calculate_rsi_fallback(self, prices: pd.Series, period: int = 14) -> float:
-        """计算RSI的备用方法"""
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return float(rsi.iloc[-1])
-
-    def _calculate_bollinger_bands_fallback(self, prices: pd.Series, period: int = 20, std_dev: float = 2) -> Dict[str, float]:
-        """计算布林带的备用方法"""
-        sma = prices.rolling(window=period).mean()
-        std = prices.rolling(window=period).std()
-
-        return {
-            'bollinger_upper': float((sma + std * std_dev).iloc[-1]),
-            'bollinger_lower': float((sma - std * std_dev).iloc[-1]),
-            'bollinger_middle': float(sma.iloc[-1])
-        }
 
     def _create_hold_signal(self, reason: str = "No clear trading signal") -> Dict[str, Any]:
         """创建持有信号"""

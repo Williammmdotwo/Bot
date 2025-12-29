@@ -34,15 +34,13 @@ class DataHandler:
             self.data_source_type = data_source_config['data_source_type']
             self.data_source_label = data_source_config['data_source_label']
 
-            # 根据数据源配置初始化REST客户端
+            # 统一初始化REST客户端（Mock和API模式都用）
+            use_demo = data_source_config['use_demo']
+            self.rest_client = RESTClient(use_demo=use_demo)
+
             if data_source_config['use_mock']:
-                # Mock数据模式 - 不需要REST客户端
-                self.rest_client = None
                 self.logger.info(f"[{self.data_source_label}] 初始化完成 - 使用本地Mock数据")
             else:
-                # OKX API模式 - 初始化REST客户端
-                use_demo = data_source_config['use_demo']
-                self.rest_client = RESTClient(use_demo=use_demo)
                 self.logger.info(f"[{self.data_source_label}] REST客户端初始化成功 (use_demo={use_demo})")
 
         except (ConnectionError, ValueError, KeyError) as e:
@@ -854,7 +852,7 @@ class DataHandler:
                 batch_limit = min(batch_size, limit - len(all_klines))
 
                 try:
-                    batch_klines = rest_client.fetch_ohlcv(symbol, current_since, batch_limit, timeframe)
+                    batch_klines = rest_client.fetch_ohlcv(symbol, timeframe, batch_limit, current_since)
 
                     if not batch_klines:
                         self.logger.warning(f"No more historical data available for {symbol} {timeframe}")

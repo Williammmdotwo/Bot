@@ -6,7 +6,7 @@ Unit Tests for Risk Manager Checks
 import pytest
 from unittest.mock import patch, Mock
 
-from src.risk_manager.checks import (
+from src.risk_manager.checks.order_checks import (
     OrderDetails,
     is_order_rational,
     _validate_stop_take_profit_logic,
@@ -28,7 +28,7 @@ class TestOrderDetails:
             stop_loss=29000.0,
             take_profit=31000.0
         )
-        
+
         assert order.symbol == "BTC-USDT"
         assert order.side == "buy"
         assert order.position_size == 1000.0
@@ -45,7 +45,7 @@ class TestOrderDetails:
             stop_loss=2100.0,
             take_profit=1900.0
         )
-        
+
         assert order.symbol == "ETH-USDT"
         assert order.side == "sell"  # 应该被转换为小写
         assert order.position_size == 500.0
@@ -145,14 +145,14 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is True
 
     @pytest.mark.unit
@@ -166,14 +166,14 @@ class TestIsOrderRational:
             "take_profit": 29000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.1
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is True
 
     @pytest.mark.unit
@@ -187,14 +187,14 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2  # 最大20%
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is False
 
     @pytest.mark.unit
@@ -208,14 +208,14 @@ class TestIsOrderRational:
             "take_profit": 29000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is False
 
     @pytest.mark.unit
@@ -229,14 +229,14 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is False
 
     @pytest.mark.unit
@@ -250,14 +250,14 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is False
 
     @pytest.mark.unit
@@ -271,12 +271,12 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 10000.0
-        
+
         custom_config = Mock()
         custom_config.risk_limits.max_single_order_size_percent = 0.15
-        
+
         result = is_order_rational(order_details, current_equity, custom_config)
-        
+
         assert result is True
 
     @pytest.mark.unit
@@ -292,14 +292,14 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is False
             mock_logger.critical.assert_called()
 
@@ -314,14 +314,14 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is True
 
     @pytest.mark.unit
@@ -335,14 +335,14 @@ class TestIsOrderRational:
             "take_profit": 31000.0
         }
         current_equity = 0.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.2
             mock_get_config.return_value = mock_config
-            
+
             result = is_order_rational(order_details, current_equity)
-            
+
             # 应该返回False，因为除零错误
             assert result is False
 
@@ -360,9 +360,9 @@ class TestValidateStopTakeProfitLogic:
             stop_loss=29000.0,
             take_profit=31000.0
         )
-        
+
         result = _validate_stop_take_profit_logic(order)
-        
+
         assert result is True
 
     @pytest.mark.unit
@@ -375,9 +375,9 @@ class TestValidateStopTakeProfitLogic:
             stop_loss=31000.0,
             take_profit=29000.0
         )
-        
+
         result = _validate_stop_take_profit_logic(order)
-        
+
         assert result is True
 
     @pytest.mark.unit
@@ -390,9 +390,9 @@ class TestValidateStopTakeProfitLogic:
             stop_loss=31000.0,  # 止损高于止盈
             take_profit=29000.0
         )
-        
+
         result = _validate_stop_take_profit_logic(order)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -405,9 +405,9 @@ class TestValidateStopTakeProfitLogic:
             stop_loss=29000.0,  # 止损低于止盈
             take_profit=31000.0
         )
-        
+
         result = _validate_stop_take_profit_logic(order)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -420,9 +420,9 @@ class TestValidateStopTakeProfitLogic:
             stop_loss=30000.0,
             take_profit=30000.0
         )
-        
+
         result = _validate_stop_take_profit_logic(order)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -435,9 +435,9 @@ class TestValidateStopTakeProfitLogic:
             stop_loss=30000.0,
             take_profit=30000.0
         )
-        
+
         result = _validate_stop_take_profit_logic(order)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -449,9 +449,9 @@ class TestValidateStopTakeProfitLogic:
         order.side = "buy"
         order.stop_loss = None  # 这可能导致异常
         order.take_profit = 31000.0
-        
+
         result = _validate_stop_take_profit_logic(order)
-        
+
         assert result is False
         mock_logger.error.assert_called()
 
@@ -465,9 +465,9 @@ class TestValidateOrderSize:
         order_amount = 1000.0
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is True
 
     @pytest.mark.unit
@@ -476,9 +476,9 @@ class TestValidateOrderSize:
         order_amount = 3000.0
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -487,9 +487,9 @@ class TestValidateOrderSize:
         order_amount = 1000.0
         current_equity = 0.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -498,9 +498,9 @@ class TestValidateOrderSize:
         order_amount = 1000.0
         current_equity = -1000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -509,9 +509,9 @@ class TestValidateOrderSize:
         order_amount = 0.0
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -520,9 +520,9 @@ class TestValidateOrderSize:
         order_amount = -1000.0
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is False
 
     @pytest.mark.unit
@@ -531,9 +531,9 @@ class TestValidateOrderSize:
         order_amount = 2000.0
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is True
 
     @pytest.mark.unit
@@ -542,9 +542,9 @@ class TestValidateOrderSize:
         order_amount = 0.01
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is True
 
     @pytest.mark.unit
@@ -555,9 +555,9 @@ class TestValidateOrderSize:
         order_amount = "invalid"
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         result = validate_order_size(order_amount, current_equity, max_percent)
-        
+
         assert result is False
         mock_logger.error.assert_called()
 
@@ -570,9 +570,9 @@ class TestGetPositionRatio:
         """测试正常仓位占比"""
         order_amount = 1000.0
         current_equity = 10000.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 0.1
 
     @pytest.mark.unit
@@ -580,9 +580,9 @@ class TestGetPositionRatio:
         """测试满仓"""
         order_amount = 10000.0
         current_equity = 10000.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 1.0
 
     @pytest.mark.unit
@@ -590,9 +590,9 @@ class TestGetPositionRatio:
         """测试零当前权益"""
         order_amount = 1000.0
         current_equity = 0.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 0.0
 
     @pytest.mark.unit
@@ -600,9 +600,9 @@ class TestGetPositionRatio:
         """测试负数当前权益"""
         order_amount = 1000.0
         current_equity = -1000.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 0.0
 
     @pytest.mark.unit
@@ -610,9 +610,9 @@ class TestGetPositionRatio:
         """测试零订单金额"""
         order_amount = 0.0
         current_equity = 10000.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 0.0
 
     @pytest.mark.unit
@@ -620,9 +620,9 @@ class TestGetPositionRatio:
         """测试非常小的占比"""
         order_amount = 1.0
         current_equity = 10000.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 0.0001
 
     @pytest.mark.unit
@@ -630,9 +630,9 @@ class TestGetPositionRatio:
         """测试大占比"""
         order_amount = 15000.0
         current_equity = 10000.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 1.5
 
     @pytest.mark.unit
@@ -642,9 +642,9 @@ class TestGetPositionRatio:
         # 创建一个会导致异常的情况
         order_amount = "invalid"
         current_equity = 10000.0
-        
+
         result = get_position_ratio(order_amount, current_equity)
-        
+
         assert result == 0.0
         mock_logger.error.assert_called()
 
@@ -665,24 +665,24 @@ class TestRiskManagerIntegration:
         }
         current_equity = 10000.0
         max_percent = 0.2
-        
+
         # 1. 测试订单合理性检查
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = max_percent
             mock_get_config.return_value = mock_config
-            
+
             rational_result = is_order_rational(order_details, current_equity)
             assert rational_result is True
-        
+
         # 2. 测试订单大小验证
         size_result = validate_order_size(
-            order_details["position_size"], 
-            current_equity, 
+            order_details["position_size"],
+            current_equity,
             max_percent
         )
         assert size_result is True
-        
+
         # 3. 测试仓位占比计算
         ratio = get_position_ratio(order_details["position_size"], current_equity)
         assert ratio == 0.15
@@ -700,15 +700,15 @@ class TestRiskManagerIntegration:
             "take_profit": 32000.0
         }
         current_equity = 10000.0
-        
+
         with patch('src.risk_manager.checks.get_config') as mock_get_config:
             mock_config = Mock()
             mock_config.risk_limits.max_single_order_size_percent = 0.3  # 最大30%
             mock_get_config.return_value = mock_config
-            
+
             # 执行风险检查
             result = is_order_rational(order_details, current_equity)
-            
+
             assert result is True
 
     @pytest.mark.unit
@@ -723,7 +723,7 @@ class TestRiskManagerIntegration:
                 "stop_loss": 29000.0,
                 "take_profit": 31000.0
             }, 10000.0, 0.1, True),  # 正常情况
-            
+
             ({
                 "symbol": "ETH-USDT",
                 "side": "sell",
@@ -731,7 +731,7 @@ class TestRiskManagerIntegration:
                 "stop_loss": 2200.0,
                 "take_profit": 1800.0
             }, 10000.0, 0.25, True),  # 正常卖单
-            
+
             ({
                 "symbol": "BTC-USDT",
                 "side": "buy",
@@ -739,7 +739,7 @@ class TestRiskManagerIntegration:
                 "stop_loss": 29000.0,
                 "take_profit": 31000.0
             }, 10000.0, 0.3, False),  # 超过限制
-            
+
             ({
                 "symbol": "BTC-USDT",
                 "side": "buy",
@@ -748,12 +748,12 @@ class TestRiskManagerIntegration:
                 "take_profit": 29000.0
             }, 10000.0, 0.2, False),  # 止损止盈逻辑错误
         ]
-        
+
         for order_details, equity, max_percent, expected in scenarios:
             with patch('src.risk_manager.checks.get_config') as mock_get_config:
                 mock_config = Mock()
                 mock_config.risk_limits.max_single_order_size_percent = max_percent
                 mock_get_config.return_value = mock_config
-                
+
                 result = is_order_rational(order_details, equity)
                 assert result == expected, f"Failed for {order_details}"

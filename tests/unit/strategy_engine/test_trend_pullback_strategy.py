@@ -278,31 +278,31 @@ class TestTrendPullbackStrategy:
         assert abs(result['position_value'] - 300.0) < 0.01
         assert result['leverage'] == 3.0  # 被限制到最大值
 
-    def test_fallback_ema_calculation(self, strategy, sample_dataframe):
-        """测试EMA fallback计算"""
-        ema = strategy._calculate_ema_fallback(sample_dataframe['close'], 144)
+    def test_technical_indicators_integration(self, strategy, sample_dataframe):
+        """测试TechnicalIndicators集成"""
+        from src.data_manager.core.technical_indicators import TechnicalIndicators
 
+        closes = sample_dataframe['close'].tolist()
+
+        # 测试EMA计算
+        ema = TechnicalIndicators.calculate_ema(closes, 144)
         assert ema is not None
         assert ema > 0
         assert isinstance(ema, float)
 
-    def test_fallback_rsi_calculation(self, strategy, sample_dataframe):
-        """测试RSI fallback计算"""
-        rsi = strategy._calculate_rsi_fallback(sample_dataframe['close'], 14)
-
+        # 测试RSI计算
+        rsi = TechnicalIndicators.calculate_rsi(closes, 14)
         assert rsi is not None
         assert 0 <= rsi <= 100  # RSI应该在0-100之间
         assert isinstance(rsi, float)
 
-    def test_fallback_bollinger_bands(self, strategy, sample_dataframe):
-        """测试布林带fallback计算"""
-        bb = strategy._calculate_bollinger_bands_fallback(sample_dataframe['close'], 20, 2)
-
-        assert 'bollinger_upper' in bb
-        assert 'bollinger_lower' in bb
-        assert 'bollinger_middle' in bb
-        assert bb['bollinger_upper'] > bb['bollinger_middle']
-        assert bb['bollinger_middle'] > bb['bollinger_lower']
+        # 测试布林带计算
+        bb = TechnicalIndicators.calculate_bollinger_bands(closes, 20, 2)
+        assert 'upper' in bb
+        assert 'lower' in bb
+        assert 'middle' in bb
+        assert bb['upper'] > bb['middle']
+        assert bb['middle'] > bb['lower']
 
     def test_hold_signal_creation(self, strategy):
         """测试HOLD信号创建"""

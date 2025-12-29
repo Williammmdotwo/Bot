@@ -6,6 +6,7 @@
 import logging
 import time
 import uuid
+import pandas as pd
 from typing import Dict, Any, List, Optional
 from src.data_manager.core.technical_indicators import TechnicalIndicators
 
@@ -64,7 +65,7 @@ class DualEMAStrategy:
             closes = [candle[4] for candle in ohlcv_data]
             current_price = closes[-1]
 
-            # 计算当前EMA值
+            # 计算当前EMA值 - 统一使用TechnicalIndicators
             current_ema_fast = TechnicalIndicators.calculate_ema(closes, self.ema_fast)
             current_ema_slow = TechnicalIndicators.calculate_ema(closes, self.ema_slow)
 

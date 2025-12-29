@@ -170,27 +170,43 @@ class TradingLoop:
             self.logger.error(f"Error fetching market data: {e}")
             return None
 
-    def _convert_to_dataframe(self, data: Dict[str, Any]) -> pd.DataFrame:
+    def _convert_to_dataframe(self, data) -> pd.DataFrame:
         """转换市场数据为DataFrame"""
         try:
-            # 提取K线数据
-            klines = data.get('klines', [])
+            # 处理字典或列表格式
+            if isinstance(data, list):
+                klines = data
+            elif isinstance(data, dict):
+                klines = data.get('klines', data.get('ohlcv', []))
+            else:
+                raise ValueError(f"Invalid data type: {type(data)}")
 
             if not klines:
                 raise ValueError("No klines data available")
 
-            # 转换为DataFrame
-            df = pd.DataFrame(klines, columns=[
-                'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                'quote_volume', 'trades', 'taker_buy_base', 'taker_buy_quote'
-            ])
+            # 转换为DataFrame，自动检测列数
+            df = pd.DataFrame(klines)
+
+            # 设置列名（根据实际数据列数）
+            if len(df.columns) == 6:
+                df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            elif len(df.columns) == 10:
+                df.columns = [
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'quote_volume', 'trades', 'taker_buy_base', 'taker_buy_quote'
+                ]
+            else:
+                # 未知格式，使用默认列名
+                self.logger.warning(f"Unexpected data format: {len(df.columns)} columns")
 
             # 转换数值类型
             for col in ['open', 'high', 'low', 'close', 'volume']:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
 
             # 转换时间戳
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
             return df
 

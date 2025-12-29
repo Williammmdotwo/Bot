@@ -115,6 +115,11 @@ class RESTClient:
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = '5m', limit: int = 100, since: int = None):
         try:
+            # 🔥🔥🔥 Mock模式处理 🔥🔥🔥
+            if self.use_mock:
+                self.logger.info(f"[Mock Mode] Generating mock OHLCV data for {symbol}")
+                return self._generate_mock_ohlcv(symbol, timeframe, limit)
+
             # 🔥🔥🔥 智能纠错开始 🔥🔥🔥
             # 如果 timeframe 看起来像个时间戳（纯数字且很长），说明参数传歪了
             if str(timeframe).replace('.', '').isdigit() and len(str(timeframe)) > 8:
@@ -429,3 +434,83 @@ class RESTClient:
                 deduplicated.append(candle)
 
         return deduplicated
+
+    def _generate_mock_ohlcv(self, symbol: str, timeframe: str = '5m', limit: int = 100) -> List[List]:
+        """生成模拟的OHLCV数据用于测试
+
+        Args:
+            symbol: 交易对符号
+            timeframe: 时间周期
+            limit: 需要的K线数量
+
+        Returns:
+            List[List]: OHLCV数据 [[timestamp, open, high, low, close, volume], ...]
+        """
+        import time
+
+        # 解析时间周期
+        timeframe_minutes = {
+            '1m': 1, '5m': 5, '15m': 15, '1H': 60, '4H': 240, '1D': 1440
+        }
+        period_minutes = timeframe_minutes.get(timeframe, 5)
+        period_ms = period_minutes * 60 * 1000
+
+        # 基础价格（根据交易对）
+        base_prices = {
+            'BTC-USDT-SWAP': 45000.0,
+            'ETH-USDT-SWAP': 3000.0,
+            'SOL-USDT-SWAP': 100.0,
+            'DOGE-USDT-SWAP': 0.15
+        }
+
+        base_price = base_prices.get(symbol, 100.0)
+
+        # 生成K线数据
+        current_time = int(time.time() * 1000)
+        candles = []
+
+        # 使用随机游走生成真实的价格走势
+        import random
+        random.seed(42)  # 固定种子，保证可重现
+
+        current_price = base_price
+        volatility = base_price * 0.002  # 0.2%的波动
+
+        for i in range(limit):
+            timestamp = current_time - (limit - i) * period_ms
+
+            # 随机游走价格
+            price_change = random.gauss(0, volatility)
+            current_price = max(current_price + price_change, base_price * 0.5)  # 不低于50%
+
+            # 生成开高低收
+            open_price = current_price
+
+            # 高低价
+            high_price = open_price + random.uniform(0, volatility)
+            low_price = open_price - random.uniform(0, volatility)
+
+            # 收盘价在高低之间
+            close_price = random.uniform(low_price, high_price)
+
+            # 确保高低关系正确
+            high_price = max(high_price, open_price, close_price)
+            low_price = min(low_price, open_price, close_price)
+
+            # 成交量
+            volume = random.uniform(1000, 10000) * (base_price / 100.0)
+
+            candles.append([
+                timestamp,
+                round(open_price, 2),
+                round(high_price, 2),
+                round(low_price, 2),
+                round(close_price, 2),
+                round(volume, 4)
+            ])
+
+            current_price = close_price
+
+        self.logger.info(f"[Mock Mode] Generated {len(candles)} mock candles for {symbol} {timeframe}")
+
+        return candles
