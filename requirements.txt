@@ -4,11 +4,8 @@ pandas==2.2.3
 numpy==1.23.5
 
 # Technical Analysis
-# TA-Lib is deprecated in favor of pandas-ta
-# TA-Lib==0.6.8
-# Note: pandas-ta requires Python <3.14 due to numba dependency
-# Fallback to custom implementation if pandas-ta is not available
-# pandas-ta
+# Using custom TechnicalIndicators class instead of external libraries
+# TA-Lib is deprecated and pandas-ta is not used
 
 # Data Validation and Settings
 pydantic==2.8.2
