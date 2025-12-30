@@ -21,7 +21,7 @@ async def _order_tracking_loop(order_id: str, ccxt_exchange: Any, postgres_pool:
     while True:
         try:
             # Fetch order status from exchange
-            order_info = ccxt_exchange.fetch_order(order_id)
+            order_info = await ccxt_exchange.fetch_order(order_id)
             order_status = order_info.get("status")
 
             logger.info(f"Order {order_id} status: {order_status}")

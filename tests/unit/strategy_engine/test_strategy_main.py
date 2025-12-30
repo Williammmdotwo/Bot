@@ -80,10 +80,11 @@ class TestMainStrategyLoopCoverage:
 
             assert result["signal"] == "BUY"
             assert result["confidence"] == 75.0
-            assert result["reasoning"] == "Test signal"
+            assert result["reason"] == "Test signal"  # main.py返回的是"reason"字段
             assert result["position_size"] == 0.02
-            assert result["stop_loss"] == 49000.0
-            assert result["take_profit"] == 51000.0
+            # stop_loss和take_profit在parsed_response中
+            assert result["parsed_response"]["stop_loss"] == 49000.0
+            assert result["parsed_response"]["take_profit"] == 51000.0
             assert "decision_id" in result
             assert "timestamp" in result
             assert "market_data" in result
@@ -114,10 +115,13 @@ class TestMainStrategyLoopCoverage:
             "historical_analysis": {}
         }
 
-        result = main_strategy_loop(mock_data_manager, "BTC-USDT")
+        with patch('src.strategy_engine.main.generate_fallback_signal_with_details') as mock_signal:
+            mock_signal.return_value = None  # 模拟返回None
 
-        assert result["signal"] == "HOLD"
-        assert "Technical analysis failed" in result["reason"]
+            result = main_strategy_loop(mock_data_manager, "BTC-USDT")
+
+            assert result["signal"] == "HOLD"
+            assert "Technical analysis failed" in result["reason"]
 
     def test_zero_current_price_uses_default(self, mock_data_manager):
         """测试当前价格为0时使用默认价格"""
@@ -237,7 +241,7 @@ class TestMainStrategyLoopCoverage:
             mock_signal.return_value = {
                 "side": "BUY",
                 "confidence": 75.0,
-                "position_size": 0  # 不返回position_size
+                # 不包含 position_size 字段，应该使用默认值 0.02
             }
 
             result = main_strategy_loop(mock_data_manager, "BTC-USDT")
@@ -335,7 +339,7 @@ class TestSignalGeneratorCoverage:
             "current_price": 50000.0
         }
 
-        with patch('src.strategy_engine.core.signal_generator.generate_dual_ema_signal') as mock_dual:
+        with patch('src.strategy_engine.dual_ema_strategy.generate_dual_ema_signal') as mock_dual:
             mock_dual.return_value = {
                 "signal": "BUY",
                 "confidence": 75.0,
@@ -349,7 +353,7 @@ class TestSignalGeneratorCoverage:
 
             assert signal["side"] == "BUY"
             assert signal["confidence"] == 75.0
-            assert "reasoning" == "Golden Cross"
+            assert signal["reasoning"] == "Golden Cross"
             assert signal["position_size"] == 0.02
 
     def test_generate_fallback_signal_to_emergency(self):
@@ -359,7 +363,7 @@ class TestSignalGeneratorCoverage:
         enhanced_analysis = {}
         market_data = {"current_price": 50000.0}
 
-        with patch('src.strategy_engine.core.signal_generator.generate_dual_ema_signal') as mock_dual:
+        with patch('src.strategy_engine.dual_ema_strategy.generate_dual_ema_signal') as mock_dual:
             mock_dual.return_value = None  # 模拟返回None
 
             signal = generate_fallback_signal(enhanced_analysis, market_data, "BTC-USDT")
@@ -496,7 +500,7 @@ class TestSignalGeneratorCoverage:
         enhanced_analysis = {}
         market_data = {}
 
-        with patch('src.strategy_engine.core.signal_generator.generate_dual_ema_signal') as mock_dual:
+        with patch('src.strategy_engine.dual_ema_strategy.generate_dual_ema_signal') as mock_dual:
             mock_dual.side_effect = Exception("Test error")
 
             signal = generate_fallback_signal(enhanced_analysis, market_data, "BTC-USDT")

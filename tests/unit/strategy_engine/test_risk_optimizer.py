@@ -66,8 +66,9 @@ class TestRiskOptimizerCoverage:
         optimized = optimize_signal_with_risk(signal, enhanced_analysis, current_price)
 
         assert optimized["side"] == "SELL"
-        assert optimized["stop_loss"] > 51000.0
-        assert optimized["take_profit"] < 49000.0
+        # 正常波动性下 multiplier=1.0，止损 = 50000 * (1 + 0.02*1.0) = 51000
+        assert optimized["stop_loss"] >= 51000.0
+        assert optimized["take_profit"] <= 49000.0
 
     def test_high_volatility_adjustment(self):
         """测试高波动性调整"""
@@ -143,11 +144,9 @@ class TestRiskOptimizerCoverage:
         # 验证仓位减小
         assert adjusted["position_size"] < signal["position_size"]
 
-        # 验证止损止盈收紧
-        assert adjusted["stop_loss"] > 49000.0 * 0.99
-        assert adjusted["stop_loss"] < 49000.0
-        assert adjusted["take_profit"] < 51000.0
-        assert adjusted["take_profit"] > 50000.0 * 1.03
+        # 验证止损止盈收紧（保守调整：止损=50000*0.99=49500，止盈=50000*1.03=51500）
+        assert adjusted["stop_loss"] == 49500.0
+        assert adjusted["take_profit"] == 51500.0
 
         # 验证风险等级降低
         assert adjusted["risk_assessment"]["risk_level"] == "LOW"
@@ -159,7 +158,8 @@ class TestRiskOptimizerCoverage:
             "confidence": 80.0,
             "position_size": 0.02,
             "stop_loss": 51000.0,
-            "take_profit": 49000.0
+            "take_profit": 49000.0,
+            "risk_assessment": {"risk_level": "HIGH"}
         }
 
         current_price = 50000.0
@@ -168,8 +168,9 @@ class TestRiskOptimizerCoverage:
 
         assert adjusted["side"] == "SELL"
         assert adjusted["confidence"] < 80.0
-        assert adjusted["stop_loss"] > 51000.0
-        assert adjusted["take_profit"] < 49000.0
+        # 保守调整：止损=50000*1.01=50500，止盈=50000*0.97=48500
+        assert adjusted["stop_loss"] == 50500.0
+        assert adjusted["take_profit"] == 48500.0
 
     def test_conservative_adjustment_exception(self):
         """测试保守调整异常处理"""
