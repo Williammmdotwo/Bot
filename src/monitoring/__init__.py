@@ -1,13 +1,10 @@
 """
-Athena Trader 监控模块
-Monitoring Module for Athena Trader
+Monitoring Package Initialization
 """
 
-from .dashboard import PerformanceDashboard, get_dashboard, start_monitoring, stop_monitoring
+from .dashboard import PerformanceDashboard, get_dashboard
 
 __all__ = [
     'PerformanceDashboard',
-    'get_dashboard',
-    'start_monitoring',
-    'stop_monitoring'
+    'get_dashboard'
 ]
