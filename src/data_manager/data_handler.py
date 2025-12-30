@@ -76,15 +76,28 @@ class DataHandler:
     def _connect_redis_via_url(self, redis_url: str) -> redis.Redis:
         """通过 URL 连接 Redis"""
         import re
-        match = re.match(r'redis://:(?P<password>[^@]*)@(?P<host>[^:]+):(?P<port>\d+)', redis_url)
+        # 支持 redis://password@host:port 格式（无密码时密码为空）
+        match = re.match(r'redis://(?:([^@]*)@)?([^:]+):(\d+)', redis_url)
         if match:
-            return redis.Redis(
-                host=match.group('host'),
-                port=int(match.group('port')),
-                password=match.group('password'),
-                decode_responses=True
-            )
+            password = match.group(1)  # 可能是空字符串
+            host = match.group(2)
+            port = int(match.group(3))
+
+            if password:  # 有密码
+                return redis.Redis(
+                    host=host,
+                    port=port,
+                    password=password,
+                    decode_responses=True
+                )
+            else:  # 无密码
+                return redis.Redis(
+                    host=host,
+                    port=port,
+                    decode_responses=True
+                )
         else:
+            # 如果正则不匹配，使用 redis.Redis.from_url
             return redis.Redis.from_url(redis_url, decode_responses=True)
 
     def _connect_redis_via_env_vars(self) -> redis.Redis:
