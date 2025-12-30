@@ -58,6 +58,22 @@ class DataHandler:
     def _init_redis_connection(self):
         """初始化 Redis 连接"""
         try:
+            # 从配置管理器获取Redis配置
+            try:
+                from src.utils.config_loader import get_config_manager
+                config_manager = get_config_manager()
+                config = config_manager.get_config()
+                redis_enabled = config['redis'].get('enabled', True)
+            except Exception:
+                # 如果无法获取配置，默认启用 Redis
+                redis_enabled = True
+
+            # 如果 Redis 被禁用，设置 redis_client 为 None
+            if not redis_enabled:
+                self.redis_client = None
+                self.logger.info("Redis 功能已禁用 (redis.enabled=false)")
+                return
+
             # 尝试 REDIS_URL (Docker 环境)
             redis_url = os.getenv("REDIS_URL")
             if redis_url:
@@ -70,8 +86,9 @@ class DataHandler:
             self.logger.info("Redis 连接测试成功")
 
         except Exception as e:
-            self.logger.error(f"Redis 连接失败: {e}")
-            raise
+            self.logger.warning(f"Redis 连接失败: {e}")
+            self.logger.info("继续运行，Redis 功能将不可用")
+            self.redis_client = None
 
     def _connect_redis_via_url(self, redis_url: str) -> redis.Redis:
         """通过 URL 连接 Redis"""

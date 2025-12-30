@@ -137,78 +137,42 @@ class RESTClient:
             self.logger.error(f"Failed to fetch positions for {symbol}: {e}")
             return []  # 发生错误时返回空列表，保证安全
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str, since: Optional[int] = None, limit: int = 100) -> List[List[float]]:
+    def fetch_ohlcv(self, symbol, timeframe, since=None, limit=100):
         """
-        获取 OHLCV (K线) 数据
-
-        Args:
-            symbol: 交易对符号
-            timeframe: 时间框架 (如 '1m', '5m', '1h')
-            since: 起始时间戳（毫秒），None 表示从最新开始
-            limit: 获取数量
-
-        Returns:
-            list: K线数据，每个元素为 [timestamp, open, high, low, close, volume]
+        获取K线数据 (修复参数传递问题)
         """
-        if not symbol or not timeframe:
-            self.logger.warning(f"Invalid parameters: symbol={symbol}, timeframe={timeframe}")
-            return []
+        # 兼容性处理：如果没有凭证且不是 Demo 模式，可能需要处理（此处保留原样）
+        if not self.has_credentials and not self.is_demo:
+             pass
 
         try:
-            # Mock 模式返回模拟数据
-            if self.data_source_config.get('use_mock', False):
-                return self._generate_mock_ohlcv(symbol, limit, since)
+            # 强制类型转换，防止传入字符串导致的错误
+            if limit:
+                limit = int(limit)
+            if since:
+                since = int(since)
 
-            # 实际模式从 API 获取
-            self.logger.info(f"Fetching OHLCV data for {symbol} {timeframe} (since={since}, limit={limit})")
+            # === 核心修复 ===
+            # 不要使用位置参数 (positional arguments)，因为不同版本的 ccxt 可能定义不同
+            # 强制使用关键字参数 (keyword arguments)
+            if since:
+                candles = self.exchange.fetch_ohlcv(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    since=since,
+                    limit=limit
+                )
+            else:
+                candles = self.exchange.fetch_ohlcv(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    limit=limit
+                )
 
-            try:
-                # 尝试使用公共 API 获取（不需要认证）
-                params = {
-                    'instId': symbol,
-                    'bar': timeframe,
-                    'limit': str(limit)
-                }
-
-                # 如果指定了 since 时间戳，添加 after 参数
-                if since is not None:
-                    params['after'] = str(since)
-
-                candles = self.exchange.public_get_market_candles(**params)
-
-                if candles.get('code') != '0':
-                    self.logger.warning(f"API returned error code: {candles.get('code')}")
-                    return []
-
-                data = candles.get('data', [])
-
-                # 转换数据格式 [timestamp, open, high, low, close, volume]
-                ohlcv = []
-                for candle in data:
-                    if len(candle) >= 6:
-                        ohlcv.append([
-                            int(candle[0]),  # timestamp
-                            float(candle[1]),  # open
-                            float(candle[2]),  # high
-                            float(candle[3]),  # low
-                            float(candle[4]),  # close
-                            float(candle[5])   # volume
-                        ])
-
-                # 验证数据
-                validated = self._validate_ohlcv_data(ohlcv, symbol, timeframe)
-
-                self.logger.info(f"Fetched {len(validated)} candles for {symbol} {timeframe}")
-                return validated
-
-            except AttributeError:
-                # 如果 public_get_market_candles 不可用，使用 fetch_ohlcv
-                self.logger.warning("public_get_market_candles not available, using fetch_ohlcv")
-                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
-                return self._validate_ohlcv_data(ohlcv, symbol, timeframe)
+            return candles if isinstance(candles, list) else []
 
         except Exception as e:
-            self.logger.error(f"Failed to fetch OHLCV for {symbol} {timeframe}: {e}")
+            self.logger.error(f"Failed to fetch OHLCV for {symbol}: {e}")
             return []
 
     def _generate_mock_ohlcv(self, symbol: str, limit: int, since: Optional[int] = None) -> List[List[float]]:
