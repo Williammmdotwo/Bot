@@ -377,7 +377,13 @@ class AthenaMonolith:
                 modules["data_manager"] = DataHandler()
                 self.logger.info("✓ Data Manager initialized")
             except Exception as e:
-                self.logger.error(f"✗ Data Manager initialization failed: {e}")
+                self.logger.critical("✗ 核心组件 Data Manager 初始化失败，程序终止")
+                self.logger.critical(f"错误详情: {e}")
+                self.logger.critical("请检查：")
+                self.logger.critical("  1. Redis 连接配置 (REDIS_HOST, REDIS_PORT, REDIS_URL)")
+                self.logger.critical("  2. OKX API 密钥配置 (OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE)")
+                self.logger.critical("  3. 网络连接状态")
+                raise SystemExit(1)
 
         # 2. 初始化StrategyEngine（策略引擎）
         if modules_config.get('strategy_engine', {}).get('enabled', True):
