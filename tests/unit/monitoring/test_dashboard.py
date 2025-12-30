@@ -6,8 +6,11 @@ PerformanceDashboard 单元测试
 import pytest
 import time
 import threading
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, mock_open
 from datetime import datetime, timedelta
+import json
+import tempfile
+import os
 
 from src.monitoring.dashboard import PerformanceDashboard, get_dashboard
 
@@ -372,35 +375,36 @@ class TestPerformanceDashboard:
         self.dashboard.clear_alerts()
         assert len(self.dashboard.alerts) == 0
 
-    @patch('builtins.open', create=True)
-    def test_export_metrics(self, mock_open):
+    @patch('src.monitoring.dashboard.json')
+    def test_export_metrics(self, mock_json):
         """测试导出指标"""
-        import json
-
         # 收集一些真实指标
         self.dashboard._collect_system_metrics()
 
-        # Mock 文件写入
-        mock_file = MagicMock()
-        mock_open.return_value.__enter__.return_value = mock_file
+        # 使用临时文件进行测试
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+            temp_filename = f.name
 
-        self.dashboard.export_metrics('test_metrics.json', hours=24)
-
-        # 验证文件被打开
-        mock_open.assert_called_once_with('test_metrics.json', 'w', encoding='utf-8')
-
-        # 验证文件写入被调用
-        mock_file.write.assert_called_once()
-
-        # 验证写入的内容是有效的JSON
-        written_content = mock_file.write.call_args[0][0]
         try:
-            exported_data = json.loads(written_content)
-            assert 'export_time' in exported_data
-            assert 'dashboard_data' in exported_data
-            assert 'metrics_history' in exported_data
-        except json.JSONDecodeError:
-            pytest.fail("导出的数据不是有效的JSON")
+            # 调用导出方法
+            self.dashboard.export_metrics(temp_filename, hours=24)
+
+            # 验证 json.dump 被调用
+            mock_json.dump.assert_called_once()
+
+            # 验证 json.dump 的第一个参数是导出的数据字典
+            call_args = mock_json.dump.call_args
+            data = call_args[0][0]
+
+            # 验证数据结构
+            assert 'export_time' in data
+            assert 'dashboard_data' in data
+            assert 'metrics_history' in data
+
+        finally:
+            # 清理临时文件
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
 
 
 class TestGlobalDashboard:

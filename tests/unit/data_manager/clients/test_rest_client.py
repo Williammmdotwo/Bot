@@ -4,7 +4,7 @@ RESTClient 单元测试
 
 import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
 import ccxt
 
 from src.data_manager.clients.rest_client import RESTClient
@@ -162,24 +162,51 @@ class TestRESTClient:
         mock_exchange.fetch_positions.assert_not_called()
 
     def test_fetch_ohlcv_success(self):
-        """测试获取OHLCV数据成功"""
-        # 创建mock public_exchange
+        """测试获取OHLCV数据成功 - Mock 模式"""
+        # Patch get_data_source_config to return Mock mode
+        with patch('src.data_manager.clients.rest_client.get_data_source_config', return_value={'use_mock': True}):
+            client = RESTClient()
+
+        result = client.fetch_ohlcv("BTC-USDT", "5m", 100)
+
+        # Mock 模式应该返回模拟数据
+        assert isinstance(result, list)
+        assert len(result) == 100
+        assert len(result[0]) == 6  # [timestamp, open, high, low, close, volume]
+
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ohlcv_with_mock_exchange(self, mock_okx, mock_data_source_config):
+        """测试获取OHLCV数据成功 - Mock Exchange"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
+        # 创建 mock public_exchange
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_candles.return_value = {
             'code': '0',
             'data': [[1609459200000, "50000", "50100", "49900", "50050", "100"]]
         }
 
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
+
         client = RESTClient()
+        # 覆盖 public_exchange
         client.public_exchange = mock_public_exchange
 
         result = client.fetch_ohlcv("BTC-USDT", "5m", 100)
 
         assert result == [[1609459200000, 50000.0, 50100.0, 49900.0, 50050.0, 100.0]]
 
-    def test_fetch_ohlcv_invalid_symbol(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ohlcv_invalid_symbol(self, mock_okx, mock_data_source_config):
         """测试获取OHLCV数据 - 无效交易对"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -191,13 +218,19 @@ class TestRESTClient:
         result2 = client.fetch_ohlcv(None, "5m", 100)
         assert isinstance(result2, list)
 
-    def test_fetch_ohlcv_invalid_timeframe(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ohlcv_invalid_timeframe(self, mock_okx, mock_data_source_config):
         """测试获取OHLCV数据 - 无效时间框架"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_candles.return_value = {
             'code': '0',
             'data': []
         }
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -206,13 +239,19 @@ class TestRESTClient:
         result = client.fetch_ohlcv("BTC-USDT", "invalid", 100)
         assert isinstance(result, list)
 
-    def test_fetch_ohlcv_invalid_since(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ohlcv_invalid_since(self, mock_okx, mock_data_source_config):
         """测试获取OHLCV数据 - 无效since参数"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_candles.return_value = {
             'code': '0',
             'data': []
         }
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -222,14 +261,20 @@ class TestRESTClient:
 
         assert isinstance(result, list)
 
-    def test_fetch_ohlcv_network_error_retry(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ohlcv_network_error_retry(self, mock_okx, mock_data_source_config):
         """测试获取OHLCV数据 - 网络错误重试"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         # 第一次网络错误，第二次成功
         mock_public_exchange.public_get_market_candles.side_effect = [
             ccxt.NetworkError("Network error"),
             {'code': '0', 'data': [[1609459200000, "50000", "50100", "49900", "50050", "100"]]}
         ]
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -240,14 +285,20 @@ class TestRESTClient:
         # 预期结果取决于实现，由于没有重试，可能返回空
         assert isinstance(result, list)
 
-    def test_fetch_ohlcv_exchange_error_retry(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ohlcv_exchange_error_retry(self, mock_okx, mock_data_source_config):
         """测试获取OHLCV数据 - 交易所错误重试"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         # 第一次交易所错误，第二次成功
         mock_public_exchange.public_get_market_candles.side_effect = [
             ccxt.ExchangeError("Exchange error"),
             {'code': '0', 'data': [[1609459200000, "50000", "50100", "49900", "50050", "100"]]}
         ]
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -258,10 +309,16 @@ class TestRESTClient:
         # 预期结果取决于实现，由于没有重试，可能返回空
         assert isinstance(result, list)
 
-    def test_fetch_ohlcv_all_retries_failed(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ohlcv_all_retries_failed(self, mock_okx, mock_data_source_config):
         """测试获取OHLCV数据 - 所有重试失败"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_candles.side_effect = ccxt.NetworkError("Persistent network error")
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -272,10 +329,15 @@ class TestRESTClient:
         # 预期结果取决于实现，现在捕获异常并返回空
         assert isinstance(result, list)
 
-    def test_validate_ohlcv_data_success(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_validate_ohlcv_data_success(self, mock_okx, mock_data_source_config):
         """测试验证OHLCV数据成功"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.milliseconds.return_value = 1609459200000
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -291,9 +353,14 @@ class TestRESTClient:
         assert result[0][0] == 1609459200000
         assert result[1][0] == 1609459260000
 
-    def test_validate_ohlcv_data_empty(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_validate_ohlcv_data_empty(self, mock_okx, mock_data_source_config):
         """测试验证OHLCV数据 - 空数据"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -302,10 +369,15 @@ class TestRESTClient:
 
         assert result == []
 
-    def test_validate_ohlcv_data_invalid_structure(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_validate_ohlcv_data_invalid_structure(self, mock_okx, mock_data_source_config):
         """测试验证OHLCV数据 - 无效结构"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.milliseconds.return_value = 1609459200000
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -323,10 +395,15 @@ class TestRESTClient:
         assert len(result) == 1
         assert result[0][0] == 1609459260000
 
-    def test_validate_ohlcv_data_invalid_prices(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_validate_ohlcv_data_invalid_prices(self, mock_okx, mock_data_source_config):
         """测试验证OHLCV数据 - 无效价格"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.milliseconds.return_value = 1609459200000
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -343,10 +420,15 @@ class TestRESTClient:
         assert len(result) == 1
         assert result[0][0] == 1609459260000
 
-    def test_validate_ohlcv_data_invalid_timestamps(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_validate_ohlcv_data_invalid_timestamps(self, mock_okx, mock_data_source_config):
         """测试验证OHLCV数据 - 无效时间戳"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.milliseconds.return_value = 1609459200000
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -363,10 +445,15 @@ class TestRESTClient:
         assert len(result) == 1
         assert result[0][0] == 1609459200000
 
-    def test_validate_ohlcv_data_duplicates(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_validate_ohlcv_data_duplicates(self, mock_okx, mock_data_source_config):
         """测试验证OHLCV数据 - 重复时间戳"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.milliseconds.return_value = 1609459200000
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -385,12 +472,17 @@ class TestRESTClient:
         timestamps = [candle[0] for candle in result]
         assert len(set(timestamps)) == 2  # 无重复
 
-    def test_fetch_multiple_timeframes_success(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_multiple_timeframes_success(self, mock_okx, mock_data_source_config):
         """测试获取多时间框架数据成功"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.milliseconds.return_value = 1609459200000
         mock_exchange.parse_timeframe.return_value = 300000  # 5分钟
         mock_exchange.fetch_ohlcv.return_value = [[1609459200000, 50000, 50100, 49900, 50050, 100]]
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -405,11 +497,16 @@ class TestRESTClient:
         assert "4h" in result
         assert "1d" in result
 
-    def test_fetch_multiple_timeframes_partial_failure(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_multiple_timeframes_partial_failure(self, mock_okx, mock_data_source_config):
         """测试获取多时间框架数据 - 部分失败"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.milliseconds.return_value = 1609459200000
         mock_exchange.parse_timeframe.return_value = 300000
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -428,8 +525,12 @@ class TestRESTClient:
         assert "15m" in result
         assert result["1m"] == []  # 失败的时间框架返回空列表
 
-    def test_fetch_orderbook_success(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_orderbook_success(self, mock_okx, mock_data_source_config):
         """测试获取订单簿成功"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_books.return_value = {
             'code': '0',
@@ -439,6 +540,8 @@ class TestRESTClient:
                 'ts': '1609459200000'
             }]
         }
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -450,10 +553,16 @@ class TestRESTClient:
         assert len(result["bids"]) == 1
         assert len(result["asks"]) == 1
 
-    def test_fetch_orderbook_exception(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_orderbook_exception(self, mock_okx, mock_data_source_config):
         """测试获取订单簿异常"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_books.side_effect = Exception("API error")
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -463,8 +572,12 @@ class TestRESTClient:
         # 现在捕获异常并返回None
         assert result is None
 
-    def test_fetch_ticker_success(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ticker_success(self, mock_okx, mock_data_source_config):
         """测试获取ticker成功"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_ticker.return_value = {
             'code': '0',
@@ -480,6 +593,8 @@ class TestRESTClient:
                 'ts': '1609459200000'
             }]
         }
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -490,10 +605,16 @@ class TestRESTClient:
         assert result["last"] == 50000.0
         assert result["volume"] == 1000.0
 
-    def test_fetch_ticker_exception(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_ticker_exception(self, mock_okx, mock_data_source_config):
         """测试获取ticker异常"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_ticker.side_effect = Exception("API error")
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
@@ -503,8 +624,15 @@ class TestRESTClient:
         # 现在捕获异常并返回None
         assert result is None
 
-    def test_fetch_recent_trades_success(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_recent_trades_success(self, mock_okx, mock_data_source_config):
         """测试获取最近交易成功"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
+
         client = RESTClient()
 
         # 现在fetch_recent_trades总是返回空列表（模拟盘不支持）
@@ -512,8 +640,15 @@ class TestRESTClient:
 
         assert result == []
 
-    def test_fetch_recent_trades_exception(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_recent_trades_exception(self, mock_okx, mock_data_source_config):
         """测试获取最近交易异常"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
+
         client = RESTClient()
 
         # 现在fetch_recent_trades总是返回空列表，不会抛出异常
@@ -521,14 +656,19 @@ class TestRESTClient:
 
         assert result == []
 
-    def test_fetch_funding_rate_success(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_funding_rate_success(self, mock_okx, mock_data_source_config):
         """测试获取资金费率成功"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.fetch_funding_rate.return_value = {
             "symbol": "BTC-USDT-SWAP",
             "fundingRate": 0.0001,
             "timestamp": 1609459200000
         }
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -539,10 +679,15 @@ class TestRESTClient:
         assert result["fundingRate"] == 0.0001
         mock_exchange.fetch_funding_rate.assert_called_once_with("BTC-USDT-SWAP")
 
-    def test_fetch_funding_rate_exception(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_fetch_funding_rate_exception(self, mock_okx, mock_data_source_config):
         """测试获取资金费率异常"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_exchange = Mock()
         mock_exchange.fetch_funding_rate.side_effect = Exception("API error")
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.exchange = mock_exchange
@@ -550,8 +695,12 @@ class TestRESTClient:
         with pytest.raises(Exception):
             client.fetch_funding_rate("BTC-USDT-SWAP")
 
-    def test_get_market_info_success(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_get_market_info_success(self, mock_okx, mock_data_source_config):
         """测试获取市场信息成功"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_ticker.return_value = {
             'code': '0',
@@ -575,10 +724,13 @@ class TestRESTClient:
                 'ts': '1609459200000'
             }]
         }
+        mock_exchange = Mock()
+        mock_exchange.milliseconds.return_value = 1609459200000
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
-        client.exchange = mock_public_exchange
+        client.exchange = mock_exchange
 
         with patch.object(client, 'fetch_multiple_timeframes', return_value={"5m": []}):
             result = client.get_market_info("BTC-USDT")
@@ -591,14 +743,20 @@ class TestRESTClient:
         assert "timestamp" in result
         assert "use_demo" in result
 
-    def test_get_market_info_exception(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_get_market_info_exception(self, mock_okx, mock_data_source_config):
         """测试获取市场信息异常"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         mock_public_exchange.public_get_market_ticker.side_effect = Exception("API error")
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange
-        client.exchange = mock_public_exchange
+        client.exchange = mock_exchange
 
         # fetch_ticker现在捕获异常并返回None，所以get_market_info不会抛出异常
         # ticker会是None，但其他字段仍然会返回
@@ -711,14 +869,20 @@ class TestRESTClientIntegration:
         assert len(ohlcv) == 1
         assert market_info["symbol"] == "BTC-USDT"
 
-    def test_error_recovery_workflow(self):
+    @patch('src.data_manager.clients.rest_client.get_data_source_config')
+    @patch('src.data_manager.clients.rest_client.ccxt.okx')
+    def test_error_recovery_workflow(self, mock_okx, mock_data_source_config):
         """测试错误恢复工作流"""
+        mock_data_source_config.return_value = {'use_mock': False}
+
         mock_public_exchange = Mock()
         # 第一次网络错误，第二次成功
         mock_public_exchange.public_get_market_candles.side_effect = [
             ccxt.NetworkError("Network error"),
             {'code': '0', 'data': [[1609459200000, "50000", "50100", "49900", "50050", "100"]]}
         ]
+        mock_exchange = Mock()
+        mock_okx.return_value = mock_exchange
 
         client = RESTClient()
         client.public_exchange = mock_public_exchange

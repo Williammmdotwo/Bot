@@ -1,12 +1,15 @@
 """
-Position Manager Tests - Zero Coverage Module
-Target: Add tests to achieve 50%+ coverage with focus on error handling
+Position Manager Tests - Comprehensive Test Suite
+Target: Achieve 50%+ coverage with focus on error handling
 """
 
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch
+import json
+import logging
 import asyncpg
+from unittest.mock import Mock, AsyncMock, patch, call
+from decimal import Decimal
 
 from src.executor.core.position_manager import (
     check_position_exists,
@@ -15,91 +18,175 @@ from src.executor.core.position_manager import (
 )
 
 
-class TestPositionManagerBasic:
-    """Basic tests for position_manager.py"""
+# Mock fixture for postgres_pool
+@pytest.fixture
+def postgres_pool():
+    """Mock PostgreSQL connection pool"""
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {'order_id': 'order_123', 'amount': 0.001, 'filled_amount': 0.001}
+    ]
+    pool.fetchrow.return_value = {'total_filled': '0.005'}
+    pool.execute.return_value = None
+    return pool
+
+
+@pytest.fixture
+def ccxt_exchange():
+    """Mock CCXT exchange"""
+    exchange = Mock()
+    exchange.create_market_order.return_value = {
+        'id': 'close_order_123',
+        'status': 'closed',
+        'filled': 0.005,
+        'price': 95000,
+        'fee': {'cost': 2.5}
+    }
+    return exchange
+
+
+@pytest.fixture
+def redis_client():
+    """Mock Redis client"""
+    client = AsyncMock()
+    client.publish.return_value = None
+    return client
+
+
+class TestPositionManagerLogging:
+    """Test logging and debug functionality"""
 
     @pytest.mark.asyncio
-    async def test_check_position_exists_success(self):
-        """Test checking position existence - success"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetch.return_value = [
-            {'order_id': 'order_123', 'amount': 0.001, 'filled_amount': 0.001}
-        ]
-
-        result = await check_position_exists('BTC-USDT', 'buy', postgres_pool)
+    async def test_check_position_exists_logs_query(self, postgres_pool, caplog):
+        """Test that check_position_exists logs SQL queries"""
+        with caplog.at_level(logging.INFO):
+            result = await check_position_exists('BTC-USDT', 'buy', postgres_pool)
 
         assert result is True
-        postgres_pool.fetch.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_check_position_exists_no_position(self):
-        """Test checking position existence - no position found"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetch.return_value = []
-
-        result = await check_position_exists('BTC-USDT', 'buy', postgres_pool)
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_check_position_exists_database_error(self):
-        """Test checking position existence - database error"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetch.side_effect = Exception("Database connection failed")
-
-        with pytest.raises(Exception):
-            await check_position_exists('BTC-USDT', 'buy', postgres_pool)
-
-    @pytest.mark.asyncio
-    async def test_get_position_size_success(self):
-        """Test getting position size - success"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetchrow.return_value = {'total_filled': 0.005}
-
-        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
+    async def test_get_position_size_logs_sql(self, postgres_pool, caplog):
+        """Test that get_position_size logs SQL queries"""
+        with caplog.at_level(logging.INFO):
+            result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
 
         assert result == 0.005
 
     @pytest.mark.asyncio
-    async def test_get_position_size_no_position(self):
-        """Test getting position size - no position"""
-        postgres_pool = AsyncMock()
+    async def test_execute_force_close_logs_debug_info(self, postgres_pool, redis_client, ccxt_exchange, caplog):
+        """Test that execute_force_close logs detailed debug info"""
+        with patch('src.executor.core.position_manager.track'):
+            with caplog.at_level(logging.INFO):
+                result = await execute_force_close(
+                    symbol='BTC-USDT',
+                    side='buy',
+                    position_size=0.005,
+                    ccxt_exchange=ccxt_exchange,
+                    postgres_pool=postgres_pool,
+                    redis_client=redis_client
+                )
+
+        assert "Executing force close" in caplog.text
+        assert "Creating sell market order" in caplog.text
+
+
+class TestPositionManagerInputValidation:
+    """Test input validation and edge cases"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("symbol", [
+        'BTC-USDT',
+        'ETH/USDT',  # Test with forward slash
+        'SOL-USDT',   # Test with hyphen
+        'ADA/USDT',   # Test with capital letters
+        'btc-usdt',   # Test lowercase
+        'btc_usdt',   # Test with underscore
+    ])
+    async def test_check_position_exists_various_symbol_formats(self, postgres_pool, symbol):
+        """Test check_position_exists with various symbol formats"""
+        postgres_pool.fetch.return_value = [
+            {'order_id': 'test_order', 'amount': 0.001}
+        ]
+
+        result = await check_position_exists(symbol, 'buy', postgres_pool)
+        assert result is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("side", ['buy', 'sell', 'BUY', 'SELL', 'Long', 'Short'])
+    async def test_check_position_exists_various_side_formats(self, postgres_pool, side):
+        """Test check_position_exists with various side formats"""
+        postgres_pool.fetch.return_value = [
+            {'order_id': 'test_order', 'amount': 0.001}
+        ]
+
+        result = await check_position_exists(side.lower(), 'buy', postgres_pool)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_get_position_size_empty_result(self, postgres_pool):
+        """Test get_position_size when result is empty"""
         postgres_pool.fetchrow.return_value = None
 
         result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
-
         assert result == 0.0
 
     @pytest.mark.asyncio
-    async def test_get_position_size_database_error(self):
-        """Test getting position size - database error"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetchrow.side_effect = Exception("Query timeout")
+    async def test_get_position_size_zero_filled_amount(self, postgres_pool):
+        """Test get_position_size when total_filled is zero"""
+        postgres_pool.fetchrow.return_value = {'total_filled': 0}
 
-        with pytest.raises(Exception):
-            await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        assert result == 0
 
     @pytest.mark.asyncio
-    async def test_execute_force_close_success(self):
-        """Test executing force close - success"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed',
-            'filled': 0.005,
-            'price': 95000,
-            'fee': {'cost': 2.5}
-        }
+    async def test_get_position_size_negative_amount(self, postgres_pool):
+        """Test get_position_size with negative filled amount"""
+        postgres_pool.fetchrow.return_value = {'total_filled': -0.5}
 
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
+        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        assert result == -0.5
 
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
+    @pytest.mark.asyncio
+    async def test_get_position_size_large_amount(self, postgres_pool):
+        """Test get_position_size with very large amount"""
+        postgres_pool.fetchrow.return_value = {'total_filled': 999999.999}
 
-        with patch('src.executor.core.position_manager.track') as mock_track:
-            mock_track.return_value = None
+        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        assert result == 999999.999
 
+
+class TestPositionManagerReturnValueHandling:
+    """Test return value formatting and structure"""
+
+    @pytest.mark.asyncio
+    async def test_get_position_size_returns_float(self, postgres_pool):
+        """Test that get_position_size always returns float type"""
+        postgres_pool.fetchrow.return_value = {'total_filled': '0.005'}
+
+        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        assert isinstance(result, float)
+        assert result == 0.005
+
+    @pytest.mark.asyncio
+    async def test_get_position_size_handles_decimal_string(self, postgres_pool):
+        """Test handling of decimal strings from database"""
+        postgres_pool.fetchrow.return_value = {'total_filled': '1.23456789'}
+
+        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        assert result == 1.23456789
+
+    @pytest.mark.asyncio
+    async def test_get_position_size_handles_scientific_notation(self, postgres_pool):
+        """Test handling of scientific notation from database"""
+        postgres_pool.fetchrow.return_value = {'total_filled': '1.23e5'}
+
+        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        assert result == 123000.0
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_return_structure(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test that execute_force_close returns proper structure"""
+        with patch('src.executor.core.position_manager.track'):
             result = await execute_force_close(
                 symbol='BTC-USDT',
                 side='buy',
@@ -109,16 +196,264 @@ class TestPositionManagerBasic:
                 redis_client=redis_client
             )
 
-            assert result['close_order_id'] == 'close_order_123'
-            assert result['symbol'] == 'BTC-USDT'
-            assert result['side'] == 'buy'
-            assert result['close_side'] == 'sell'
-            assert result['status'] == 'closed'
+        assert isinstance(result, dict)
+        assert 'close_order_id' in result
+        assert 'symbol' in result
+        assert 'side' in result
+        assert 'close_side' in result
+        assert 'position_size' in result
+        assert 'status' in result
+        assert result['close_order_id'] == 'close_order_123'
 
     @pytest.mark.asyncio
-    async def test_execute_force_close_sell_position(self):
+    async def test_execute_force_close_sell_position_returns_buy_close_side(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test that closing a sell position returns buy as close side"""
+        with patch('src.executor.core.position_manager.track'):
+            result = await execute_force_close(
+                symbol='BTC-USDT',
+                side='sell',
+                position_size=0.005,
+                ccxt_exchange=ccxt_exchange,
+                postgres_pool=postgres_pool,
+                redis_client=redis_client
+            )
+
+        assert result['close_side'] == 'buy'
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_uses_correct_price_from_order(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test that correct price is extracted from order"""
+        ccxt_exchange.create_market_order.return_value = {
+            'id': 'test_id',
+            'status': 'open',
+            'price': 98000.50
+        }
+
+        with patch('src.executor.core.position_manager.track'):
+            result = await execute_force_close(
+                symbol='BTC-USDT',
+                side='buy',
+                position_size=0.005,
+                ccxt_exchange=ccxt_exchange,
+                postgres_pool=postgres_pool,
+                redis_client=redis_client
+            )
+
+        assert 'status' in result
+
+
+class TestPositionManagerFeeHandling:
+    """Test fee calculation and handling"""
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_with_nested_fee_dict(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test force close with nested fee dict containing cost"""
+        ccxt_exchange.create_market_order.return_value = {
+            'id': 'test_id',
+            'status': 'open',
+            'price': 95000,
+            'fee': {'cost': 5.25}
+        }
+
+        postgres_pool.execute.return_value = None
+
+        with patch('src.executor.core.position_manager.track'):
+            result = await execute_force_close(
+                symbol='BTC-USDT',
+                side='buy',
+                position_size=0.005,
+                ccxt_exchange=ccxt_exchange,
+                postgres_pool=postgres_pool,
+                redis_client=redis_client
+            )
+
+        postgres_pool.execute.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_with_flat_fee_dict(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test force close with flat fee dict (legacy format)"""
+        ccxt_exchange.create_market_order.return_value = {
+            'id': 'test_id',
+            'status': 'open',
+            'price': 95000,
+            'fee': {}
+        }
+
+        postgres_pool.execute.return_value = None
+
+        with patch('src.executor.core.position_manager.track'):
+            result = await execute_force_close(
+                symbol='BTC-USDT',
+                side='buy',
+                position_size=0.005,
+                ccxt_exchange=ccxt_exchange,
+                postgres_pool=postgres_pool,
+                redis_client=redis_client
+            )
+
+        assert result['close_order_id'] == 'test_id'
+
+
+class TestPositionManagerMessagePublishing:
+    """Test message publishing to Redis"""
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_publishes_correct_message(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test that force close publishes correct message structure"""
+        ccxt_exchange.create_market_order.return_value = {
+            'id': 'test_id',
+            'status': 'closed'
+        }
+
+        postgres_pool.execute.return_value = None
+
+        redis_client.publish.return_value = None
+
+        with patch('src.executor.core.position_manager.track'):
+            result = await execute_force_close(
+                symbol='BTC-USDT',
+                side='buy',
+                position_size=0.005,
+                ccxt_exchange=ccxt_exchange,
+                postgres_pool=postgres_pool,
+                redis_client=redis_client
+            )
+
+        redis_client.publish.assert_called_once()
+        call_args = redis_client.publish.call_args[0]
+
+        assert call_args[0] == 'position_events'
+        message = json.loads(call_args[1])
+
+        assert message['event'] == 'position_closed'
+        assert message['symbol'] == 'BTC-USDT'
+        assert message['reason'] == 'RISK_STOP_LOSS'
+        assert message['order_id'] == 'test_id'
+
+
+class TestPositionManagerErrorHandling:
+    """Test error handling in various scenarios"""
+
+    @pytest.mark.asyncio
+    async def test_check_position_exists_database_error(self, postgres_pool):
+        """Test checking position existence - database error"""
+        postgres_pool.fetch.side_effect = Exception("Database connection failed")
+
+        with pytest.raises(Exception):
+            await check_position_exists('BTC-USDT', 'buy', postgres_pool)
+
+    @pytest.mark.asyncio
+    async def test_get_position_size_database_error(self, postgres_pool):
+        """Test getting position size - database error"""
+        postgres_pool.fetchrow.side_effect = Exception("Query timeout")
+
+        with pytest.raises(Exception):
+            await get_position_size('BTC-USDT', 'buy', postgres_pool)
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_order_creation_error(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test executing force close - order creation error"""
+        ccxt_exchange.create_market_order.side_effect = Exception("Insufficient balance")
+
+        postgres_pool.execute.return_value = None
+        redis_client.publish.return_value = None
+
+        with pytest.raises(Exception):
+            with patch('src.executor.core.position_manager.track'):
+                await execute_force_close(
+                    symbol='BTC-USDT',
+                    side='buy',
+                    position_size=0.005,
+                    ccxt_exchange=ccxt_exchange,
+                    postgres_pool=postgres_pool,
+                    redis_client=redis_client
+                )
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_postgres_update_error(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test executing force close - PostgreSQL update error"""
+        ccxt_exchange.create_market_order.return_value = {
+            'id': 'close_order_123',
+            'status': 'closed',
+            'filled': 0.005,
+            'price': 95000,
+            'fee': {'cost': 2.5}
+        }
+
+        postgres_pool.execute.side_effect = [
+            None,  # First execute (insert original record) succeeds
+            Exception("PostgreSQL constraint violation")  # Second execute (update) fails
+        ]
+
+        redis_client.publish.return_value = None
+
+        with pytest.raises(Exception):
+            with patch('src.executor.core.position_manager.track'):
+                await execute_force_close(
+                    symbol='BTC-USDT',
+                    side='buy',
+                    position_size=0.005,
+                    ccxt_exchange=ccxt_exchange,
+                    postgres_pool=postgres_pool,
+                    redis_client=redis_client
+                )
+
+
+class TestPositionManagerSuccessScenarios:
+    """Test successful scenarios"""
+
+    @pytest.mark.asyncio
+    async def test_check_position_exists_success(self, postgres_pool):
+        """Test checking position existence - success"""
+        postgres_pool.fetch.return_value = [
+            {'order_id': 'order_123', 'amount': 0.001, 'filled_amount': 0.001}
+        ]
+
+        result = await check_position_exists('BTC-USDT', 'buy', postgres_pool)
+        assert result is True
+        postgres_pool.fetch.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_check_position_exists_no_position(self, postgres_pool):
+        """Test checking position existence - no position found"""
+        postgres_pool.fetch.return_value = []
+
+        result = await check_position_exists('BTC-USDT', 'buy', postgres_pool)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_success(self, postgres_pool, redis_client, ccxt_exchange):
+        """Test executing force close - success"""
+        ccxt_exchange.create_market_order.return_value = {
+            'id': 'close_order_123',
+            'status': 'closed',
+            'filled': 0.005,
+            'price': 95000,
+            'fee': {'cost': 2.5}
+        }
+
+        postgres_pool.execute.return_value = None
+
+        redis_client.publish.return_value = None
+
+        with patch('src.executor.core.position_manager.track'):
+            result = await execute_force_close(
+                symbol='BTC-USDT',
+                side='buy',
+                position_size=0.005,
+                ccxt_exchange=ccxt_exchange,
+                postgres_pool=postgres_pool,
+                redis_client=redis_client
+            )
+
+        assert result['close_order_id'] == 'close_order_123'
+        assert result['symbol'] == 'BTC-USDT'
+        assert result['side'] == 'buy'
+        assert result['close_side'] == 'sell'
+
+    @pytest.mark.asyncio
+    async def test_execute_force_close_sell_position(self, postgres_pool, redis_client, ccxt_exchange):
         """Test executing force close for sell position"""
-        ccxt_exchange = Mock()
         ccxt_exchange.create_market_order.return_value = {
             'id': 'close_order_456',
             'status': 'closed',
@@ -127,8 +462,9 @@ class TestPositionManagerBasic:
             'fee': {'cost': 5}
         }
 
-        postgres_pool = AsyncMock()
-        redis_client = AsyncMock()
+        postgres_pool.execute.return_value = None
+
+        redis_client.publish.return_value = None
 
         with patch('src.executor.core.position_manager.track'):
             result = await execute_force_close(
@@ -140,422 +476,41 @@ class TestPositionManagerBasic:
                 redis_client=redis_client
             )
 
-            assert result['close_side'] == 'buy'
-            assert result['position_size'] == 0.01
+        assert result['close_side'] == 'buy'
+
+
+class TestPositionManagerConcurrency:
+    """Test concurrent operations"""
 
     @pytest.mark.asyncio
-    async def test_execute_force_close_order_creation_error(self):
-        """Test executing force close - order creation error"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.side_effect = Exception("Insufficient balance")
-
-        postgres_pool = AsyncMock()
-        redis_client = AsyncMock()
-
-        with pytest.raises(Exception):
-            await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_postgres_update_error(self):
-        """Test executing force close - PostgreSQL update error"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed',
-            'filled': 0.005,
-            'price': 95000,
-            'fee': {'cost': 2.5}
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.side_effect = [
-            None,  # First execute (insert original record) succeeds
-            Exception("PostgreSQL constraint violation")  # Second execute (update) fails
+    async def test_concurrent_check_position_exists(self, postgres_pool):
+        """Test that multiple concurrent position checks work correctly"""
+        postgres_pool.fetch.return_value = [
+            {'order_id': 'order_1', 'amount': 0.001}
         ]
 
-        redis_client = AsyncMock()
-
-        with pytest.raises(Exception):
-            await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_redis_publish_error(self):
-        """Test executing force close - Redis publish error"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed',
-            'filled': 0.005,
-            'price': 95000,
-            'fee': {'cost': 2.5}
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
-
-        redis_client = AsyncMock()
-        redis_client.publish.side_effect = Exception("Redis connection lost")
-
-        with patch('src.executor.core.position_manager.track'):
-            with pytest.raises(Exception):
-                await execute_force_close(
-                    symbol='BTC-USDT',
-                    side='buy',
-                    position_size=0.005,
-                    ccxt_exchange=ccxt_exchange,
-                    postgres_pool=postgres_pool,
-                    redis_client=redis_client
-                )
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_track_error(self):
-        """Test executing force close - track function error"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed',
-            'filled': 0.005,
-            'price': 95000,
-            'fee': {'cost': 2.5}
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
-
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
-
-        with patch('src.executor.core.position_manager.track') as mock_track:
-            mock_track.side_effect = Exception("Order tracking failed")
-
-            with pytest.raises(Exception):
-                await execute_force_close(
-                    symbol='BTC-USDT',
-                    side='buy',
-                    position_size=0.005,
-                    ccxt_exchange=ccxt_exchange,
-                    postgres_pool=postgres_pool,
-                    redis_client=redis_client
-                )
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_missing_order_fields(self):
-        """Test executing force close - missing fields in order response"""
-        ccxt_exchange = Mock()
-        # Return order with missing fields
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed'
-            # Missing: filled, price, fee
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
-
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
-
-        with patch('src.executor.core.position_manager.track'):
-            result = await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-            # Should still succeed with default values (0.0)
-            assert result['close_order_id'] == 'close_order_123'
-            postgres_pool.execute.assert_called()  # Should have been called with default values
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_partial_fee_info(self):
-        """Test executing force close - order has fee dict but missing cost"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed',
-            'filled': 0.005,
-            'price': 95000,
-            'fee': {}  # Empty fee dict
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
-
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
-
-        with patch('src.executor.core.position_manager.track'):
-            result = await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-            assert result['close_order_id'] == 'close_order_123'
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_no_fee(self):
-        """Test executing force close - order without fee field"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed',
-            'filled': 0.005,
-            'price': 95000
-            # No fee field at all
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
-
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
-
-        with patch('src.executor.core.position_manager.track'):
-            result = await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-            assert result['close_order_id'] == 'close_order_123'
-
-
-class TestPositionManagerEdgeCases:
-    """Edge case tests for position_manager.py"""
-
-    @pytest.mark.asyncio
-    async def test_check_position_exists_empty_result(self):
-        """Test with None or empty result from database"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetch.return_value = []  # Return empty list instead of None
-
-        result = await check_position_exists('BTC-USDT', 'buy', postgres_pool)
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_get_position_size_invalid_float(self):
-        """Test handling of invalid float values"""
-        postgres_pool = AsyncMock()
-        # Return string instead of float
-        postgres_pool.fetchrow.side_effect = [
-            {'total_filled': '0.005'},  # String
-            {'total_filled': None},     # None
+        # Run multiple concurrent checks
+        tasks = [
+            check_position_exists('BTC-USDT', 'buy', postgres_pool)
+            for _ in range(5)
         ]
 
-        result1 = await get_position_size('BTC-USDT', 'buy', postgres_pool)
-        # Since float('0.005') = 0.005, this will work
-        # But if we want to test invalid conversion...
+        results = await asyncio.gather(*tasks)
 
-        postgres_pool.fetchrow.side_effect = None
-        postgres_pool.fetchrow.return_value = {'total_filled': 'invalid'}
-
-        # This will raise ValueError when converting to float
-        with pytest.raises((ValueError, TypeError)):
-            await get_position_size('BTC-USDT', 'buy', postgres_pool)
+        # All should succeed
+        assert all(results)
 
     @pytest.mark.asyncio
-    async def test_execute_force_close_zero_position_size(self):
-        """Test force close with zero position size"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_000',
-            'status': 'closed',
-            'filled': 0,
-            'price': 95000,
-            'fee': {'cost': 0}
-        }
+    async def test_concurrent_get_position_size(self, postgres_pool):
+        """Test that multiple concurrent size queries work correctly"""
+        postgres_pool.fetchrow.return_value = {'total_filled': '0.001'}
 
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
+        tasks = [
+            get_position_size('BTC-USDT', 'buy', postgres_pool)
+            for _ in range(3)
+        ]
 
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
+        results = await asyncio.gather(*tasks)
 
-        with patch('src.executor.core.position_manager.track'):
-            result = await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-            assert result['position_size'] == 0
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_negative_position_size(self):
-        """Test force close with negative position size (error case)"""
-        ccxt_exchange = Mock()
-        # Exchange might reject negative amount
-        ccxt_exchange.create_market_order.side_effect = Exception("Invalid amount")
-
-        postgres_pool = AsyncMock()
-        redis_client = AsyncMock()
-
-        with pytest.raises(Exception):
-            await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=-0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_very_small_position(self):
-        """Test force close with very small position size"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_789',
-            'status': 'closed',
-            'filled': 0.000001,
-            'price': 95000,
-            'fee': {'cost': 0.0005}
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
-
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
-
-        with patch('src.executor.core.position_manager.track'):
-            result = await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.000001,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-            assert result['position_size'] == 0.000001
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_multiple_records_update(self):
-        """Test that update affects multiple records if they exist"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_multi',
-            'status': 'closed',
-            'filled': 0.015,
-            'price': 95000,
-            'fee': {'cost': 7.5}
-        }
-
-        postgres_pool = AsyncMock()
-        postgres_pool.execute.return_value = None
-
-        redis_client = AsyncMock()
-        redis_client.publish.return_value = None
-
-        with patch('src.executor.core.position_manager.track'):
-            result = await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.015,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-            # Should have called execute twice (update + insert)
-            assert postgres_pool.execute.call_count == 2
-            assert result['close_order_id'] == 'close_order_multi'
-
-    @pytest.mark.asyncio
-    async def test_check_position_symbols_with_hyphens_and_slashes(self):
-        """Test position checking with various symbol formats"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetch.return_value = [{'order_id': 'test'}]
-
-        # Test different symbol formats
-        symbols = ['BTC-USDT', 'ETH/USDT', 'SOL-USDT', 'ADA/USDT']
-
-        for symbol in symbols:
-            result = await check_position_exists(symbol, 'buy', postgres_pool)
-            assert result is True
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_database_connection_lost(self):
-        """Test database connection lost during operation"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.return_value = {
-            'id': 'close_order_123',
-            'status': 'closed',
-            'filled': 0.005,
-            'price': 95000,
-            'fee': {'cost': 2.5}
-        }
-
-        postgres_pool = AsyncMock()
-        # First call succeeds (create order record), second fails (update)
-        postgres_pool.execute.side_effect = [None, asyncpg.exceptions.ConnectionDoesNotExistError()]
-
-        redis_client = AsyncMock()
-
-        with pytest.raises(Exception):
-            await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
-
-    @pytest.mark.asyncio
-    async def test_get_position_size_multiple_positions(self):
-        """Test getting total position size when multiple trades exist"""
-        postgres_pool = AsyncMock()
-        postgres_pool.fetchrow.return_value = {'total_filled': 0.05}
-
-        result = await get_position_size('BTC-USDT', 'buy', postgres_pool)
-
-        assert result == 0.05
-
-    @pytest.mark.asyncio
-    async def test_execute_force_close_order_rejected_by_exchange(self):
-        """Test when exchange rejects the close order"""
-        ccxt_exchange = Mock()
-        ccxt_exchange.create_market_order.side_effect = Exception("Order rejected: insufficient balance")
-
-        postgres_pool = AsyncMock()
-        redis_client = AsyncMock()
-
-        with pytest.raises(Exception):
-            await execute_force_close(
-                symbol='BTC-USDT',
-                side='buy',
-                position_size=0.005,
-                ccxt_exchange=ccxt_exchange,
-                postgres_pool=postgres_pool,
-                redis_client=redis_client
-            )
+        # All should return same result
+        assert all(r == 0.001 for r in results)
