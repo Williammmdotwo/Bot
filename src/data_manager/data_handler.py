@@ -49,7 +49,22 @@ class DataHandler:
         try:
             okx_environment = os.getenv("OKX_ENVIRONMENT", "production").lower()
             use_demo = okx_environment in ["demo"]
-            self.rest_client = RESTClient(use_demo=use_demo)
+
+            # 获取 API 凭据
+            try:
+                from src.utils.environment_utils import get_api_credentials
+                credentials, has_creds = get_api_credentials()
+            except Exception:
+                credentials = {}
+                has_creds = False
+
+            # 初始化 REST 客户端
+            self.rest_client = RESTClient(
+                api_key=credentials.get('api_key') if has_creds else None,
+                secret_key=credentials.get('secret') if has_creds else None,
+                passphrase=credentials.get('passphrase') if has_creds else None,
+                use_demo=use_demo
+            )
             self.logger.info(f"REST 客户端初始化成功 (使用 {okx_environment} 环境)")
         except Exception as e:
             self.logger.error(f"REST 客户端初始化失败: {e}")
