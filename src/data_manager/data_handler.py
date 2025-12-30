@@ -296,14 +296,14 @@ class DataHandler:
             self.logger.warning(f"计算市场情绪失败: {e}")
             return {"overall_sentiment": "neutral", "sentiment_score": 0.0}
 
-    def get_historical_klines(self, symbol: str, timeframe: str, limit: int = 1000,
+    def get_historical_klines(self, symbol: str, interval: str, limit: int = 1000,
                             since: Optional[int] = None, use_demo: bool = False) -> List[List]:
         """
         获取历史K线数据（桥接方法，转发给 MarketDataFetcher）
 
         参数：
             symbol: 交易对符号，如 'SOL-USDT-SWAP'
-            timeframe: K线周期，如 '1h', '5m', '1d'
+            interval: K线周期，如 '1h', '5m', '1d'
             limit: K线数量限制，默认1000
             since: 起始时间戳（毫秒），None 表示自动计算
             use_demo: 是否使用模拟盘，默认 False
@@ -312,10 +312,10 @@ class DataHandler:
             K线数据列表，每个K线格式：[timestamp, open, high, low, close, volume, ...]
         """
         try:
-            self.logger.info(f"获取 {symbol} {timeframe} 历史K线数据，限制={limit}")
+            self.logger.info(f"获取 {symbol} {interval} 历史K线数据，限制={limit}")
             return self.market_fetcher.get_historical_klines(
                 symbol=symbol,
-                timeframe=timeframe,
+                timeframe=interval,
                 limit=limit,
                 since=since,
                 use_demo=use_demo

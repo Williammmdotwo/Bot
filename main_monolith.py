@@ -155,7 +155,7 @@ class TradingLoop:
             # 获取历史K线数据
             data = modules["data_manager"].get_historical_klines(
                 symbol=self.symbol,
-                timeframe='1h',  # 使用1小时周期
+                interval='1h',  # 使用1小时周期
                 limit=200,        # 获取足够的数据用于计算EMA 144
                 use_demo=self.use_demo
             )
