@@ -101,16 +101,24 @@ def main_strategy_loop(data_manager, symbol="BTC-USDT", use_demo=False, postgres
             current_price = 50000  # 默认BTC价格
             logger.warning(f"Current price is 0, using default price: {current_price}")
 
-        # ✅ 直接用这一行代替（绕过丢失的风控函数）
-        optimized_signal = parsed_signal
+        # 应用风控优化
+        try:
+            optimized_signal = optimize_signal_with_risk(parsed_signal, enhanced_analysis, current_price)
+            logger.info(f"Risk optimization applied successfully: volatility_adjusted=True")
+        except Exception as e:
+            logger.warning(f"Risk optimization failed, using original signal: {e}")
+            optimized_signal = parsed_signal
 
         final_signal = {
-            "signal": parsed_signal.get("side", parsed_signal.get("action", "HOLD")),
+            "signal": optimized_signal.get("side", optimized_signal.get("action", "HOLD")),
             "decision_id": decision_id,
-            "confidence": parsed_signal.get("confidence"),
-            "reason": parsed_signal.get("reasoning"),
-            "position_size": parsed_signal.get("position_size", 0.02),  # 默认2%仓位
-            "parsed_response": parsed_signal,
+            "confidence": optimized_signal.get("confidence"),
+            "reason": optimized_signal.get("reasoning"),
+            "position_size": optimized_signal.get("position_size", 0.02),  # 默认2%仓位
+            "stop_loss": optimized_signal.get("stop_loss"),
+            "take_profit": optimized_signal.get("take_profit"),
+            "risk_assessment": optimized_signal.get("risk_assessment"),
+            "parsed_response": optimized_signal,
             "market_data": market_data,
             "historical_data": historical_data,
             "enhanced_analysis": enhanced_analysis,

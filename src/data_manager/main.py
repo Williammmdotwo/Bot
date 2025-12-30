@@ -1,4 +1,4 @@
-from src.data_manager.main import DataHandler
+from src.data_manager.data_handler import DataHandler
 from src.strategy_engine.dual_ema_strategy import DualEMAStrategy
 from src.executor.interface import initialize_dependencies, health_check
 from src.risk_manager.interface import health_check as risk_health_check
