@@ -137,13 +137,14 @@ class RESTClient:
             self.logger.error(f"Failed to fetch positions for {symbol}: {e}")
             return []  # 发生错误时返回空列表，保证安全
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 100) -> List[List[float]]:
+    def fetch_ohlcv(self, symbol: str, timeframe: str, since: Optional[int] = None, limit: int = 100) -> List[List[float]]:
         """
         获取 OHLCV (K线) 数据
 
         Args:
             symbol: 交易对符号
             timeframe: 时间框架 (如 '1m', '5m', '1h')
+            since: 起始时间戳（毫秒），None 表示从最新开始
             limit: 获取数量
 
         Returns:
@@ -156,18 +157,24 @@ class RESTClient:
         try:
             # Mock 模式返回模拟数据
             if self.data_source_config.get('use_mock', False):
-                return self._generate_mock_ohlcv(symbol, limit)
+                return self._generate_mock_ohlcv(symbol, limit, since)
 
             # 实际模式从 API 获取
-            self.logger.info(f"Fetching OHLCV data for {symbol} {timeframe}")
+            self.logger.info(f"Fetching OHLCV data for {symbol} {timeframe} (since={since}, limit={limit})")
 
             try:
                 # 尝试使用公共 API 获取（不需要认证）
-                candles = self.exchange.public_get_market_candles(
-                    instId=symbol,
-                    bar=timeframe,
-                    limit=str(limit)
-                )
+                params = {
+                    'instId': symbol,
+                    'bar': timeframe,
+                    'limit': str(limit)
+                }
+
+                # 如果指定了 since 时间戳，添加 after 参数
+                if since is not None:
+                    params['after'] = str(since)
+
+                candles = self.exchange.public_get_market_candles(**params)
 
                 if candles.get('code') != '0':
                     self.logger.warning(f"API returned error code: {candles.get('code')}")
@@ -197,24 +204,29 @@ class RESTClient:
             except AttributeError:
                 # 如果 public_get_market_candles 不可用，使用 fetch_ohlcv
                 self.logger.warning("public_get_market_candles not available, using fetch_ohlcv")
-                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
                 return self._validate_ohlcv_data(ohlcv, symbol, timeframe)
 
         except Exception as e:
             self.logger.error(f"Failed to fetch OHLCV for {symbol} {timeframe}: {e}")
             return []
 
-    def _generate_mock_ohlcv(self, symbol: str, limit: int) -> List[List[float]]:
+    def _generate_mock_ohlcv(self, symbol: str, limit: int, since: Optional[int] = None) -> List[List[float]]:
         """生成模拟 OHLCV 数据（Mock 模式）"""
         import time
         base_price = 50000.0  # 默认基础价格
         ohlcv = []
-        current_time = int(time.time() * 1000)
+
+        # 确定起始时间
+        if since is not None:
+            current_time = since
+        else:
+            current_time = int(time.time() * 1000)
 
         for i in range(limit):
             # 生成随机波动
             price_change = (hash(str(i)) % 200 - 100)  # -100 到 +100
-            timestamp = current_time - (limit - i) * 60000  # 每分钟
+            timestamp = current_time + i * 60000  # 每分钟，从起始时间向后
 
             open_price = base_price + price_change / 100
             high_price = open_price + abs(price_change) / 50

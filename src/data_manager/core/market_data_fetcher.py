@@ -149,7 +149,7 @@ class MarketDataFetcher:
             for tf in critical_timeframes:
                 try:
                     since = int((time.time() - 300 * 50) * 1000)  # 最近50根K线
-                    ohlcv = rest_client.fetch_ohlcv(symbol, since, 50, tf)
+                    ohlcv = rest_client.fetch_ohlcv(symbol, tf, since=since, limit=50)
                     if ohlcv:
                         ohlcv_data[tf] = ohlcv
                         self.logger.info(f"成功获取 {symbol} {tf} OHLCV 数据: {len(ohlcv)} 根K线")
@@ -247,7 +247,7 @@ class MarketDataFetcher:
                 batch_limit = min(batch_size, limit - len(all_klines))
 
                 try:
-                    batch_klines = rest_client.fetch_ohlcv(symbol, current_since, batch_limit, timeframe)
+                    batch_klines = rest_client.fetch_ohlcv(symbol, timeframe, since=current_since, limit=batch_limit)
 
                     if not batch_klines:
                         self.logger.warning(f"{symbol} {timeframe} 没有更多历史数据")
