@@ -8,6 +8,7 @@ OKX REST API 客户端
 import ccxt
 import logging
 import json
+import os  # 引入 os 模块读取环境变量
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,13 @@ class RESTClient:
     def __init__(self, api_key=None, secret_key=None, passphrase=None, use_demo=False):
         self.logger = logging.getLogger(__name__)
         self.is_demo = use_demo
-        self.has_credentials = False
+
+        # === 自动补全凭证逻辑 ===
+        # 如果外部没传 Key，尝试从环境变量读取
+        if not api_key:
+            api_key = os.getenv('OKX_API_KEY')
+            secret_key = os.getenv('OKX_SECRET_KEY')
+            passphrase = os.getenv('OKX_PASSPHRASE')
 
         # 1. 基础配置
         exchange_config = {
@@ -27,7 +34,7 @@ class RESTClient:
             'options': {
                 'defaultType': 'swap',
                 'adjustForTimeDifference': True,
-                'sandboxMode': use_demo  # 在配置里直接传
+                'sandboxMode': use_demo  # 在配置阶段就开启 sandbox
             }
         }
 
@@ -39,31 +46,31 @@ class RESTClient:
                 'password': passphrase
             })
             self.has_credentials = True
+            self.logger.info("RESTClient: 已加载 API 凭证 (Authenticated Mode)")
         else:
-            self.logger.info("RESTClient: 初始化为公共(匿名)模式")
+            self.has_credentials = False
+            self.logger.warning("RESTClient: 未找到 API 凭证，初始化为匿名模式 (注意：OKX 模拟盘在匿名模式下可能会报错)")
 
         # 3. 初始化 CCXT
         try:
             self.exchange = ccxt.okx(exchange_config)
 
-            # 4. 关键修复：显式开启 Sandbox
+            # 4. 模拟盘特殊处理
             if self.is_demo:
                 self.exchange.set_sandbox_mode(True)
 
-                # === 核心补丁：防止 NoneType + str 错误 ===
-                # CCXT 在匿名 Sandbox 模式下有时会丢失 URL 配置，这里手动强制修复
-                # 确保 api 字典里的所有关键 endpoint 都有值
-                if not isinstance(self.exchange.urls['api'], dict):
-                    self.exchange.urls['api'] = {
-                        'public': 'https://www.okx.com/api',
-                        'private': 'https://www.okx.com/api',
-                        'rest': 'https://www.okx.com/api',
-                    }
-                else:
-                    # 只要发现是 None，就填上默认值
-                    base_url = 'https://www.okx.com/api'
-                    for key in ['public', 'private', 'rest']:
-                        if self.exchange.urls['api'].get(key) is None:
+                # === 强力补丁：手动修复 URL ===
+                # 即使是匿名模式，也强行填入 URL，防止 NoneType 错误
+                # OKX 模拟盘的 API 地址通常和实盘一样，只是 Header 不同，或者使用 aws 地址
+                # 这里我们确保它不是 None
+                if not self.exchange.urls.get('api'):
+                    self.exchange.urls['api'] = {}
+
+                base_url = 'https://www.okx.com/api'
+                # 针对不同版本的 ccxt 结构进行防御性赋值
+                if isinstance(self.exchange.urls['api'], dict):
+                    for key in ['public', 'private', 'rest', 'v5']:
+                        if not self.exchange.urls['api'].get(key):
                             self.exchange.urls['api'][key] = base_url
 
                 self.logger.info("OKX Exchange initialized in Sandbox mode (URLs patched)")
@@ -79,7 +86,7 @@ class RESTClient:
             if since:
                 since = int(since)
 
-            # 使用关键字参数，确保安全
+            # 使用关键字参数调用
             if since:
                 candles = self.exchange.fetch_ohlcv(symbol=symbol, timeframe=timeframe, since=since, limit=limit)
             else:
@@ -95,9 +102,11 @@ class RESTClient:
         if not self.has_credentials:
             return []
         try:
+            # 模拟盘必须传 symbol
             if self.is_demo and not symbol:
                 self.logger.warning("Demo mode requires symbol for fetch_positions")
                 return []
+
             if symbol:
                 positions = self.exchange.fetch_positions(symbol)
             else:
