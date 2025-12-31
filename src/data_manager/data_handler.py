@@ -377,6 +377,23 @@ class DataHandler:
                 "data_status": "ERROR"
             }
 
+    def get_account_positions(self, symbol=None):
+        """
+        [修复] 获取账户持仓，转发给 rest_client
+        """
+        if not self.rest_client:
+            self.logger.warning("REST Client not initialized, cannot fetch positions")
+            return []
+        return self.rest_client.fetch_positions(symbol)
+
+    def get_account_balance(self):
+        """
+        [预判修复] 获取余额，马上就要用到计算仓位了
+        """
+        if not self.rest_client:
+            return {}
+        return self.rest_client.fetch_balance()
+
     def _get_fallback_data(self, symbol: str, error_type: str = "UNKNOWN") -> Dict[str, Any]:
         """获取最小回退数据"""
         return {
