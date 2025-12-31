@@ -14,15 +14,35 @@ class MarketDataFetcher:
     """市场数据获取器 - 负责从交易所获取数据"""
 
     def __init__(self, rest_client: Optional[RESTClient] = None):
-        # 允许外部注入 client，如果没传，自己创建一个带鉴权的
+        self.logger = logging.getLogger(__name__)
+
+        # 1. 优先使用外部传入的 client (依赖注入)
         if rest_client:
             self.rest_client = rest_client
+            self.logger.info("MarketDataFetcher: 使用外部传入的 RESTClient")
         else:
-            # 创建新的 RESTClient 实例
-            # 注意：use_demo=False 会让 RESTClient 自动从环境变量读取凭证
-            self.rest_client = RESTClient(use_demo=False)
+            # 2. 如果没传，必须自己去配置里拿密钥！
+            self.logger.info("MarketDataFetcher: 正在初始化内部 RESTClient...")
 
-        self.logger = logging.getLogger(__name__)
+            # 读取 'okx' 部分的配置
+            from src.utils.config_loader import config_manager
+            okx_config = config_manager.get_config('okx')
+
+            # 防御性检查：打印一下看看读没读到 (只打前4位，防泄露)
+            api_key = okx_config.get('api_key')
+            if api_key:
+                self.logger.info(f"MarketDataFetcher: 读取到 API Key: {api_key[:4]}***")
+            else:
+                self.logger.error("MarketDataFetcher: ❌ 严重警告！配置中未找到 api_key！")
+
+            # 实例化 RESTClient，把所有参数显式传进去
+            self.rest_client = RESTClient(
+                api_key=okx_config.get('api_key'),
+                secret_key=okx_config.get('api_secret'),  # 报错就是因为这个是 None
+                passphrase=okx_config.get('passphrase'),
+                use_demo=okx_config.get('is_demo', True)
+            )
+
         self.logger.info("MarketDataFetcher 初始化完成")
 
     def get_comprehensive_market_data(self, symbol: str, use_demo: bool = False) -> Optional[Dict[str, Any]]:
