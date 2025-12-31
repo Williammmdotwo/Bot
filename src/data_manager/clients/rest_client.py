@@ -58,8 +58,8 @@ class RESTClient:
                 self.exchange.set_sandbox_mode(True)
 
                 # 终极修复：完全替换整个 URLs 字典，不留任何 None 的死角
-                # OKX 模拟盘的 API 地址
-                demo_base_url = 'https://www.okx.com/api'
+                # OKX 模拟盘的 API 地址（注意：不需要 /api，CCXT 会自动添加 /api/v5/...）
+                demo_base_url = 'https://www.okx.com'
 
                 # 强制替换整个 urls['api'] 字典
                 self.exchange.urls['api'] = {
