@@ -13,8 +13,15 @@ from .technical_indicators import TechnicalIndicators
 class MarketDataFetcher:
     """市场数据获取器 - 负责从交易所获取数据"""
 
-    def __init__(self, rest_client: RESTClient):
-        self.rest_client = rest_client
+    def __init__(self, rest_client: Optional[RESTClient] = None):
+        # 允许外部注入 client，如果没传，自己创建一个带鉴权的
+        if rest_client:
+            self.rest_client = rest_client
+        else:
+            # 创建新的 RESTClient 实例
+            # 注意：use_demo=False 会让 RESTClient 自动从环境变量读取凭证
+            self.rest_client = RESTClient(use_demo=False)
+
         self.logger = logging.getLogger(__name__)
         self.logger.info("MarketDataFetcher 初始化完成")
 
@@ -23,12 +30,8 @@ class MarketDataFetcher:
         try:
             self.logger.info(f"获取 {symbol} 的综合市场数据")
 
-            # 初始化适当的 REST 客户端
-            try:
-                rest_client = RESTClient(use_demo=use_demo)
-            except Exception as e:
-                self.logger.error(f"初始化 REST 客户端失败: {e}")
-                return None
+            # 使用初始化时传入的 rest_client
+            rest_client = self.rest_client
 
             # 获取市场信息，支持服务降级
             market_info = self._get_market_info_with_fallback(rest_client, symbol)
@@ -230,8 +233,8 @@ class MarketDataFetcher:
         try:
             self.logger.info(f"获取 {symbol} {timeframe} 历史K线数据，限制={limit}")
 
-            # 从交易所API获取数据
-            rest_client = RESTClient(use_demo=use_demo)
+            # 使用初始化时传入的 rest_client
+            rest_client = self.rest_client
 
             # 计算时间范围
             if not since:
@@ -300,8 +303,9 @@ class MarketDataFetcher:
                     # 根据时间框架调整数据量
                     timeframe_limit = self._adjust_limit_by_timeframe(limit, timeframe)
 
+                    # 使用初始化时传入的 rest_client
                     klines = self.get_historical_klines(
-                        symbol, timeframe, timeframe_limit, use_demo=use_demo
+                        symbol, timeframe, timeframe_limit, use_demo=False
                     )
 
                     if klines:
