@@ -1,8 +1,8 @@
 """
-OKX REST API 客户端 (完结版)
+OKX REST API 客户端 (官方沙箱修复版)
 
-1. PatchedOKX: 强制修复 URL。
-2. RESTClient: 增加了 load_markets 检查，修复 "markets not loaded" 错误。
+回归 CCXT 官方 sandboxMode=True，
+但通过暴力递归替换 urls 字典，修复所有潜在的 NoneType 和 URL 错误。
 """
 
 import ccxt
@@ -11,23 +11,6 @@ import os
 import json
 
 logger = logging.getLogger(__name__)
-
-
-class PatchedOKX(ccxt.okx):
-    """
-    打补丁的 OKX 类，强制修复 URL 问题
-    """
-    def describe(self):
-        config = super().describe()
-        # 强制写死 URL，不留任何动态拼接的空间
-        config['urls']['api'] = {
-            'public': 'https://www.okx.com',
-            'private': 'https://www.okx.com',
-            'rest': 'https://www.okx.com',
-        }
-        config['urls']['test'] = config['urls']['api']
-        return config
-
 
 class RESTClient:
     """OKX REST API 客户端"""
@@ -49,7 +32,7 @@ class RESTClient:
             'options': {
                 'defaultType': 'swap',
                 'adjustForTimeDifference': True,
-                'sandboxMode': False
+                'sandboxMode': use_demo  # ✅ 回归官方沙箱模式
             }
         }
 
@@ -67,15 +50,36 @@ class RESTClient:
 
         # 3. 初始化私有 Exchange
         try:
-            self.exchange = PatchedOKX(exchange_config)
+            self.exchange = ccxt.okx(exchange_config)
 
+            # 🔥 暴力修复 URL (Recursive Fix)
             if self.is_demo:
-                self.logger.info("Enabling Demo Mode via Header Injection")
-                if self.exchange.headers is None:
-                    self.exchange.headers = {}
-                self.exchange.headers['x-simulated-trading'] = '1'
+                self.exchange.set_sandbox_mode(True)
 
-            self.logger.info("Private Exchange initialized (PatchedOKX Class)")
+                # 定义正确的基础 URL
+                correct_url = 'https://www.okx.com'
+
+                # 递归函数：把字典里所有字符串值替换为 correct_url
+                def recursive_url_fix(d):
+                    for k, v in d.items():
+                        if isinstance(v, dict):
+                            recursive_url_fix(v)
+                        elif isinstance(v, str):
+                            # 只要是 URL，统统替换，不管它是 api 还是 test
+                            d[k] = correct_url
+
+                # 对 api 和 test 字典进行暴力清洗
+                if 'api' in self.exchange.urls:
+                    recursive_url_fix(self.exchange.urls['api'])
+
+                if 'test' in self.exchange.urls:
+                    recursive_url_fix(self.exchange.urls['test'])
+
+                # 额外保险：确保 test 字典存在
+                if 'test' not in self.exchange.urls:
+                    self.exchange.urls['test'] = self.exchange.urls['api']
+
+                self.logger.info(f"OKX Sandbox URLs recursively patched to: {correct_url}")
 
         except Exception as e:
             self.logger.error(f"CCXT 初始化失败: {e}")
@@ -94,7 +98,16 @@ class RESTClient:
                     'sandboxMode': False,
                 }
             }
-            self.public_exchange = PatchedOKX(config_public)
+            self.public_exchange = ccxt.okx(config_public)
+
+            # 强制指向实盘 URL
+            real_url = 'https://www.okx.com'
+            self.public_exchange.urls['api'] = {
+                'public': real_url,
+                'private': real_url,
+                'rest': real_url,
+                'v5': real_url,
+            }
             self.logger.info("Public Exchange initialized (Market Data)")
 
         except Exception as e:
@@ -116,43 +129,21 @@ class RESTClient:
             return []
 
     def fetch_positions(self, symbol=None):
-        """获取持仓 - 直接调用 OKX V5 私有接口"""
+        """获取持仓"""
         if not self.has_credentials:
             return []
         try:
-            params = {}
+            # 确保 Markets 已加载
+            if not self.exchange.markets:
+                self.exchange.load_markets()
+
             if symbol:
-                # 🔥 修复核心：确保市场数据已加载
-                if not self.exchange.markets:
-                    # self.logger.info("Loading markets info for the first time...")
-                    self.exchange.load_markets()
-
-                market = self.exchange.market(symbol)
-                params['instId'] = market['id']
-                if market['type'] == 'swap':
-                    params['instType'] = 'SWAP'
-
-            # 直接调用底层
-            response = self.exchange.private_get_account_positions(params)
-
-            if response and 'data' in response:
-                raw_positions = response['data']
-                parsed_positions = []
-                for raw in raw_positions:
-                    pos = {
-                        'symbol': symbol if symbol else raw.get('instId'),
-                        'size': float(raw.get('pos', 0)),
-                        'side': raw.get('posSide', 'net'),
-                        'raw': raw
-                    }
-                    parsed_positions.append(pos)
-
-                return parsed_positions
-
-            return []
-
+                positions = self.exchange.fetch_positions(symbol)
+            else:
+                positions = self.exchange.fetch_positions()
+            return positions if isinstance(positions, list) else []
         except Exception as e:
-            self.logger.error(f"Failed to fetch positions (Direct API): {str(e)}")
+            self.logger.error(f"Failed to fetch positions: {str(e)}")
             return []
 
     def fetch_balance(self):
