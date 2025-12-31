@@ -1,13 +1,16 @@
 """
-OKX REST API 客户端 (标准修复版)
+OKX REST API 客户端 (全面覆盖版)
 
-回归标准的 sandboxMode=True 模式，
-但修正了 URL 补丁中导致 404 的路径重复问题。
+针对 CCXT Sandbox 模式下 URL 解析异常的终极修复：
+1. 启用 sandboxMode
+2. 强制覆盖所有可能的 URL 键值 (防止 NoneType)
+3. 显式注入模拟盘 Header (双重保险)
 """
 
 import ccxt
 import logging
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ class RESTClient:
             'options': {
                 'defaultType': 'swap',
                 'adjustForTimeDifference': True,
-                'sandboxMode': use_demo  # ✅ 回归标准沙箱模式
+                'sandboxMode': use_demo
             }
         }
 
@@ -52,24 +55,37 @@ class RESTClient:
         try:
             self.exchange = ccxt.okx(exchange_config)
 
-            # 4. 🔥 模拟盘 URL 补丁 (Fix for NoneType & 404)
+            # 🔥 模拟盘 URL 与 Header 强力补丁
             if self.is_demo:
                 self.exchange.set_sandbox_mode(True)
 
-                # 关键修正：这里不能带 /api，因为 CCXT 会自动拼
-                # 正确：https://www.okx.com
-                # 错误：https://www.okx.com/api
-                demo_url = 'https://www.okx.com'
+                # OKX V5 模拟盘正确的基础 URL (不带 /api，CCXT 会自动拼)
+                base_url = 'https://www.okx.com'
 
-                # 强制覆盖所有可能的 URL 键值
-                self.exchange.urls['api'] = {
-                    'public': demo_url,
-                    'private': demo_url,
-                    'rest': demo_url,
-                    'v5': demo_url,
+                # 显式注入模拟盘 Header (防止 CCXT 漏发)
+                if self.exchange.headers is None:
+                    self.exchange.headers = {}
+                self.exchange.headers['x-simulated-trading'] = '1'
+
+                # 地毯式覆盖所有 URL Keys
+                # 防止 fetch_positions 访问特定 key (如 'swap') 时遇到 None
+                patched_urls = {
+                    'public': base_url,
+                    'private': base_url,
+                    'rest': base_url,
+                    'v5': base_url,
+                    'spot': base_url,
+                    'swap': base_url,
+                    'future': base_url,
+                    'option': base_url,
+                    'index': base_url,
                 }
 
-                self.logger.info(f"OKX Sandbox URLs patched: {demo_url}")
+                # 应用补丁
+                self.exchange.urls['api'] = patched_urls
+
+                self.logger.info(f"OKX Sandbox URLs Patched: {base_url}")
+                self.logger.debug(f"Applied URL Config: {json.dumps(self.exchange.urls['api'])}")
 
         except Exception as e:
             self.logger.error(f"CCXT 初始化失败: {e}")
@@ -124,13 +140,16 @@ class RESTClient:
         if not self.has_credentials:
             return []
         try:
+            # 兼容性处理：OKX 模拟盘在 load_markets 时可能会因为 instrument 类型报错
+            # 我们先尝试直接获取
             if symbol:
                 positions = self.exchange.fetch_positions(symbol)
             else:
                 positions = self.exchange.fetch_positions()
             return positions if isinstance(positions, list) else []
         except Exception as e:
-            self.logger.error(f"Failed to fetch positions: {e}")
+            # 详细记录错误堆栈，方便调试
+            self.logger.error(f"Failed to fetch positions: {str(e)}")
             return []
 
     def fetch_balance(self):
