@@ -1,8 +1,9 @@
 """
-OKX REST API 客户端 (官方沙箱修复版)
+OKX REST API 客户端 (源头重写版)
 
-回归 CCXT 官方 sandboxMode=True，
-但通过暴力递归替换 urls 字典，修复所有潜在的 NoneType 和 URL 错误。
+终极方案：通过子类化重写 describe() 方法，
+在配置生成的源头直接硬编码正确的 URL，
+彻底规避 CCXT 内部任何动态 URL 逻辑错误。
 """
 
 import ccxt
@@ -11,6 +12,41 @@ import os
 import json
 
 logger = logging.getLogger(__name__)
+
+
+class HardcodedOKX(ccxt.okx):
+    """
+    一个 URL 被焊死的 OKX 类
+    """
+    def describe(self):
+        # 1. 获取父类配置
+        config = super().describe()
+
+        # 2. 定义正确的 Base URL (不带 /api)
+        base_url = 'https://www.okx.com'
+
+        # 3. 构造全能 URL 字典
+        # 无论 CCXT 想访问什么 endpoint，都给它这个 base_url
+        universal_urls = {
+            'public': base_url,
+            'private': base_url,
+            'rest': base_url,
+            'v5': base_url,
+            'spot': base_url,
+            'swap': base_url,
+            'future': base_url,
+            'option': base_url,
+            'index': base_url,
+            'test': base_url, # 某些旧版逻辑
+        }
+
+        # 4. 暴力覆盖 'api' 和 'test' 根节点
+        # 这样无论 sandboxMode 是 True 还是 False，它读到的都是这个字典
+        config['urls']['api'] = universal_urls
+        config['urls']['test'] = universal_urls
+
+        return config
+
 
 class RESTClient:
     """OKX REST API 客户端"""
@@ -32,7 +68,9 @@ class RESTClient:
             'options': {
                 'defaultType': 'swap',
                 'adjustForTimeDifference': True,
-                'sandboxMode': use_demo  # ✅ 回归官方沙箱模式
+                # 关键：我们依然开启 sandboxMode 以启用签名逻辑
+                # 但因为我们在 describe() 里劫持了 URL，所以它的副作用（改 URL）无效了
+                'sandboxMode': use_demo
             }
         }
 
@@ -48,38 +86,18 @@ class RESTClient:
             self.has_credentials = False
             self.logger.warning("RESTClient: 初始化为匿名模式")
 
-        # 3. 初始化私有 Exchange
+        # 3. 初始化私有 Exchange (使用硬编码类)
         try:
-            self.exchange = ccxt.okx(exchange_config)
+            # 🔥 使用 HardcodedOKX
+            self.exchange = HardcodedOKX(exchange_config)
 
-            # 🔥 暴力修复 URL (Recursive Fix)
+            # 手动注入模拟盘 Header (双重保险)
             if self.is_demo:
-                self.exchange.set_sandbox_mode(True)
+                if self.exchange.headers is None:
+                    self.exchange.headers = {}
+                self.exchange.headers['x-simulated-trading'] = '1'
 
-                # 定义正确的基础 URL
-                correct_url = 'https://www.okx.com'
-
-                # 递归函数：把字典里所有字符串值替换为 correct_url
-                def recursive_url_fix(d):
-                    for k, v in d.items():
-                        if isinstance(v, dict):
-                            recursive_url_fix(v)
-                        elif isinstance(v, str):
-                            # 只要是 URL，统统替换，不管它是 api 还是 test
-                            d[k] = correct_url
-
-                # 对 api 和 test 字典进行暴力清洗
-                if 'api' in self.exchange.urls:
-                    recursive_url_fix(self.exchange.urls['api'])
-
-                if 'test' in self.exchange.urls:
-                    recursive_url_fix(self.exchange.urls['test'])
-
-                # 额外保险：确保 test 字典存在
-                if 'test' not in self.exchange.urls:
-                    self.exchange.urls['test'] = self.exchange.urls['api']
-
-                self.logger.info(f"OKX Sandbox URLs recursively patched to: {correct_url}")
+            self.logger.info("Private Exchange initialized (HardcodedOKX Class)")
 
         except Exception as e:
             self.logger.error(f"CCXT 初始化失败: {e}")
@@ -98,16 +116,8 @@ class RESTClient:
                     'sandboxMode': False,
                 }
             }
-            self.public_exchange = ccxt.okx(config_public)
-
-            # 强制指向实盘 URL
-            real_url = 'https://www.okx.com'
-            self.public_exchange.urls['api'] = {
-                'public': real_url,
-                'private': real_url,
-                'rest': real_url,
-                'v5': real_url,
-            }
+            # 公有通道也用 HardcodedOKX
+            self.public_exchange = HardcodedOKX(config_public)
             self.logger.info("Public Exchange initialized (Market Data)")
 
         except Exception as e:
@@ -133,8 +143,9 @@ class RESTClient:
         if not self.has_credentials:
             return []
         try:
-            # 确保 Markets 已加载
+            # 🔥 确保 Markets 已加载 (防止 markets not loaded 错误)
             if not self.exchange.markets:
+                # self.logger.info("Loading markets...")
                 self.exchange.load_markets()
 
             if symbol:
