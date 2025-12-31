@@ -1,9 +1,10 @@
 """
-OKX REST API 客户端 (源头重写版)
+OKX REST API 客户端 (实例热补丁版)
 
-终极方案：通过子类化重写 describe() 方法，
-在配置生成的源头直接硬编码正确的 URL，
-彻底规避 CCXT 内部任何动态 URL 逻辑错误。
+修复逻辑：
+1. 继承 ccxt.okx
+2. 在 __init__ 执行完毕后，立即暴力覆盖实例的 self.urls 属性
+3. 保持 sandboxMode=True 以确保签名逻辑正确
 """
 
 import ccxt
@@ -14,19 +15,18 @@ import json
 logger = logging.getLogger(__name__)
 
 
-class HardcodedOKX(ccxt.okx):
+class InvincibleOKX(ccxt.okx):
     """
-    一个 URL 被焊死的 OKX 类
+    一个在初始化后强制重写 URL 的 OKX 类
     """
-    def describe(self):
-        # 1. 获取父类配置
-        config = super().describe()
+    def __init__(self, config={}):
+        # 1. 正常初始化父类
+        super().__init__(config)
 
-        # 2. 定义正确的 Base URL (不带 /api)
+        # 2. 🔥 初始化完成后，直接修改实例内存中的属性
+        # 这会覆盖掉父类初始化过程中做出的任何错误决定
         base_url = 'https://www.okx.com'
 
-        # 3. 构造全能 URL 字典
-        # 无论 CCXT 想访问什么 endpoint，都给它这个 base_url
         universal_urls = {
             'public': base_url,
             'private': base_url,
@@ -37,15 +37,20 @@ class HardcodedOKX(ccxt.okx):
             'future': base_url,
             'option': base_url,
             'index': base_url,
-            'test': base_url, # 某些旧版逻辑
+            'test': base_url,
         }
 
-        # 4. 暴力覆盖 'api' 和 'test' 根节点
-        # 这样无论 sandboxMode 是 True 还是 False，它读到的都是这个字典
-        config['urls']['api'] = universal_urls
-        config['urls']['test'] = universal_urls
+        # 强制覆盖 api 和 test，不留死角
+        self.urls['api'] = universal_urls
+        self.urls['test'] = universal_urls
 
-        return config
+        # 确保 headers 存在
+        if self.headers is None:
+            self.headers = {}
+
+        # 如果开启了沙箱，确保 header 存在 (虽然 ccxt 应该会自动加)
+        if self.safe_value(self.options, 'sandboxMode', False):
+            self.headers['x-simulated-trading'] = '1'
 
 
 class RESTClient:
@@ -68,9 +73,7 @@ class RESTClient:
             'options': {
                 'defaultType': 'swap',
                 'adjustForTimeDifference': True,
-                # 关键：我们依然开启 sandboxMode 以启用签名逻辑
-                # 但因为我们在 describe() 里劫持了 URL，所以它的副作用（改 URL）无效了
-                'sandboxMode': use_demo
+                'sandboxMode': use_demo  # ✅ 必须开启，为了正确的签名逻辑
             }
         }
 
@@ -86,18 +89,14 @@ class RESTClient:
             self.has_credentials = False
             self.logger.warning("RESTClient: 初始化为匿名模式")
 
-        # 3. 初始化私有 Exchange (使用硬编码类)
+        # 3. 初始化私有 Exchange
         try:
-            # 🔥 使用 HardcodedOKX
-            self.exchange = HardcodedOKX(exchange_config)
+            # 🔥 使用 InvincibleOKX
+            self.exchange = InvincibleOKX(exchange_config)
 
-            # 手动注入模拟盘 Header (双重保险)
-            if self.is_demo:
-                if self.exchange.headers is None:
-                    self.exchange.headers = {}
-                self.exchange.headers['x-simulated-trading'] = '1'
-
-            self.logger.info("Private Exchange initialized (HardcodedOKX Class)")
+            # 记录一下最终的 URL 配置，以供调试
+            # self.logger.info(f"Final URL Config: {json.dumps(self.exchange.urls)}")
+            self.logger.info("Private Exchange initialized (InvincibleOKX Class)")
 
         except Exception as e:
             self.logger.error(f"CCXT 初始化失败: {e}")
@@ -113,11 +112,11 @@ class RESTClient:
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': 'swap',
-                    'sandboxMode': False,
+                    'sandboxMode': False, # 公有数据强制实盘
                 }
             }
-            # 公有通道也用 HardcodedOKX
-            self.public_exchange = HardcodedOKX(config_public)
+            # 公有通道也用 InvincibleOKX，稳一点
+            self.public_exchange = InvincibleOKX(config_public)
             self.logger.info("Public Exchange initialized (Market Data)")
 
         except Exception as e:
@@ -143,9 +142,8 @@ class RESTClient:
         if not self.has_credentials:
             return []
         try:
-            # 🔥 确保 Markets 已加载 (防止 markets not loaded 错误)
+            # 🔥 确保 Markets 已加载
             if not self.exchange.markets:
-                # self.logger.info("Loading markets...")
                 self.exchange.load_markets()
 
             if symbol:
