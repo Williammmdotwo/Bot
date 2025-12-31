@@ -1,8 +1,9 @@
 """
-OKX REST API 客户端 (双重覆盖版)
+OKX REST API 客户端 (重写底层版)
 
-修复 CCXT Sandbox 模式下的 URL 缺失问题：
-同时覆盖 urls['api'] 和 urls['test']，确保万无一失。
+针对 CCXT URL 路由逻辑异常的终极方案：
+直接子类化 ccxt.okx 并重写 fetch_positions，
+强制调用底层 API，绕过所有 URL 拼接逻辑。
 """
 
 import ccxt
@@ -11,6 +12,23 @@ import os
 import json
 
 logger = logging.getLogger(__name__)
+
+
+class PatchedOKX(ccxt.okx):
+    """
+    打补丁的 OKX 类，强制修复 URL 问题
+    """
+    def describe(self):
+        # 继承原有配置
+        config = super().describe()
+        # 强制写死 URL，不留任何动态拼接的空间
+        config['urls']['api'] = {
+            'public': 'https://www.okx.com',
+            'private': 'https://www.okx.com',
+            'rest': 'https://www.okx.com',
+        }
+        config['urls']['test'] = config['urls']['api']
+        return config
 
 
 class RESTClient:
@@ -33,7 +51,9 @@ class RESTClient:
             'options': {
                 'defaultType': 'swap',
                 'adjustForTimeDifference': True,
-                'sandboxMode': use_demo  # 开启沙箱
+                # 关键：即便使用了 Patched 类，也要关闭 sandboxMode，
+                # 因为我们要完全接管 URL 控制权，不让 CCXT 内部逻辑干扰
+                'sandboxMode': False
             }
         }
 
@@ -49,50 +69,25 @@ class RESTClient:
             self.has_credentials = False
             self.logger.warning("RESTClient: 初始化为匿名模式")
 
-        # 3. 初始化私有 Exchange
+        # 3. 初始化私有 Exchange (使用我们自定义的类)
         try:
-            self.exchange = ccxt.okx(exchange_config)
+            # 🔥 使用 PatchedOKX 而不是 ccxt.okx
+            self.exchange = PatchedOKX(exchange_config)
 
-            # 🔥 终极补丁：双重覆盖 (Double Patch)
+            # 手动注入模拟盘逻辑
             if self.is_demo:
-                self.exchange.set_sandbox_mode(True)
-
-                # 正确的基础 URL (不带 /api)
-                base_url = 'https://www.okx.com'
-
-                # 显式注入模拟盘 Header (作为保险)
+                self.logger.info("Enabling Demo Mode via Header Injection")
                 if self.exchange.headers is None:
                     self.exchange.headers = {}
                 self.exchange.headers['x-simulated-trading'] = '1'
 
-                # 构建全量的 URL 字典
-                patched_urls = {
-                    'public': base_url,
-                    'private': base_url,
-                    'rest': base_url,
-                    'v5': base_url,
-                    'spot': base_url,
-                    'swap': base_url,
-                    'future': base_url,
-                    'option': base_url,
-                    'index': base_url,
-                    # 添加可能的其他变体
-                    'fiat': base_url,
-                    'unified': base_url,
-                }
-
-                # 🔥 关键操作：同时覆盖 'api' 和 'test'
-                # CCXT 沙箱模式下可能会读取 'test' 字典
-                self.exchange.urls['api'] = patched_urls
-                self.exchange.urls['test'] = patched_urls
-
-                self.logger.info(f"OKX Sandbox URLs Patched (API & TEST): {base_url}")
+            self.logger.info("Private Exchange initialized (PatchedOKX Class)")
 
         except Exception as e:
             self.logger.error(f"CCXT 初始化失败: {e}")
             raise
 
-        # 5. 初始化公有 Exchange (只读，强制实盘)
+        # 5. 初始化公有 Exchange (只读)
         try:
             config_public = {
                 'apiKey': '',
@@ -102,19 +97,11 @@ class RESTClient:
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': 'swap',
-                    'sandboxMode': False,  # 🔥 强制实盘
+                    'sandboxMode': False,
                 }
             }
-            self.public_exchange = ccxt.okx(config_public)
-
-            # 强制指向实盘 URL
-            real_url = 'https://www.okx.com'
-            self.public_exchange.urls['api'] = {
-                'public': real_url,
-                'private': real_url,
-                'rest': real_url,
-                'v5': real_url,
-            }
+            # 公有通道也用 PatchedOKX，保持一致性
+            self.public_exchange = PatchedOKX(config_public)
             self.logger.info("Public Exchange initialized (Market Data)")
 
         except Exception as e:
@@ -136,19 +123,51 @@ class RESTClient:
             return []
 
     def fetch_positions(self, symbol=None):
-        """获取持仓"""
+        """获取持仓 - 直接调用 OKX V5 私有接口"""
         if not self.has_credentials:
             return []
         try:
-            # 兼容性处理
+            # 🔥 绕过 CCXT 标准 fetch_positions，直接调用底层隐式方法
+            # OKX V5 获取持仓的 endpoint 是 /api/v5/account/positions
+            # CCXT 自动映射为 private_get_account_positions
+
+            params = {}
             if symbol:
-                positions = self.exchange.fetch_positions(symbol)
-            else:
-                positions = self.exchange.fetch_positions()
-            return positions if isinstance(positions, list) else []
+                market = self.exchange.market(symbol)
+                params['instId'] = market['id']
+                # 某些情况下可能需要 instType
+                if market['type'] == 'swap':
+                    params['instType'] = 'SWAP'
+
+            # 直接调用底层，它会使用我们在 describe() 里硬编码的 URL
+            response = self.exchange.private_get_account_positions(params)
+
+            # 手动解析响应 (因为绕过了 CCXT 的解析层)
+            # OKX V5 响应格式: {'code': '0', 'data': [...], ...}
+            if response and 'data' in response:
+                raw_positions = response['data']
+                # 为了兼容性，我们需要把它转换成 CCXT 标准格式吗？
+                # ShadowLedger 需要: position_size (or size), side
+                # OKX V5 data 包含: pos (持仓数量), posSide (方向 long/short/net)
+
+                parsed_positions = []
+                for raw in raw_positions:
+                    # 简单转换以适配 ShadowLedger
+                    pos = {
+                        'symbol': symbol if symbol else raw.get('instId'),
+                        'size': float(raw.get('pos', 0)),
+                        'side': raw.get('posSide', 'net'),
+                        # 其他字段按需添加
+                        'raw': raw
+                    }
+                    parsed_positions.append(pos)
+
+                return parsed_positions
+
+            return []
+
         except Exception as e:
-            # 如果这里还报错，我们会看到更清晰的错误信息
-            self.logger.error(f"Failed to fetch positions: {str(e)}")
+            self.logger.error(f"Failed to fetch positions (Direct API): {str(e)}")
             return []
 
     def fetch_balance(self):
