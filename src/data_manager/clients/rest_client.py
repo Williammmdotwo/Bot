@@ -1,8 +1,9 @@
 """
-OKX REST API 客户端（修复版）
+OKX REST API 客户端 (终极修复版)
 
-提供与 OKX 交易所 REST API 的交互功能
-支持模拟盘和实盘模式
+采用"伪装实盘"策略：
+关闭 CCXT 的 sandboxMode 以防止 URL 错误，
+通过手动注入 Header 或配置来连接模拟盘。
 """
 
 import ccxt
@@ -19,24 +20,33 @@ class RESTClient:
         self.logger = logging.getLogger(__name__)
         self.is_demo = use_demo
 
-        # === 自动补全凭证逻辑 ===
+        # === 自动补全凭证 ===
         if not api_key:
             api_key = os.getenv('OKX_API_KEY')
             secret_key = os.getenv('OKX_SECRET_KEY')
             passphrase = os.getenv('OKX_PASSPHRASE')
 
-        # 1. 基础配置（私有 exchange，用于需要认证的操作）
+        # 1. 基础配置
+        # 核心改动：sandboxMode 永远设为 False，防止 CCXT 破坏 URL
         exchange_config = {
             'timeout': 30000,
             'enableRateLimit': True,
             'options': {
                 'defaultType': 'swap',
                 'adjustForTimeDifference': True,
-                'sandboxMode': use_demo
+                'sandboxMode': False,  # 🚫 禁用 CCXT 沙箱逻辑
             }
         }
 
-        # 2. 凭证配置
+        # 2. 模拟盘特殊处理 (手动模式)
+        if self.is_demo:
+            self.logger.info("RESTClient: 启用模拟盘模式 (通过 Header 注入)")
+            # OKX V5 标准：在实盘 URL 上添加此 Header 即为模拟盘
+            if 'headers' not in exchange_config:
+                exchange_config['headers'] = {}
+            exchange_config['headers']['x-simulated-trading'] = '1'
+
+        # 3. 凭证配置
         if api_key and secret_key and passphrase:
             exchange_config.update({
                 'apiKey': api_key,
@@ -44,51 +54,36 @@ class RESTClient:
                 'password': passphrase
             })
             self.has_credentials = True
-            self.logger.info("RESTClient: 已加载 API 凭证 (Authenticated Mode)")
         else:
             self.has_credentials = False
-            self.logger.warning("RESTClient: 初始化为匿名模式 (无法交易)")
+            self.logger.warning("RESTClient: 初始化为匿名模式")
 
-        # 3. 初始化私有 CCXT（用于需要认证的操作）
+        # 4. 初始化私有 Exchange
         try:
             self.exchange = ccxt.okx(exchange_config)
 
-            # 4. 模拟盘特殊处理
+            # 双重保险：强制设置 URL 为实盘地址 (虽然 sandboxMode=False 应该已经保证了这点)
+            # 这能解决某些网络环境下 DNS 解析问题，或 CCXT 版本过旧的问题
+            base_url = 'https://www.okx.com'
+            self.exchange.urls['api'] = {
+                'public': base_url,
+                'private': base_url,
+                'rest': base_url,
+                'v5': base_url,
+            }
+
             if self.is_demo:
-                self.exchange.set_sandbox_mode(True)
-
-                # 终极修复：完全替换整个 URLs 字典，不留任何 None 的死角
-                # OKX 模拟盘的 API 地址（注意：不需要 /api，CCXT 会自动添加 /api/v5/...）
-                demo_base_url = 'https://www.okx.com'
-
-                # 强制替换整个 urls['api'] 字典
-                self.exchange.urls['api'] = {
-                    'public': demo_base_url,
-                    'private': demo_base_url,
-                    'rest': demo_base_url,
-                    'v5': demo_base_url,
-                    # 填充所有可能的 key，防止 NoneType 错误
-                    'v5Public': demo_base_url,
-                    'v5Private': demo_base_url,
-                    'spot': demo_base_url,
-                    'spotPublic': demo_base_url,
-                    'future': demo_base_url,
-                    'swap': demo_base_url,
-                    'swapPublic': demo_base_url,
-                    'default': demo_base_url,
-                    # 确保 key 不是 None
-                    None: demo_base_url,
-                }
-
-                self.logger.info(f"OKX Sandbox URLs completely replaced: {demo_base_url}")
+                self.logger.info("Private Exchange initialized (Demo Mode via Header)")
+            else:
+                self.logger.info("Private Exchange initialized (Real Trading Mode)")
 
         except Exception as e:
             self.logger.error(f"CCXT 初始化失败: {e}")
             raise
 
-        # 5. 初始化公有 exchange（用于获取公开数据，如K线）
+        # 5. 初始化公有 Exchange (用于获取 K 线)
         try:
-            config_public = {
+            public_config = {
                 'apiKey': '',
                 'secret': '',
                 'password': '',
@@ -96,66 +91,46 @@ class RESTClient:
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': 'swap',
-                    'sandboxMode': False,
-                    'adjustForTimeDifference': True
+                    'sandboxMode': False, # 必须 False
                 }
             }
+            self.public_exchange = ccxt.okx(public_config)
 
-            # 实例化公有通道
-            self.public_exchange = ccxt.okx(config_public)
-
-            # 终极修复：完全替换整个 URLs 字典，强制指向实盘
-            real_base_url = 'https://www.okx.com'
+            # 同样强制 URL
             self.public_exchange.urls['api'] = {
-                'public': real_base_url,
-                'private': real_base_url,
-                'rest': real_base_url,
-                # 填充所有可能的 key
-                'v5': real_base_url,
-                'v5Public': real_base_url,
-                'v5Private': real_base_url,
-                'spot': real_base_url,
-                'spotPublic': real_base_url,
-                'future': real_base_url,
-                'swap': real_base_url,
-                'swapPublic': real_base_url,
-                'default': real_base_url,
-                # 确保 key 不是 None
-                None: real_base_url,
+                'public': base_url,
+                'private': base_url,
+                'rest': base_url,
+                'v5': base_url,
             }
-            self.logger.info("Public exchange initialized (Real Market Data)")
+
+            self.logger.info("Public Exchange initialized (Market Data)")
 
         except Exception as e:
-            self.logger.error(f"Public exchange 初始化失败: {e}")
+            self.logger.error(f"Public Exchange 初始化失败: {e}")
             raise
 
     def fetch_ohlcv(self, symbol, timeframe, since=None, limit=100):
-        """获取K线数据（走 Public 通道）"""
+        """获取K线数据"""
         try:
             limit = int(limit) if limit else 100
-            if since:
-                since = int(since)
+            if since: since = int(since)
 
-            # 使用公有通道获取实盘数据
-            exchange_to_use = self.public_exchange if hasattr(self, 'public_exchange') else self.exchange
-            candles = exchange_to_use.fetch_ohlcv(
+            # 使用 Public Exchange
+            candles = self.public_exchange.fetch_ohlcv(
                 symbol=symbol, timeframe=timeframe, since=since, limit=limit
             )
             return candles if isinstance(candles, list) else []
         except Exception as e:
-            self.logger.exception(f"Failed to fetch OHLCV for {symbol}: {e}")
+            self.logger.error(f"Failed to fetch OHLCV: {e}")
             return []
 
     def fetch_positions(self, symbol=None):
-        """获取持仓（走 Private 通道）"""
+        """获取持仓"""
         if not self.has_credentials:
             return []
         try:
-            # 模拟盘必须传 symbol
-            if self.is_demo and not symbol:
-                self.logger.warning("Demo mode requires symbol for fetch_positions")
-                return []
-
+            # 使用带 Header 的私有 Exchange
             if symbol:
                 positions = self.exchange.fetch_positions(symbol)
             else:
@@ -167,8 +142,7 @@ class RESTClient:
 
     def fetch_balance(self):
         """获取余额"""
-        if not self.has_credentials:
-            return {}
+        if not self.has_credentials: return {}
         try:
             return self.exchange.fetch_balance()
         except Exception as e:
@@ -178,7 +152,7 @@ class RESTClient:
     def fetch_ticker(self, symbol):
         """获取行情"""
         try:
-            return self.exchange.fetch_ticker(symbol)
+            return self.public_exchange.fetch_ticker(symbol)
         except Exception as e:
-            self.logger.error(f"Failed to fetch ticker for {symbol}: {e}")
+            self.logger.error(f"Failed to fetch ticker: {e}")
             return {}
