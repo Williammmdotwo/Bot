@@ -379,23 +379,65 @@ class DataHandler:
 
     def get_account_positions(self, symbol=None, **kwargs):
         """
-        [修复] 获取账户持仓
+        获取账户持仓 - 使用缓存避免 Rate Limit
         兼容 main.py 传入的 use_demo 参数 (虽然我们这里不需要它，因为 client 已经配置好了)
+
+        Args:
+            symbol: 交易对符号，None 表示获取所有持仓
+            **kwargs: 兼容参数（如 use_demo）
+
+        Returns:
+            持仓数据列表
         """
         if not self.rest_client:
             self.logger.warning("REST Client not initialized, cannot fetch positions")
             return []
 
-        # 这里的 kwargs 包含 {'use_demo': True}，我们直接忽略它，因为 self.rest_client 已经是 Demo 模式了
-        return self.rest_client.fetch_positions(symbol)
+        # 1. 尝试从缓存获取持仓
+        cached_positions = None
+        if self.cache_manager and self.cache_manager.redis_client:
+            cached_positions = self.cache_manager.get_positions(symbol)
+            if cached_positions is not None:
+                self.logger.debug(f"从缓存获取持仓数据: {symbol or 'all'}")
+                return cached_positions
+
+        # 2. 缓存未命中，调用 API
+        self.logger.info(f"从 API 获取持仓数据: {symbol or 'all'}")
+        positions = self.rest_client.fetch_positions(symbol)
+
+        # 3. 缓存结果
+        if self.cache_manager and self.cache_manager.redis_client and positions is not None:
+            self.cache_manager.cache_positions(positions, symbol)
+
+        return positions
 
     def get_account_balance(self):
         """
-        [预判修复] 获取余额，马上就要用到计算仓位了
+        获取账户余额 - 使用缓存避免 Rate Limit
+
+        Returns:
+            余额数据字典
         """
         if not self.rest_client:
             return {}
-        return self.rest_client.fetch_balance()
+
+        # 1. 尝试从缓存获取余额
+        cached_balance = None
+        if self.cache_manager and self.cache_manager.redis_client:
+            cached_balance = self.cache_manager.get_balance()
+            if cached_balance is not None:
+                self.logger.debug("从缓存获取余额数据")
+                return cached_balance
+
+        # 2. 缓存未命中，调用 API
+        self.logger.info("从 API 获取余额数据")
+        balance = self.rest_client.fetch_balance()
+
+        # 3. 缓存结果
+        if self.cache_manager and self.cache_manager.redis_client and balance is not None:
+            self.cache_manager.cache_balance(balance)
+
+        return balance
 
     def _get_fallback_data(self, symbol: str, error_type: str = "UNKNOWN") -> Dict[str, Any]:
         """获取最小回退数据"""

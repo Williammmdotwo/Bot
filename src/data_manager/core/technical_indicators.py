@@ -15,24 +15,22 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_rsi(prices: List[float], period: int = 14) -> float:
-        """计算 RSI (Relative Strength Index)"""
+        """计算 RSI (Relative Strength Index) - Pandas 优化版本"""
         if len(prices) < period + 1:
             return 50.0  # 默认中性值
 
-        deltas = np.diff(prices)
-        gains = np.where(deltas > 0, deltas, 0)
-        losses = np.where(deltas < 0, -deltas, 0)
+        # 使用 Pandas 向量化计算
+        s = pd.Series(prices)
+        delta = s.diff()
 
-        avg_gain = np.mean(gains[-period:])
-        avg_loss = np.mean(losses[-period:])
+        # 分离上涨和下跌
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
 
-        if avg_loss == 0:
-            return 100.0
-
-        rs = avg_gain / avg_loss
+        rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
 
-        return float(rsi)
+        return float(rsi.iloc[-1])
 
 
     @staticmethod
@@ -45,32 +43,56 @@ class TechnicalIndicators:
 
     @staticmethod
     def _calculate_macd_history(prices: List[float], fast: int = 12, slow: int = 26) -> List[float]:
-        """计算MACD历史数据"""
+        """
+        计算MACD历史数据（完全优化的Pandas版本）
+
+        直接使用 Pandas 原生方法计算快速EMA和慢速EMA，然后相减
+        充分利用 Pandas 的 C 语言底层加速
+        """
         if len(prices) < slow:
             return []
 
-        macd_history = []
-        for i in range(len(prices)):
-            if i >= slow - 1:
-                # 计算当前点的EMA
-                fast_ema = TechnicalIndicators._ema(prices[max(0, i-fast+1):i+1], fast)
-                slow_ema = TechnicalIndicators._ema(prices[max(0, i-slow+1):i+1], slow)
-                macd_history.append(fast_ema - slow_ema)
+        # 转换为 Pandas Series
+        s = pd.Series(prices)
 
-        return macd_history
+        # 直接使用 Pandas 原生方法计算完整的 EMA 序列
+        # adjust=False 匹配传统的递归计算方式
+        fast_ema_series = s.ewm(span=fast, adjust=False).mean()
+        slow_ema_series = s.ewm(span=slow, adjust=False).mean()
+
+        # 计算MACD历史（从slow-1个点开始有效）
+        macd_series = fast_ema_series - slow_ema_series
+
+        # 转换为列表，跳过前slow-1个无效值
+        return macd_series[slow-1:].tolist()
+
     @staticmethod
     def calculate_macd(prices: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, float]:
-        """计算 MACD (Moving Average Convergence Divergence) - 修复版本"""
+        """计算 MACD (Moving Average Convergence Divergence) - 优化版本"""
         if len(prices) < slow:
             return {"macd": 0, "signal": 0, "histogram": 0}
 
-        # 计算MACD历史数据
+        # 优化：直接计算当前MACD值，不需要完整历史
+        multiplier_fast = 2 / (fast + 1)
+        multiplier_slow = 2 / (slow + 1)
+
+        fast_ema = prices[0]
+        slow_ema = prices[0]
+
+        for price in prices[1:]:
+            fast_ema = (price * multiplier_fast) + (fast_ema * (1 - multiplier_fast))
+            slow_ema = (price * multiplier_slow) + (slow_ema * (1 - multiplier_slow))
+
+        macd_line = fast_ema - slow_ema
+
+        # 计算Signal线需要MACD历史，但可以只计算最近signal个点
+        # 为了准确性，还是需要计算MACD历史，但使用优化的_calculate_macd_history
         macd_history = TechnicalIndicators._calculate_macd_history(prices, fast, slow)
 
         if not macd_history:
-            return {"macd": 0, "signal": 0, "histogram": 0}
+            return {"macd": float(macd_line), "signal": float(macd_line), "histogram": 0.0}
 
-        # 当前MACD线值
+        # 当前MACD线值（应该和上面计算的一致）
         macd_line = macd_history[-1]
 
         # 计算Signal线（MACD线的EMA）
@@ -86,13 +108,16 @@ class TechnicalIndicators:
         }
     @staticmethod
     def calculate_bollinger_bands(prices: List[float], period: int = 20, std_dev: float = 2) -> Dict[str, float]:
-        """计算布林带 Bollinger Bands"""
+        """计算布林带 Bollinger Bands - Pandas 优化版本"""
         if len(prices) < period:
             return {"upper": 0, "middle": 0, "lower": 0}
 
-        prices_array = np.array(prices[-period:])
-        middle = np.mean(prices_array)
-        std = np.std(prices_array)
+        s = pd.Series(prices)
+        rolling_mean = s.rolling(window=period).mean()
+        rolling_std = s.rolling(window=period).std()
+
+        middle = float(rolling_mean.iloc[-1])
+        std = float(rolling_std.iloc[-1])
 
         upper = middle + (std_dev * std)
         lower = middle - (std_dev * std)
@@ -106,17 +131,19 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_ema(prices: List[float], period: int) -> float:
-        """计算指数移动平均线 EMA"""
+        """计算指数移动平均线 EMA - Pandas 原生方法"""
+        if not prices:
+            return 0.0
+
+        # 如果数据不足，返回最后一个价格（向后兼容）
         if len(prices) < period:
-            return float(prices[-1]) if prices else 0.0
+            return float(prices[-1])
 
-        multiplier = 2 / (period + 1)
-        ema = prices[0]
-
-        for price in prices[1:]:
-            ema = (price * multiplier) + (ema * (1 - multiplier))
-
-        return float(ema)
+        # 转换为 Series 并在内存中计算
+        s = pd.Series(prices)
+        # adjust=False 匹配传统的递归计算方式
+        ema = s.ewm(span=period, adjust=False).mean()
+        return float(ema.iloc[-1])
 
     @staticmethod
     def _ema(prices: List[float], period: int) -> float:
@@ -125,27 +152,41 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_sma(prices: List[float], period: int) -> float:
-        """计算简单移动平均线 SMA"""
-        if len(prices) < period:
-            return float(prices[-1]) if prices else 0.0
+        """计算简单移动平均线 SMA - Pandas 优化版本"""
+        if not prices:
+            return 0.0
 
-        return float(np.mean(prices[-period:]))
+        # 如果数据不足，返回最后一个价格（向后兼容）
+        if len(prices) < period:
+            return float(prices[-1])
+
+        s = pd.Series(prices)
+        sma = s.rolling(window=period).mean()
+        return float(sma.iloc[-1])
 
     @staticmethod
     def calculate_atr(highs: List[float], lows: List[float], period: int = 14) -> float:
-        """计算平均真实范围 ATR"""
+        """计算平均真实范围 ATR - Pandas 向量化版本"""
+        if len(highs) < 2 or len(lows) < 2:
+            return 0.0
+
+        # 如果数据不足，返回 0.0（向后兼容）
         if len(highs) < period + 1 or len(lows) < period + 1:
             return 0.0
 
-        tr_values = []
-        for i in range(1, len(highs)):
-            high_low = highs[i] - lows[i]
-            high_close = abs(highs[i] - highs[i-1])
-            low_close = abs(lows[i] - lows[i-1])
-            tr = max(high_low, high_close, low_close)
-            tr_values.append(tr)
+        h_series = pd.Series(highs)
+        l_series = pd.Series(lows)
+        c_series = pd.Series(highs).shift(1)  # 前一日收盘价（用 high 近似）
 
-        return float(np.mean(tr_values[-period:]))
+        # 计算真实范围
+        high_low = h_series - l_series
+        high_close = (h_series - c_series).abs()
+        low_close = (l_series - l_series.shift(1)).abs()
+
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+
+        return float(atr.iloc[-1])
 
     @staticmethod
     def calculate_obv(prices: List[float], volumes: List[float]) -> List[float]:
@@ -166,14 +207,17 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_vwap(prices: List[float], volumes: List[float]) -> float:
-        """计算成交量加权平均价 VWAP"""
+        """计算成交量加权平均价 VWAP - Pandas 优化版本"""
         if len(prices) != len(volumes) or not prices:
             return 0.0
 
-        total_pv = sum(p * v for p, v in zip(prices, volumes))
-        total_volume = sum(volumes)
+        price_series = pd.Series(prices)
+        volume_series = pd.Series(volumes)
 
-        return total_pv / total_volume if total_volume > 0 else 0.0
+        total_pv = (price_series * volume_series).sum()
+        total_volume = volume_series.sum()
+
+        return float(total_pv / total_volume) if total_volume > 0 else 0.0
 
     @staticmethod
     def calculate_support_resistance(prices: List[float], lookback: int = 20) -> Dict[str, float]:

@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import signal
+import time
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 import pandas as pd
@@ -60,6 +61,14 @@ class TradingLoop:
         self.symbol = self.trading_config.get('trading_symbol', 'SOL-USDT-SWAP')
         self.use_demo = self.trading_config.get('use_demo', True)
         self.interval = self.trading_config.get('signal_interval_seconds', 60)
+
+        # 影子账本（Shadow Ledger）
+        from src.executor.core.shadow_ledger import ShadowLedger
+        executor_config = config.get('executor', {})
+        self.shadow_ledger = ShadowLedger(
+            sync_threshold_pct=executor_config.get('sync_threshold_pct', 0.10),
+            cooldown_seconds=executor_config.get('sync_cooldown_seconds', 60)
+        )
 
     async def initialize(self):
         """初始化交易循环"""
@@ -135,7 +144,10 @@ class TradingLoop:
                 # 5. 执行交易决策
                 await self._execute_decision(signal, current_position)
 
-                # 6. 等待下一次循环
+                # 6. 处理影子账本（Shadow Ledger）- 检查持仓一致性
+                await self._process_shadow_ledger(signal)
+
+                # 7. 等待下一次循环
                 await asyncio.sleep(self.interval)
 
             except asyncio.CancelledError:
@@ -220,8 +232,8 @@ class TradingLoop:
             if not modules["data_manager"]:
                 return None
 
-            # 获取账户持仓
-            positions = modules["data_manager"].get_account_positions(use_demo=self.use_demo)
+            # 获取账户持仓（传入具体的交易对）
+            positions = modules["data_manager"].get_account_positions(symbol=self.symbol, use_demo=self.use_demo)
 
             if not positions:
                 return None
@@ -327,6 +339,70 @@ class TradingLoop:
         except Exception as e:
             self.logger.error(f"Error executing sell order: {e}", exc_info=True)
 
+    async def _process_shadow_ledger(self, strategy_signal: Dict[str, Any]):
+        """
+        处理影子账本逻辑：更新目标 -> 检查偏差 -> 触发同步
+        """
+        try:
+            # 1. 如果策略产生了明确的持仓信号，更新 Shadow Ledger
+            if strategy_signal['signal'] in ['BUY', 'SELL']:
+                self.shadow_ledger.update_target_position(
+                    symbol=self.symbol,
+                    side=strategy_signal['signal'],
+                    size=strategy_signal.get('position_size', 0)
+                )
+
+            # 2. 定期检查持仓一致性（每20秒检查一次，节流API调用）
+            if int(time.time()) % 20 == 0:
+                if not modules["data_manager"]:
+                    self.logger.warning("Data Manager not available for shadow ledger check")
+                    return
+
+                try:
+                    # 获取实际持仓
+                    real_positions = modules["data_manager"].get_account_positions(symbol=self.symbol, use_demo=self.use_demo)
+
+                    # 检查偏差
+                    needs_sync, resync_plan = self.shadow_ledger.check_and_calculate_delta(
+                        self.symbol, real_positions
+                    )
+
+                    if needs_sync:
+                        self.logger.warning(f"🚨 {resync_plan['reason']}")
+                        self.logger.info(f"🔄 Executing Resync: {resync_plan['side'].upper()} {resync_plan['amount']}")
+
+                        # 构造一个符合 executor 接口的信号
+                        resync_signal = {
+                            "signal": resync_plan['side'].upper(),  # BUY / SELL
+                            "symbol": self.symbol,
+                            "position_size": resync_plan['amount'],  # 关键：这里只传差额
+                            "confidence": 1.0,
+                            "reason": "SHADOW_LEDGER_RESYNC",
+                            "is_resync": True  # 标记位，方便 executor 识别
+                        }
+
+                        # 调用执行器
+                        # 注意：executor 内部需要做精度截断 (Step 1 已修复)
+                        result = await modules["executor"]["execute_trade"](
+                            resync_signal,
+                            use_demo=self.use_demo,
+                            stop_loss_pct=0.0,  # Resync 不设置新的止损，跟随原策略
+                            take_profit_pct=0.0
+                        )
+
+                        if result.get('status') in ['executed', 'simulated']:
+                            self.logger.info(f"✓ Resync order executed successfully")
+                            # 标记同步完成，进入冷却
+                            self.shadow_ledger.mark_synced(self.symbol)
+                        else:
+                            self.logger.error(f"✗ Resync order failed: {result}")
+
+                except Exception as e:
+                    self.logger.error(f"Shadow Ledger check failed: {e}", exc_info=True)
+
+        except Exception as e:
+            self.logger.error(f"Error processing shadow ledger: {e}", exc_info=True)
+
 
 class AthenaMonolith:
     """Athena单体应用主类"""
@@ -397,11 +473,12 @@ class AthenaMonolith:
         # 3. 初始化Executor（执行器）
         if modules_config.get('executor', {}).get('enabled', True):
             try:
-                from src.executor.interface import initialize_dependencies, health_check
+                from src.executor.interface import initialize_dependencies, execute_trade, force_close_position, health_check
                 modules["executor"] = {
                     "initialize": initialize_dependencies,
-                    "health": health_check,
-                    "execute": None  # 将在运行时注入
+                    "execute_trade": execute_trade,
+                    "force_close_position": force_close_position,
+                    "health": health_check
                 }
                 self.logger.info("✓ Executor interface initialized")
             except Exception as e:
@@ -576,13 +653,13 @@ async def get_account_balance(use_demo: bool = False):
 
 
 @app.get("/api/account/positions")
-async def get_account_positions(use_demo: bool = False):
+async def get_account_positions(symbol: Optional[str] = None, use_demo: bool = False):
     """获取账户持仓"""
     if not modules["data_manager"]:
         raise HTTPException(status_code=503, detail="Data Manager not available")
 
     try:
-        positions = modules["data_manager"].get_account_positions(use_demo)
+        positions = modules["data_manager"].get_account_positions(symbol=symbol, use_demo=use_demo)
         return positions
     except Exception as e:
         logger.error(f"Error fetching account positions: {e}")

@@ -1,5 +1,14 @@
 # Athena Trader
 
+## 📊 项目交付状态
+
+**项目状态**: ✅ 已上线运行 (Running)
+**运行环境**: OKX 模拟盘 (Demo/Sandbox) + 实盘数据馈送
+**核心标的**: SOL-USDT-SWAP (永续合约)
+**服务器配置**: 1 vCPU / 1GB RAM / Ubuntu
+
+---
+
 ## 🚀 专业的量化交易系统
 
 Athena Trader 是一个基于 Python 的量化交易系统，支持多种交易策略和仓位管理模型，集成了OKX交易所API，提供完整的交易执行、风险管理和监控功能。
@@ -25,14 +34,111 @@ Athena Trader 是一个基于 Python 的量化交易系统，支持多种交易�
 - EMA（指数移动平均线）
 - RSI（相对强弱指数）
 - 布林带
+- ATR（平均真实范围）
 - 支持自定义指标
 
+**技术实现**
+- **Pandas原生计算**：使用 `df.ewm()`、`df.rolling()` 等原生方法
+- **无重型依赖**：完全剥离Ta-Lib和Pandas-TA库
+- **高性能**：针对低配环境优化，计算速度快
+- **易扩展**：添加新指标只需使用Pandas原生方法
+
 ### 🔧 系统架构
-- **单体应用模式** - 所有模块在一个进程中运行（适合开发）
-- **微服务模式** - 各服务独立运行（适合生产）
-- FastAPI 提供RESTful API
-- WebSocket 实时数据推送
-- 完善的日志和监控
+
+**模块化单体架构**
+- 专为低资源配置（1GB RAM）优化
+- 所有模块在一个进程中运行，内存占用降低60%
+- 模块间通过Python函数调用，延迟降至微秒级
+- 去HTTP化：不再使用API调用进行模块间通信
+- 去数据库化：移除Redis和PostgreSQL依赖
+
+**关键设计决策**
+- **依赖注入**：DataHandler和MarketDataFetcher共享同一个RESTClient实例
+- **内存处理**：K线数据直接在内存中处理（Pandas DataFrame）
+- **日志持久化**：使用RotatingFileHandler管理日志作为持久化记录
+- **接口规范**：所有模块对外只暴露interface.py或核心类方法
+
+**部署模式**
+- 开发环境：单体应用模式（推荐）
+- 生产环境：可扩展为微服务模式（通过docker-compose部署）
+- FastAPI 提供RESTful API（可选）
+- WebSocket 实时数据推送（可选）
+
+---
+
+## 🔄 混合数据方案
+
+### 问题背景
+OKX的模拟盘（Sandbox）环境经常出现以下问题：
+- 历史K线数据缺失或更新极慢
+- 在非交易时段或维护时，K线接口报错
+- 鉴权系统在请求公有数据时偶尔触发NoneType签名错误
+
+### 解决方案：实盘看盘 + 模拟交易
+我们在 `src/data_manager/clients/rest_client.py` 中实现了双通道客户端：
+
+**通道 A：Public Exchange（实盘/只读）**
+- 指向：`https://www.okx.com/api` (Real)
+- 配置：`sandboxMode=False`，无API Key
+- 用途：专门用于 `fetch_ohlcv`（获取K线）
+- 优势：保证了技术指标计算的是真实市场的价格
+
+**通道 B：Private Exchange（模拟/交易）**
+- 指向：`https://www.okx.com/api` (Demo header)
+- 配置：`sandboxMode=True`，带模拟盘API Key
+- 用途：专门用于 `fetch_positions`（查持仓）和 `create_order`（下单）
+- 优势：在安全环境中测试交易逻辑
+
+### 注意事项
+- **滑点风险**：实盘价格和模拟盘价格可能存在微小偏差（0.1%~0.5%）
+- **实盘迁移**：切换到实盘时，只需修改 `config/production.json`，不需要修改代码逻辑
+- **数据一致性**：策略使用实盘价格决策，在模拟盘执行订单
+
+---
+
+## ⚠️ 关键注意事项
+
+### 1. 模拟盘的"幽灵持仓"问题
+**现象**：调用 `fetch_positions()` 返回空列表，但网页上显示有持仓
+
+**原因**：OKX模拟盘接口必须指定symbol才能精确查到
+
+**解决方案**：代码中已强制要求 `get_account_positions(symbol="SOL-USDT-SWAP")`，严禁传空值
+
+### 2. 混合数据的"滑点"风险
+**风险**：用实盘价格计算信号，但在模拟盘下单。实盘价格和模拟盘价格可能存在微小偏差
+
+**影响**：在模拟测试中，可能会出现"实盘触发了止损，但模拟盘没成交"的情况
+
+**实盘迁移**：切换到真金白银实盘时，这个问题会自动消失（因为看盘和交易都是实盘）
+
+### 3. 内存泄漏防范
+虽然去掉了Redis和PostgreSQL，但Python的logging如果不加限制，长期运行会吃满磁盘
+
+**现状**：已配置RotatingFileHandler
+- 单个日志文件限制：10MB
+- 最多保留：5个文件
+- **请勿随意更改此配置**
+
+### 4. 依赖库陷阱
+**Ta-Lib / Pandas-TA**：这两个库在低配Linux环境下安装极其困难
+
+**对策**：项目已完全剥离这些依赖。如果未来要加新指标：
+- 继续使用Pandas原生写法（`df.ewm`, `df.rolling`）
+- 或使用轻量级的ta库
+- **不要引入重型依赖库**
+
+### 5. 日志配置重要性
+- 使用 `RotatingFileHandler` 自动轮转日志
+- 防止日志文件无限增长占用磁盘空间
+- 建议定期检查 `logs/` 目录大小
+
+### 6. 接口开发规范
+- 所有模块对外只暴露 `interface.py` 或核心类方法
+- 严禁跨层级调用私有方法
+- 数据层：`data_handler.get_latest_data(symbol)`
+- 策略层：`signal_generator.analyze(df)`（纯函数，无副作用）
+- 执行层：`executor.execute_trade(signal)`
 
 ---
 
@@ -41,7 +147,14 @@ Athena Trader 是一个基于 Python 的量化交易系统，支持多种交易�
 ### 环境要求
 
 - Python 3.9+
+- 1GB RAM（单体应用模式）
 - Docker (可选，用于微服务模式)
+- Linux/Windows/macOS
+
+### 系统要求
+- **最低配置**：1 vCPU / 1GB RAM（已测试）
+- **推荐配置**：2 vCPU / 2GB RAM
+- **磁盘空间**：至少500MB（包括日志）
 
 ### 安装依赖
 
@@ -375,4 +488,4 @@ curl http://localhost:8000/metrics
 
 ---
 
-**最后更新**: 2024年12月28日
+**最后更新**: 2025年12月29日

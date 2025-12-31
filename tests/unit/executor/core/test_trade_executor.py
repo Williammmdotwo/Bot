@@ -185,7 +185,7 @@ class TestTradeExecutorErrorHandling:
 
     @pytest.mark.asyncio
     async def test_execute_trade_logic_postgres_error(self):
-        """Test PostgreSQL insert error"""
+        """Test PostgreSQL insert error - order succeeds but logging fails"""
         ccxt_exchange = Mock()
         ccxt_exchange.apiKey = 'test_key'
         ccxt_exchange.mock_mode = False
@@ -194,6 +194,8 @@ class TestTradeExecutorErrorHandling:
             'status': 'open',
             'price': 90000
         }
+        ccxt_exchange.markets = {}  # Prevent precision errors
+        ccxt_exchange.amount_to_precision.return_value = 0.001
 
         postgres_pool = AsyncMock()
         postgres_pool.execute.side_effect = Exception("Database connection lost")
@@ -216,12 +218,13 @@ class TestTradeExecutorErrorHandling:
             redis_client=redis_client
         )
 
-        assert result['status'] == 'failed'
-        assert 'Trade execution failed' in result['message']
+        # Order was successful, only logging failed
+        assert result['status'] == 'executed'
+        assert result['order_id'] == 'order_789'
 
     @pytest.mark.asyncio
     async def test_execute_trade_logic_redis_publish_error(self):
-        """Test Redis publish error"""
+        """Test Redis publish error - order succeeds but event publish fails"""
         ccxt_exchange = Mock()
         ccxt_exchange.apiKey = 'test_key'
         ccxt_exchange.mock_mode = False
@@ -230,6 +233,8 @@ class TestTradeExecutorErrorHandling:
             'status': 'open',
             'price': 90000
         }
+        ccxt_exchange.markets = {}
+        ccxt_exchange.amount_to_precision.return_value = 0.001
 
         postgres_pool = AsyncMock()
         postgres_pool.execute.return_value = None
@@ -254,12 +259,13 @@ class TestTradeExecutorErrorHandling:
             redis_client=redis_client
         )
 
-        assert result['status'] == 'failed'
-        assert 'Trade execution failed' in result['message']
+        # Order was successful, only event publishing failed
+        assert result['status'] == 'executed'
+        assert result['order_id'] == 'order_999'
 
     @pytest.mark.asyncio
     async def test_execute_trade_logic_track_error(self):
-        """Test track function error"""
+        """Test track function error - order succeeds but tracking fails"""
         ccxt_exchange = Mock()
         ccxt_exchange.apiKey = 'test_key'
         ccxt_exchange.mock_mode = False
@@ -268,6 +274,8 @@ class TestTradeExecutorErrorHandling:
             'status': 'open',
             'price': 90000
         }
+        ccxt_exchange.markets = {}
+        ccxt_exchange.amount_to_precision.return_value = 0.001
 
         postgres_pool = AsyncMock()
         postgres_pool.execute.return_value = None
@@ -295,7 +303,9 @@ class TestTradeExecutorErrorHandling:
                 redis_client=redis_client
             )
 
-            assert result['status'] == 'failed'
+            # Order was successful, only tracking failed
+            assert result['status'] == 'executed'
+            assert result['order_id'] == 'order_track_err'
 
     @pytest.mark.asyncio
     async def test_execute_trade_logic_order_response_missing_fields(self):
@@ -347,6 +357,8 @@ class TestTradeExecutorErrorHandling:
             'status': 'open',
             'price': 90500
         }
+        ccxt_exchange.markets = {}
+        ccxt_exchange.amount_to_precision.return_value = 0.001
 
         postgres_pool = AsyncMock()
         postgres_pool.execute.return_value = None
@@ -373,8 +385,9 @@ class TestTradeExecutorErrorHandling:
                 redis_client=redis_client
             )
 
-            # Since Redis publish happens after order creation, exception is caught
-            assert result['status'] == 'failed'
+            # Order was successful, only event publishing failed
+            assert result['status'] == 'executed'
+            assert result['order_id'] == 'order_partial_fail'
 
     @pytest.mark.asyncio
     async def test_execute_trade_logic_ccxt_network_timeout(self):
