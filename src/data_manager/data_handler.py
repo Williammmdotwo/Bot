@@ -377,13 +377,16 @@ class DataHandler:
                 "data_status": "ERROR"
             }
 
-    def get_account_positions(self, symbol=None):
+    def get_account_positions(self, symbol=None, **kwargs):
         """
-        [修复] 获取账户持仓，转发给 rest_client
+        [修复] 获取账户持仓
+        兼容 main.py 传入的 use_demo 参数 (虽然我们这里不需要它，因为 client 已经配置好了)
         """
         if not self.rest_client:
             self.logger.warning("REST Client not initialized, cannot fetch positions")
             return []
+
+        # 这里的 kwargs 包含 {'use_demo': True}，我们直接忽略它，因为 self.rest_client 已经是 Demo 模式了
         return self.rest_client.fetch_positions(symbol)
 
     def get_account_balance(self):
