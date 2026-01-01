@@ -1,9 +1,8 @@
 """
-OKX REST API 客户端 (Requests Bypass Mode - Signature Fix)
+OKX REST API 客户端 (Full Bypass & Patch)
 
-1. 使用 requests 绕过 CCXT 网络层。
-2. 使用 CCXT sign() 生成签名。
-3. 关键修复：直接使用 sign() 返回的完整 URL，确保请求参数顺序与签名完全一致。
+1. fetch_positions: 使用 requests 绕过。
+2. signer: 初始化时强制打上 URL 补丁，确保 trade_executor 调用 create_order 时能正常工作。
 """
 
 import ccxt
@@ -27,17 +26,39 @@ class RESTClient:
             secret_key = os.getenv('OKX_SECRET_KEY')
             passphrase = os.getenv('OKX_PASSPHRASE')
 
-        # 1. 基础配置 (仅用于签名)
+        # 1. 基础配置
+        # 强制关闭 sandboxMode，防止 CCXT 内部 URL 逻辑干扰
         exchange_config = {
             'apiKey': api_key,
             'secret': secret_key,
             'password': passphrase,
-            'options': {'defaultType': 'swap'}
+            'options': {
+                'defaultType': 'swap',
+                'sandboxMode': False
+            }
         }
 
-        # 2. 初始化 CCXT (仅作为签名器)
+        # 2. 初始化 CCXT Signer
         self.signer = ccxt.okx(exchange_config)
+
+        # 🔥 关键修复：给 signer 打上 URL 补丁
+        # 这样 trade_executor 调用 create_market_order 时就不会崩
+        base_url = 'https://www.okx.com'
+        universal_urls = {
+            'public': base_url, 'private': base_url, 'rest': base_url, 'v5': base_url,
+            'test': base_url, 'spot': base_url, 'swap': base_url, 'future': base_url
+        }
+        self.signer.urls['api'] = universal_urls
+        self.signer.urls['test'] = universal_urls
+
+        # 注入 Header
+        if self.is_demo:
+            if self.signer.headers is None:
+                self.signer.headers = {}
+            self.signer.headers['x-simulated-trading'] = '1'
+
         self.has_credentials = bool(api_key and secret_key and passphrase)
+        self.logger.info(f"RESTClient initialized. Credentials present: {self.has_credentials}")
 
         # 3. 初始化公有 Exchange
         try:
@@ -47,10 +68,7 @@ class RESTClient:
                 'options': {'defaultType': 'swap'}
             }
             self.public_exchange = ccxt.okx(config_public)
-            base_url = 'https://www.okx.com'
-            self.public_exchange.urls['api'] = {
-                'public': base_url, 'private': base_url, 'rest': base_url, 'v5': base_url
-            }
+            self.public_exchange.urls['api'] = universal_urls # 同样打补丁
             self.logger.info("Public Exchange initialized")
 
         except Exception as e:
@@ -71,60 +89,23 @@ class RESTClient:
             return []
 
     def fetch_positions(self, symbol=None):
-        """
-        获取持仓 - 使用 requests 直接发送请求
-        """
+        """获取持仓 - Requests Bypass"""
         if not self.has_credentials:
             return []
 
         try:
-            # 1. 准备参数
             params = {}
-            # OKX V5 建议必须带 instType，否则可能报错或查不到
             params['instType'] = 'SWAP'
-            if symbol:
-                 params['instId'] = symbol
-
-            # 2. 准备签名素材
-            # endpoint 必须是路径，不能带域名
-            path = '/api/v5/account/positions'
-
-            # 3. 签名 (Magic Happens Here)
-            # CCXT 会把 params 拼接到 path 后面，并生成 signature
-            # 返回的 request['url'] 包含了完整的 query string
-            # ⚠️ 注意：我们要给 sign 传完整的 url 还是 path？
-            # ccxt.okx 的 sign 方法期望传入 path (e.g. 'account/positions')
-            # 并且它会自动处理 api/v5 前缀吗？这取决于 ccxt 版本。
-            # 最稳妥的方式：直接模仿 ccxt 内部逻辑，只传 path 的核心部分，或者使用全路径
-
-            # 修正：CCXT 的 sign 方法对于 OKX，通常期望 path 是不带 api/v5 的？
-            # 不，CCXT 内部 urls['api']['public'] 都有定义。
-            # 这里我们手动 hack 一下：
-            # 我们直接把 signer 的 urls 覆盖掉，确保 sign() 生成正确的完整 URL
-            self.signer.urls['api'] = {
-                'public': 'https://www.okx.com',
-                'private': 'https://www.okx.com',
-                'rest': 'https://www.okx.com',
-            }
+            if symbol: params['instId'] = symbol
 
             # 签名
-            # sign(path, api='public', method='GET', params={}, headers=None, body=None)
             request = self.signer.sign('account/positions', 'private', 'GET', params)
-
-            # 4. 提取最终的 URL 和 Headers
-            signed_url = request['url'] # 这里已经是 https://www.okx.com/api/v5/account/positions?instType=SWAP...
+            signed_url = request['url']
             headers = request['headers']
 
-            # 5. 注入模拟盘 Header
-            if self.is_demo:
-                headers['x-simulated-trading'] = '1'
-
-            # 6. 发送请求
-            # ⚠️ 关键：这里 params 传 None，因为参数已经在 signed_url 里了！
-            # 这样避免了 requests 重新排序参数导致签名失效
+            # 发送
             response = requests.get(signed_url, headers=headers, params=None, timeout=10)
 
-            # 7. 处理响应
             if response.status_code == 200:
                 data = response.json()
                 if data['code'] == '0':
@@ -142,12 +123,10 @@ class RESTClient:
                 else:
                     self.logger.error(f"OKX API Error: {data['code']} - {data['msg']}")
                     return []
-            else:
-                self.logger.error(f"HTTP Error: {response.status_code} - {response.text}")
-                return []
+            return []
 
         except Exception as e:
-            self.logger.error(f"Failed to fetch positions (Manual Request): {str(e)}")
+            self.logger.error(f"Failed to fetch positions: {str(e)}")
             return []
 
     def fetch_balance(self):
