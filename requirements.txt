@@ -11,8 +11,7 @@ numpy==1.23.5
 pydantic==2.8.2
 pydantic-settings==2.4.0
 
-# Scheduling and Monitoring
-apscheduler==3.10.4
+# Monitoring
 watchdog==5.0.2
 
 # Database
