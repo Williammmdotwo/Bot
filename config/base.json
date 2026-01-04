@@ -61,5 +61,11 @@
     "max_fetch_time_seconds": 5,
     "max_indicator_calc_time_seconds": 0.1,
     "health_check_interval_seconds": 60
+  },
+  "high_freq_strategies": {
+    "enabled": true,
+    "mode": "hybrid",
+    "memory_limit_mb": 500,
+    "tick_channels": ["trades"]
   }
 }
