@@ -49,7 +49,11 @@ from src.utils.logging_config import setup_logging, set_log_level
 setup_logging()
 # 临时设置为 DEBUG 级别，查看 WebSocket 消息
 set_log_level('DEBUG')
+# 手动设置所有日志器的级别，确保 DEBUG 生效
+logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger('src.high_frequency.data.tick_stream').setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # 全局变量（用于信号处理）
 tick_stream: Optional[TickStream] = None
@@ -277,7 +281,8 @@ async def main():
     # 初始化 Tick 流
     tick_stream = TickStream(
         symbol=symbol,
-        market_state=market_state
+        market_state=market_state,
+        use_demo=use_demo  # 传递环境参数
     )
 
     # 设置大单回调（触发引擎）

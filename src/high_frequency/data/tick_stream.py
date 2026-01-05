@@ -45,7 +45,8 @@ class TickStream:
     """
 
     # OKX Public WebSocket URL
-    WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
+    WS_URL_PRODUCTION = "wss://ws.okx.com:8443/ws/v5/public"
+    WS_URL_DEMO = "wss://wspap.okx.com:8443/ws/v5/public"
 
     # 大单阈值（USDT）
     WHALE_THRESHOLD = 5000.0
@@ -54,6 +55,7 @@ class TickStream:
         self,
         symbol: str,
         market_state: MarketState,
+        use_demo: bool = False,
         ws_url: Optional[str] = None,
         reconnect_enabled: bool = True,
         base_reconnect_delay: float = 1.0,
@@ -66,7 +68,8 @@ class TickStream:
         Args:
             symbol (str): 交易对（如：BTC-USDT-SWAP）
             market_state (MarketState): 市场状态管理器
-            ws_url (Optional[str]): WebSocket URL，默认使用 OKX Public
+            use_demo (bool): 是否使用模拟盘环境，默认为 False
+            ws_url (Optional[str]): WebSocket URL，默认根据环境自动选择
             reconnect_enabled (bool): 是否启用自动重连，默认为 True
             base_reconnect_delay (float): 基础重连延迟（秒），默认为 1.0
             max_reconnect_delay (float): 最大重连延迟（秒），默认为 60.0
@@ -74,7 +77,14 @@ class TickStream:
         """
         self.symbol = symbol
         self.market_state = market_state
-        self.ws_url = ws_url or self.WS_URL
+        self.use_demo = use_demo
+
+        # 根据环境选择 WebSocket URL
+        if ws_url:
+            self.ws_url = ws_url
+        else:
+            self.ws_url = self.WS_URL_DEMO if use_demo else self.WS_URL_PRODUCTION
+
         self.reconnect_enabled = reconnect_enabled
         self.base_reconnect_delay = base_reconnect_delay
         self.max_reconnect_delay = max_reconnect_delay
@@ -92,7 +102,8 @@ class TickStream:
         self._on_whale: Optional[Callable] = None
 
         logger.info(
-            f"TickStream 初始化: symbol={symbol}, ws_url={self.ws_url}"
+            f"TickStream 初始化: symbol={symbol}, ws_url={self.ws_url}, "
+            f"环境={'模拟盘' if self.use_demo else '实盘'}"
         )
 
     def set_trade_callback(self, callback: Callable):
@@ -181,10 +192,13 @@ class TickStream:
             # 转换为 JSON 字符串（紧凑格式）
             json_str = json.dumps(subscribe_msg, separators=(',', ':'))
 
+            # 添加调试日志
+            logger.info(f"发送订阅消息: {json_str}")
+
             # 发送订阅消息
             await self._ws.send_str(json_str)
 
-            logger.info(f"已订阅 trades 频道: {self.symbol}")
+            logger.info(f"已发送订阅请求: {self.symbol}")
 
         except Exception as e:
             logger.error(f"订阅 trades 频道失败: {e}")
