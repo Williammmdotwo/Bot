@@ -233,10 +233,14 @@ class TickStream:
             # 处理订阅响应
             if "event" in data:
                 if data["event"] == "subscribe":
-                    if data.get("code") == "0":
+                    code = data.get("code")
+                    if code == "0":
                         logger.info(f"订阅成功: {data.get('arg', {})}")
+                    elif code == "51000":
+                        logger.error(f"订阅失败: 参数错误 - {data}")
                     else:
-                        logger.error(f"订阅失败: {data}")
+                        # 其他代码码可能是警告或信息，不视为失败
+                        logger.warning(f"订阅响应: code={code}, msg={data.get('msg', '')}")
                 elif data["event"] == "error":
                     logger.error(f"OKX API 错误: {data}")
                 return
