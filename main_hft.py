@@ -110,28 +110,62 @@ async def print_statistics(engine, risk_guard, market_state):
 
     # 引擎统计
     print(f"🚀 引擎统计:")
-    print(f"  - Tick 数量: {engine_stats['tick_count']:,}")
-    print(f"  - 秃鹫触发: {engine_stats['vulture_triggers']}")
-    print(f"  - 狙击触发: {engine_stats['sniper_triggers']}")
-    print(f"  - 订单执行: {engine_stats['trade_executions']}")
-    print(f"  - EMA 快速: {engine_stats['ema_fast']:.2f}")
-    print(f"  - EMA 慢速: {engine_stats['ema_slow']:.2f}")
-    print(f"  - 阻力位: {engine_stats['resistance']:.2f}")
+    print(f"  - Tick 数量: {engine_stats.get('tick_count', 0):,}")
+    print(f"  - 秃鹫触发: {engine_stats.get('vulture_triggers', 0)}")
+    print(f"  - 狙击触发: {engine_stats.get('sniper_triggers', 0)}")
+    print(f"  - 订单执行: {engine_stats.get('trade_executions', 0)}")
+
+    ema_fast = engine_stats.get('ema_fast')
+    ema_slow = engine_stats.get('ema_slow')
+    resistance = engine_stats.get('resistance')
+
+    if ema_fast is not None:
+        print(f"  - EMA 快速: {ema_fast:.2f}")
+    else:
+        print(f"  - EMA 快速: 未计算")
+
+    if ema_slow is not None:
+        print(f"  - EMA 慢速: {ema_slow:.2f}")
+    else:
+        print(f"  - EMA 慢速: 未计算")
+
+    if resistance is not None:
+        print(f"  - 阻力位: {resistance:.2f}")
+    else:
+        print(f"  - 阻力位: 未计算")
 
     # 风控统计
     print(f"\n🛡️  风控状态:")
-    print(f"  - 累计亏损: {risk_stats['daily_loss']:.2f}")
-    print(f"  - 亏损比例: {risk_stats['loss_percent'] * 100:.2f}%")
-    print(f"  - 冷却剩余: {risk_stats['cooldown_remaining']:.1f}s")
-    print(f"  - 允许交易: {'✓ 是' if risk_stats['can_trade'] else '✗ 否'}")
+    print(f"  - 累计亏损: {risk_stats.get('daily_loss', 0):.2f}")
+    loss_percent = risk_stats.get('loss_percent', 0)
+    print(f"  - 亏损比例: {loss_percent * 100:.2f}%")
+    print(f"  - 冷却剩余: {risk_stats.get('cooldown_remaining', 0):.1f}s")
+    can_trade = risk_stats.get('can_trade', False)
+    print(f"  - 允许交易: {'✓ 是' if can_trade else '✗ 否'}")
 
     # 市场统计
     print(f"\n📈 市场状态:")
-    print(f"  - 总交易数: {market_stats['total_trades']:,}")
-    print(f"  - 大单数: {market_stats['whale_trades']}")
-    print(f"  - 最新价格: {market_stats['latest_price']:.2f}")
-    print(f"  - 平均价格: {market_stats['average_price']:.2f}")
-    print(f"  - 价格范围: {market_stats['min_price']:.2f} ~ {market_stats['max_price']:.2f}")
+    print(f"  - 总交易数: {market_stats.get('total_trades', 0):,}")
+    print(f"  - 大单数: {market_stats.get('whale_trades', 0)}")
+
+    latest_price = market_stats.get('latest_price')
+    if latest_price is not None:
+        print(f"  - 最新价格: {latest_price:.2f}")
+    else:
+        print(f"  - 最新价格: 无数据")
+
+    average_price = market_stats.get('average_price')
+    if average_price is not None:
+        print(f"  - 平均价格: {average_price:.2f}")
+    else:
+        print(f"  - 平均价格: 无数据")
+
+    min_price = market_stats.get('min_price')
+    max_price = market_stats.get('max_price')
+    if min_price is not None and max_price is not None:
+        print(f"  - 价格范围: {min_price:.2f} ~ {max_price:.2f}")
+    else:
+        print(f"  - 价格范围: 无数据")
 
     print("=" * 60)
 
