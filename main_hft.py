@@ -45,7 +45,7 @@ from src.high_frequency.core.engine import HybridEngine
 from src.utils.logging_config import setup_logging
 
 # 配置日志
-setup_logging(log_level="INFO")
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # 全局变量（用于信号处理）
