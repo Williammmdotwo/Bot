@@ -31,6 +31,7 @@ import os
 import sys
 import signal
 import logging
+from typing import Optional
 from dotenv import load_dotenv
 
 # 添加项目根目录到路径
