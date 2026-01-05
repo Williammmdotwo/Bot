@@ -241,8 +241,7 @@ async def main():
     # 初始化 Tick 流
     tick_stream = TickStream(
         symbol=symbol,
-        market_state=market_state,
-        use_demo=use_demo
+        market_state=market_state
     )
 
     # 设置大单回调（触发引擎）
