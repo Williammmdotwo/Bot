@@ -43,10 +43,12 @@ from src.high_frequency.data.tick_stream import TickStream
 from src.high_frequency.execution.executor import OrderExecutor
 from src.high_frequency.execution.circuit_breaker import RiskGuard
 from src.high_frequency.core.engine import HybridEngine
-from src.utils.logging_config import setup_logging
+from src.utils.logging_config import setup_logging, set_log_level
 
 # 配置日志
 setup_logging()
+# 临时设置为 DEBUG 级别，查看 WebSocket 消息
+set_log_level('DEBUG')
 logger = logging.getLogger(__name__)
 
 # 全局变量（用于信号处理）
@@ -237,7 +239,7 @@ async def main():
     ema_slow_period = hft_config.get("ema_slow_period", 21)
     initial_balance = hft_config.get("initial_balance", 10000.0)
     current_balance = hft_config.get("current_balance", 10000.0)
-    whale_threshold = hft_config.get("whale_threshold", 10000.0)
+    whale_threshold = hft_config.get("whale_threshold", 100.0)  # 降低阈值以便测试
 
     # 5. 初始化模块
     logger.info("🔧 初始化模块...")

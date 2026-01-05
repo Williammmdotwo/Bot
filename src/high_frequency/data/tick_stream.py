@@ -200,6 +200,8 @@ class TickStream:
         try:
             # 处理文本消息
             if message.type == aiohttp.WSMsgType.TEXT:
+                # 添加调试日志
+                logger.debug(f"收到文本消息: {message.data[:200]}...")
                 data = json.loads(message.data)
                 await self._process_data(data)
 
