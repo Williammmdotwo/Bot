@@ -69,6 +69,20 @@ class MarketState:
 
         logger.info("MarketState 初始化完成")
 
+    def set_whale_threshold(self, threshold: float):
+        """
+        设置大单阈值
+
+        Args:
+            threshold (float): 大单阈值（USDT）
+
+        Example:
+            >>> state = MarketState()
+            >>> state.set_whale_threshold(10000.0)
+        """
+        MarketState.WHALE_THRESHOLD = threshold
+        logger.info(f"大单阈值已更新: {threshold} USDT")
+
     def update_trade(self, price: float, size: float, side: str, timestamp: int):
         """
         更新交易数据
@@ -235,6 +249,15 @@ class MarketState:
             >>> print(f"总交易数: {stats['total_trades']}")
             >>> print(f"大单数: {stats['whale_trades']}")
         """
+        # 计算价格范围
+        prices = [trade.price for trade in self.recent_trades]
+        if prices:
+            min_price = min(prices)
+            max_price = max(prices)
+        else:
+            min_price = None
+            max_price = None
+
         return {
             'total_trades': self._total_trades,
             'whale_trades': self._total_whale_trades,
@@ -243,7 +266,9 @@ class MarketState:
             'latest_price': self.get_latest_price(),
             'latest_timestamp': self.get_latest_timestamp(),
             'average_price': self.get_average_price(limit=100),
-            'whale_threshold': self.WHALE_THRESHOLD
+            'whale_threshold': self.WHALE_THRESHOLD,
+            'min_price': min_price,
+            'max_price': max_price
         }
 
     def clear(self):
