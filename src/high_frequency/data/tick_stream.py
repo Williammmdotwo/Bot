@@ -250,6 +250,8 @@ class TickStream:
             if "event" in data:
                 if data["event"] == "subscribe":
                     code = data.get("code")
+                    # 添加完整的订阅响应日志
+                    logger.info(f"收到订阅响应: {data}")
                     if code == "0":
                         logger.info(f"订阅成功: {data.get('arg', {})}")
                     elif code == "51000":
