@@ -44,6 +44,7 @@ from src.high_frequency.execution.executor import OrderExecutor
 from src.high_frequency.execution.circuit_breaker import RiskGuard
 from src.high_frequency.core.engine import HybridEngine
 from src.utils.logging_config import setup_logging, set_log_level
+from datetime import datetime
 
 # 配置日志
 setup_logging()
@@ -59,6 +60,9 @@ logger.setLevel(logging.DEBUG)
 tick_stream: Optional[TickStream] = None
 executor: Optional[OrderExecutor] = None
 stop_event = asyncio.Event()
+
+# HUD 打印计数器（避免首次打印）
+hud_print_count = 0
 
 
 async def cleanup():
@@ -174,6 +178,104 @@ async def print_statistics(engine, risk_guard, market_state):
         print(f"  - 价格范围: 无数据")
 
     print("=" * 60)
+
+
+async def print_hud(engine, risk_guard, market_state, whale_threshold, interval=5):
+    """
+    打印 HUD（Head-Up Display）
+
+    每 5 秒打印一次实时状态摘要（覆盖打印）
+
+    Args:
+        engine: HybridEngine 实例
+        risk_guard: RiskGuard 实例
+        market_state: MarketState 实例
+        whale_threshold: 大单阈值
+        interval: 打印间隔（秒），默认 5 秒
+    """
+    global hud_print_count
+
+    while True:
+        try:
+            # 获取统计数据
+            engine_stats = engine.get_statistics()
+            risk_stats = risk_guard.get_status()
+            market_stats = market_state.get_statistics()
+
+            # 计算 3 秒内流量压力
+            net_volume, trade_count, intensity = market_state.calculate_flow_pressure(3.0)
+
+            # 格式化时间
+            current_time = datetime.now().strftime("%H:%M:%S")
+
+            # EMA 快/慢
+            ema_fast = engine_stats.get('ema_fast')
+            ema_slow = engine_stats.get('ema_slow')
+            ema_str = f"{ema_fast:.2f} / {ema_slow:.2f}" if (ema_fast and ema_slow) else "未计算"
+
+            # 最新价格
+            latest_price = market_stats.get('latest_price')
+            price_str = f"{latest_price:.2f}" if latest_price else "无数据"
+
+            # 3秒内大单数（净买入）
+            whale_count = market_stats.get('whale_trades', 0)
+            net_buy_str = f"+{abs(net_volume):.0f} U" if net_volume > 0 else f"{net_volume:.0f} U"
+            flow_str = f"{whale_count} (净买入: {net_buy_str})"
+
+            # 余额 & 盈亏
+            current_balance = risk_stats.get('current_balance', 0)
+            loss_percent = risk_stats.get('loss_percent', 0)
+            pnl_str = f"{current_balance:.2f} ({loss_percent*100:+.2f}%)"
+
+            # 冷却状态
+            is_cooldown = risk_stats.get('cooldown_remaining', 0) > 0
+            cooldown_remaining = risk_stats.get('cooldown_remaining', 0)
+            cooldown_str = f"是 (剩余 {cooldown_remaining:.0f}s)" if is_cooldown else "否"
+
+            # 战绩
+            vulture_count = engine_stats.get('vulture_triggers', 0)
+            sniper_count = engine_stats.get('sniper_triggers', 0)
+
+            # 构建 HUD（使用 \r 覆盖）
+            hud_lines = [
+                "",
+                f"[{current_time}]",
+                f"⚡ HFT 引擎运行中 | 💓 心跳正常",
+                "",
+                "📊 市场状态:",
+                f"  - 最新价格: {price_str}",
+                f"  - EMA(快/慢): {ema_str}",
+                f"  - 3s内大单数: {flow_str}",
+                "",
+                "🛡️ 账户状态:",
+                f"  - 余额: {pnl_str}",
+                f"  - 冷却中: {cooldown_str}",
+                "",
+                "🎯 战绩:",
+                f"  - 秃鹫触发: {vulture_count} 次",
+                f"  - 狙击触发: {sniper_count} 次",
+                ""
+            ]
+
+            hud_text = "\n".join(hud_lines)
+
+            # 首次打印不使用 \r
+            if hud_print_count == 0:
+                print(hud_text)
+            else:
+                # 使用 \r 覆盖（需要足够的空格）
+                print("\r" + " " * 100 + "\r", end="", flush=True)
+                print(hud_text)
+
+            hud_print_count += 1
+
+            # 等待指定间隔
+            await asyncio.sleep(interval)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"HUD 打印失败: {e}")
 
 
 async def statistics_printer(engine, risk_guard, market_state, interval=30):
@@ -326,16 +428,26 @@ async def main():
         print("\n✓ HFT 引擎已启动，等待交易信号...")
         print("✓ 按 Ctrl+C 停止\n")
 
-        # 8. 启动统计任务
+        # 8. 启动 HUD 任务（每 5 秒）
+        hud_task = asyncio.create_task(
+            print_hud(engine, risk_guard, market_state, whale_threshold, interval=5)
+        )
+
+        # 9. 启动统计任务（每 30 秒）
         stats_task = asyncio.create_task(
             statistics_printer(engine, risk_guard, market_state, interval=30)
         )
 
-        # 9. 等待停止信号
+        # 10. 等待停止信号
         await stop_event.wait()
 
-        # 10. 取消统计任务
+        # 11. 取消任务
+        hud_task.cancel()
         stats_task.cancel()
+        try:
+            await hud_task
+        except asyncio.CancelledError:
+            pass
         try:
             await stats_task
         except asyncio.CancelledError:
