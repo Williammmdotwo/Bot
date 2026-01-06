@@ -400,11 +400,13 @@ async def main():
         use_demo=use_demo  # 传递环境参数
     )
 
-    # 设置大单回调（触发引擎）
-    async def on_whale(price, size, side, timestamp, usdt_value):
-        await engine.on_tick(price, timestamp)
+    # 设置交易回调（每次 Tick 都调用）
+    # 🔥 修复：使用 set_trade_callback 而不是 set_whale_callback
+    # 这样每次交易都会更新 EMA，而不是只有大单才更新
+    async def on_trade(price, size, side, timestamp):
+        await engine.on_tick(price, size, side, timestamp)
 
-    tick_stream.set_whale_callback(on_whale)
+    tick_stream.set_trade_callback(on_trade)
 
     # 6. 启动引擎
     print("\n" + "=" * 60)

@@ -310,21 +310,26 @@ class MarketState:
         window_ms = int(window_seconds * 1000)
         time_threshold = current_time - window_ms
 
+        # 🔥 修复：先清理过期数据（Memory Leak）
+        # 使用 while 循环，移除所有 timestamp < time_threshold 的旧数据
+        while self.trade_window and self.trade_window[0].timestamp < time_threshold:
+            self.trade_window.popleft()
+
         # 筛选窗口内的交易
         buy_volume = 0.0  # 主动买入总额
         sell_volume = 0.0  # 主动卖出总额
         trade_count = 0
         total_volume = 0.0
 
+        # 现在遍历 trade_window 时，只包含时间窗口内的数据
         for trade in self.trade_window:
-            if trade.timestamp >= time_threshold:
-                trade_count += 1
-                total_volume += trade.usdt_value
+            trade_count += 1
+            total_volume += trade.usdt_value
 
-                if trade.side == "buy":
-                    buy_volume += trade.usdt_value
-                else:
-                    sell_volume += trade.usdt_value
+            if trade.side == "buy":
+                buy_volume += trade.usdt_value
+            else:
+                sell_volume += trade.usdt_value
 
         # 计算净流量（买入 - 卖出）
         net_volume = buy_volume - sell_volume
@@ -335,7 +340,7 @@ class MarketState:
         logger.debug(
             f"流量压力分析: window={window_seconds}s, "
             f"net_volume={net_volume:.2f}, trade_count={trade_count}, "
-            f"intensity={intensity:.2f}"
+            f"intensity={intensity:.2f}, window_size={len(self.trade_window)}"
         )
 
         return (net_volume, trade_count, intensity)

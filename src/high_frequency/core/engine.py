@@ -304,7 +304,7 @@ class HybridEngine:
             except Exception as e:
                 logger.error(f"狙击订单执行失败: {e}")
 
-    async def on_tick(self, price: float, timestamp: int):
+    async def on_tick(self, price: float, size: float = 0.0, side: str = "", timestamp: int = 0):
         """
         处理每个 Tick 数据
 
@@ -312,16 +312,18 @@ class HybridEngine:
 
         Args:
             price (float): 当前价格
-            timestamp (int): 时间戳（毫秒）
+            size (float): 交易数量（可选，默认 0.0）
+            side (str): 交易方向（可选，默认 ""）
+            timestamp (int): 时间戳（毫秒，可选，默认 0）
 
         Example:
             >>> # 在 TickStream 回调中调用
             >>> async def on_trade(price, size, side, timestamp):
-            ...     await engine.on_tick(price, timestamp)
+            ...     await engine.on_tick(price, size, side, timestamp)
         """
         self.tick_count += 1
 
-        # 1. 更新 EMA
+        #1. 更新 EMA（每次 Tick 都更新）
         self.ema_fast = self._calculate_ema(price, self.ema_fast, self.ema_fast_period)
         self.ema_slow = self._calculate_ema(price, self.ema_slow, self.ema_slow_period)
 
@@ -331,15 +333,15 @@ class HybridEngine:
                 f"ema_fast={self.ema_fast}, ema_slow={self.ema_slow}"
             )
 
-        # 2. 更新阻力位
+        #2. 更新阻力位
         self._update_resistance(price)
 
-        # 3. 秃鹫模式：闪崩接针
+        #3. 秃鹫模式：闪崩接针
         if self.mode in ["hybrid", "vulture"]:
             if self.ema_fast is not None:
                 await self._vulture_strategy(price, self.ema_fast)
 
-        # 4. 狙击模式：大单追涨
+        #4. 狙击模式：大单追涨
         if self.mode in ["hybrid", "sniper"]:
             await self._sniper_strategy(price, timestamp)
 
