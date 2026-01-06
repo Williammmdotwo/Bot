@@ -405,6 +405,50 @@ def get_recent_warnings(count: int = 50) -> List[Dict]:
     return reader.get_warning_logs(count)
 
 
+def get_hud_logger(log_file: str = 'logs/app.log') -> logging.Logger:
+    """
+    获取 HUD（Head-Up Display）专用日志器
+
+    该日志器：
+    - 只写入文件，不输出到控制台
+    - 用于记录 HUD 状态信息，避免控制台刷屏
+
+    Args:
+        log_file: 日志文件路径
+
+    Returns:
+        logging.Logger: HUD 专用日志器
+    """
+    logger = logging.getLogger('hud_logger')
+
+    # 避免重复添加 handler
+    if logger.handlers:
+        return logger
+
+    # 创建文件 handler（不添加到 console）
+    file_handler = logging.handlers.RotatingFileHandler(
+        filename=log_file,
+        maxBytes=10485760,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.INFO)
+
+    # 创建格式器
+    formatter = logging.Formatter(
+        '%(asctime)s - HUD - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+
+    # 只添加到文件 handler，不添加到 console
+    logger.addHandler(file_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False  # 不传递到父 logger
+
+    return logger
+
+
 def test_logging():
     """测试日志系统"""
     logger = get_logger('test')

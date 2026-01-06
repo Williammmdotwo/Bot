@@ -43,7 +43,7 @@ from src.high_frequency.data.tick_stream import TickStream
 from src.high_frequency.execution.executor import OrderExecutor
 from src.high_frequency.execution.circuit_breaker import RiskGuard
 from src.high_frequency.core.engine import HybridEngine
-from src.utils.logging_config import setup_logging, set_log_level
+from src.utils.logging_config import setup_logging, set_log_level, get_hud_logger
 from datetime import datetime
 
 # 配置日志
@@ -180,20 +180,23 @@ async def print_statistics(engine, risk_guard, market_state):
     print("=" * 60)
 
 
-async def print_hud(engine, risk_guard, market_state, whale_threshold, interval=5):
+async def print_hud(engine, risk_guard, market_state, whale_threshold, interval=10):
     """
-    打印 HUD（Head-Up Display）
+    打印 HUD（Head-Up Display）到日志文件
 
-    每 5 秒打印一次实时状态摘要（覆盖打印）
+    每 10 秒将实时状态摘要写入日志文件（不输出到控制台）
 
     Args:
         engine: HybridEngine 实例
         risk_guard: RiskGuard 实例
         market_state: MarketState 实例
         whale_threshold: 大单阈值
-        interval: 打印间隔（秒），默认 5 秒
+        interval: 打印间隔（秒），默认 10 秒
     """
     global hud_print_count
+
+    # 获取 HUD 专用 logger（只写文件，不写控制台）
+    hud_logger = get_hud_logger()
 
     while True:
         try:
@@ -236,9 +239,8 @@ async def print_hud(engine, risk_guard, market_state, whale_threshold, interval=
             vulture_count = engine_stats.get('vulture_triggers', 0)
             sniper_count = engine_stats.get('sniper_triggers', 0)
 
-            # 构建 HUD（使用 \r 覆盖）
+            # 构建 HUD（写入日志文件）
             hud_lines = [
-                "",
                 f"[{current_time}]",
                 f"⚡ HFT 引擎运行中 | 💓 心跳正常",
                 "",
@@ -253,19 +255,16 @@ async def print_hud(engine, risk_guard, market_state, whale_threshold, interval=
                 "",
                 "🎯 战绩:",
                 f"  - 秃鹫触发: {vulture_count} 次",
-                f"  - 狙击触发: {sniper_count} 次",
-                ""
+                f"  - 狙击触发: {sniper_count} 次"
             ]
 
+            # 写入 HUD 日志（只写文件，不写控制台）
             hud_text = "\n".join(hud_lines)
+            hud_logger.info(hud_text)
 
-            # 首次打印不使用 \r
+            # 首次打印时在控制台提示
             if hud_print_count == 0:
-                print(hud_text)
-            else:
-                # 使用 \r 覆盖（需要足够的空格）
-                print("\r" + " " * 100 + "\r", end="", flush=True)
-                print(hud_text)
+                logger.info("✓ HUD 状态已开始记录到日志文件（每 10 秒）")
 
             hud_print_count += 1
 
@@ -428,9 +427,9 @@ async def main():
         print("\n✓ HFT 引擎已启动，等待交易信号...")
         print("✓ 按 Ctrl+C 停止\n")
 
-        # 8. 启动 HUD 任务（每 5 秒）
+        # 8. 启动 HUD 任务（每 10 秒，记录到日志文件）
         hud_task = asyncio.create_task(
-            print_hud(engine, risk_guard, market_state, whale_threshold, interval=5)
+            print_hud(engine, risk_guard, market_state, whale_threshold, interval=10)
         )
 
         # 9. 启动统计任务（每 30 秒）
