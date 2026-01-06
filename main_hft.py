@@ -245,6 +245,16 @@ async def main():
     current_balance = hft_config.get("current_balance", 10000.0)
     whale_threshold = hft_config.get("whale_threshold", 100.0)  # 降低阈值以便测试
 
+    # 加载滑点配置
+    vulture_mode_config = hft_config.get("vulture_mode", {})
+    ioc_slippage_pct = vulture_mode_config.get("ioc_slippage_pct", 0.002)  # 默认 0.2%
+
+    # 加载狙击模式配置
+    sniper_mode_config = hft_config.get("sniper_mode", {})
+    sniper_flow_window = sniper_mode_config.get("flow_window", 3.0)  # 默认 3 秒
+    sniper_min_trades = sniper_mode_config.get("min_trades", 20)  # 默认 20 笔
+    sniper_min_net_volume = sniper_mode_config.get("min_net_volume", 10000.0)  # 默认 10000 USDT
+
     # 5. 初始化模块
     logger.info("🔧 初始化模块...")
 
@@ -275,7 +285,11 @@ async def main():
         mode=mode,
         order_size=order_size,
         ema_fast_period=ema_fast_period,
-        ema_slow_period=ema_slow_period
+        ema_slow_period=ema_slow_period,
+        ioc_slippage_pct=ioc_slippage_pct,
+        sniper_flow_window=sniper_flow_window,
+        sniper_min_trades=sniper_min_trades,
+        sniper_min_net_volume=sniper_min_net_volume
     )
 
     # 初始化 Tick 流

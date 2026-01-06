@@ -59,6 +59,9 @@ class MarketState:
         # 最近 50 笔大单（Whale Orders）
         self.whale_orders = deque(maxlen=50)
 
+        # 最近 3 秒的交易窗口（用于流量压力分析）
+        self.trade_window = deque(maxlen=5000)  # 假设 3 秒内最多 5000 笔交易
+
         # 缓存最新价格和 timestamp，避免重复查询
         self._last_price: Optional[float] = None
         self._last_timestamp: Optional[int] = None
@@ -111,6 +114,9 @@ class MarketState:
 
         # 添加到最近交易队列
         self.recent_trades.append(trade)
+
+        # 添加到交易窗口（用于流量压力分析）
+        self.trade_window.append(trade)
 
         # 更新缓存
         self._last_price = price
@@ -271,6 +277,69 @@ class MarketState:
             'max_price': max_price
         }
 
+    def calculate_flow_pressure(self, window_seconds: float = 3.0):
+        """
+        计算流量压力（Flow Pressure）
+
+        分析最近时间窗口内的交易活动，用于识别：
+        - 拆单买入（高频小额买入）
+        - 高频买入潮（短时间内大量买单）
+
+        Args:
+            window_seconds (float): 时间窗口（秒），默认 3 秒
+
+        Returns:
+            tuple: (net_volume, trade_count, intensity)
+                - net_volume (float): 净流量（主动买入 - 主动卖出，USDT）
+                - trade_count (int): 成交笔数
+                - intensity (float): 交易强度（成交总额 / 时间窗口，USDT/秒）
+
+        Example:
+            >>> net_vol, count, intensity = state.calculate_flow_pressure(3)
+            >>> print(f"净流量: {net_vol:.2f}, 笔数: {count}, 强度: {intensity:.2f}")
+        """
+        if not self.trade_window:
+            return (0.0, 0, 0.0)
+
+        # 获取当前时间戳（毫秒）
+        current_time = self._last_timestamp
+        if current_time is None:
+            return (0.0, 0, 0.0)
+
+        # 计算时间窗口边界（毫秒）
+        window_ms = int(window_seconds * 1000)
+        time_threshold = current_time - window_ms
+
+        # 筛选窗口内的交易
+        buy_volume = 0.0  # 主动买入总额
+        sell_volume = 0.0  # 主动卖出总额
+        trade_count = 0
+        total_volume = 0.0
+
+        for trade in self.trade_window:
+            if trade.timestamp >= time_threshold:
+                trade_count += 1
+                total_volume += trade.usdt_value
+
+                if trade.side == "buy":
+                    buy_volume += trade.usdt_value
+                else:
+                    sell_volume += trade.usdt_value
+
+        # 计算净流量（买入 - 卖出）
+        net_volume = buy_volume - sell_volume
+
+        # 计算交易强度（成交总额 / 时间窗口）
+        intensity = total_volume / window_seconds if window_seconds > 0 else 0.0
+
+        logger.debug(
+            f"流量压力分析: window={window_seconds}s, "
+            f"net_volume={net_volume:.2f}, trade_count={trade_count}, "
+            f"intensity={intensity:.2f}"
+        )
+
+        return (net_volume, trade_count, intensity)
+
     def clear(self):
         """
         清空所有数据
@@ -282,6 +351,7 @@ class MarketState:
         """
         self.recent_trades.clear()
         self.whale_orders.clear()
+        self.trade_window.clear()
         self._last_price = None
         self._last_timestamp = None
         self._total_trades = 0

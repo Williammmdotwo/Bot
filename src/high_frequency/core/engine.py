@@ -59,7 +59,11 @@ class HybridEngine:
         mode: str = "hybrid",
         order_size: float = 0.01,
         ema_fast_period: int = 9,
-        ema_slow_period: int = 21
+        ema_slow_period: int = 21,
+        ioc_slippage_pct: float = 0.002,
+        sniper_flow_window: float = 3.0,
+        sniper_min_trades: int = 20,
+        sniper_min_net_volume: float = 10000.0
     ):
         """
         初始化混合引擎
@@ -73,6 +77,10 @@ class HybridEngine:
             order_size (float): 订单数量
             ema_fast_period (int): 快速 EMA 周期（默认 9）
             ema_slow_period (int): 慢速 EMA 周期（默认 21）
+            ioc_slippage_pct (float): IOC 订单滑点百分比（默认 0.002 = 0.2%）
+            sniper_flow_window (float): 狙击模式流量分析窗口（秒），默认 3.0
+            sniper_min_trades (int): 狙击模式最小交易笔数，默认 20
+            sniper_min_net_volume (float): 狙击模式最小净流量（USDT），默认 10000.0
         """
         self.market_state = market_state
         self.executor = executor
@@ -82,6 +90,10 @@ class HybridEngine:
         self.order_size = order_size
         self.ema_fast_period = ema_fast_period
         self.ema_slow_period = ema_slow_period
+        self.ioc_slippage_pct = ioc_slippage_pct
+        self.sniper_flow_window = sniper_flow_window
+        self.sniper_min_trades = sniper_min_trades
+        self.sniper_min_net_volume = sniper_min_net_volume
 
         # EMA 状态
         self.ema_fast: Optional[float] = None
@@ -186,7 +198,7 @@ class HybridEngine:
         秃鹫模式 (Vulture)：闪崩接针策略
 
         触发条件：price <= ema_fast * 0.99
-        动作：下达 IOC 买单
+        动作：下达 IOC 买单（带滑点）
 
         Args:
             price (float): 当前价格
@@ -206,14 +218,20 @@ class HybridEngine:
                 logger.warning("风控拒绝交易（秃鹫模式）")
                 return
 
-            # 下达 IOC 买单
+            # 下达 IOC 买单（应用滑点）
             try:
-                logger.info(f"下达秃鹫买单: price={price}, size={self.order_size}")
+                # 买入时：limit_price = current_price * (1 + ioc_slippage_pct)
+                limit_price = price * (1 + self.ioc_slippage_pct)
+
+                logger.info(
+                    f"下达秃鹫买单: current_price={price}, limit_price={limit_price:.2f}, "
+                    f"slippage={self.ioc_slippage_pct*100:.2f}%, size={self.order_size}"
+                )
 
                 response = await self.executor.place_ioc_order(
                     symbol=self.symbol,
                     side="buy",
-                    price=price,
+                    price=limit_price,
                     size=self.order_size
                 )
 
@@ -225,27 +243,34 @@ class HybridEngine:
 
     async def _sniper_strategy(self, price: float, current_time: int):
         """
-        狙击模式 (Sniper)：大单追涨策略
+        狙击模式 (Sniper)：大单追涨策略（升级版）
 
         触发条件：
-        1. 最近 2 秒内大单数量 >= 3
-        2. price > resistance（突破阻力位）
+        1. 最近 3 秒内交易笔数 >= sniper_min_trades（默认 20）
+        2. 最近 3 秒内净流量（买入-卖出）>= sniper_min_net_volume（默认 10000 USDT）
+        3. price > resistance（突破阻力位）
 
-        动作：下达 IOC 买单（模拟市价单）
+        动作：下达 IOC 买单（模拟市价单，带滑点）
 
         Args:
             price (float): 当前价格
             current_time (int): 当前时间戳（毫秒）
         """
-        # 获取最近 2 秒内的大单数量
-        whale_count = self._get_recent_whales(current_time, window_ms=2000)
+        # 计算流量压力
+        net_volume, trade_count, intensity = self.market_state.calculate_flow_pressure(
+            window_seconds=self.sniper_flow_window
+        )
 
         # 检查触发条件
-        if whale_count >= 3 and price > self.resistance:
+        if (trade_count >= self.sniper_min_trades and
+            net_volume >= self.sniper_min_net_volume and
+            price > self.resistance):
+
             self.sniper_triggers += 1
 
             logger.info(
-                f"狙击模式触发: whale_count={whale_count}, price={price}, "
+                f"狙击模式触发: trade_count={trade_count}, net_volume={net_volume:.2f}, "
+                f"intensity={intensity:.2f}, price={price}, "
                 f"resistance={self.resistance}, trigger_count={self.sniper_triggers}"
             )
 
@@ -254,17 +279,22 @@ class HybridEngine:
                 logger.warning("风控拒绝交易（狙击模式）")
                 return
 
-            # 下达 IOC 买单（模拟市价单）
+            # 下达 IOC 买单（模拟市价单，应用滑点）
             try:
+                # 买入时：limit_price = current_price * (1 + ioc_slippage_pct)
+                limit_price = price * (1 + self.ioc_slippage_pct)
+
                 logger.info(
-                    f"下达狙击买单: price={price}, size={self.order_size}, "
-                    f"whale_count={whale_count}, resistance={self.resistance}"
+                    f"下达狙击买单: current_price={price}, limit_price={limit_price:.2f}, "
+                    f"slippage={self.ioc_slippage_pct*100:.2f}%, size={self.order_size}, "
+                    f"trade_count={trade_count}, net_volume={net_volume:.2f}, "
+                    f"resistance={self.resistance}"
                 )
 
                 response = await self.executor.place_ioc_order(
                     symbol=self.symbol,
                     side="buy",
-                    price=price,  # 使用当前价格，相当于市价单
+                    price=limit_price,
                     size=self.order_size
                 )
 

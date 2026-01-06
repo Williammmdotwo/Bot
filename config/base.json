@@ -73,6 +73,14 @@
     "current_balance": 10000.0,
     "whale_threshold": 100.0,
     "memory_limit_mb": 500,
-    "tick_channels": ["trades"]
+    "tick_channels": ["trades"],
+    "vulture_mode": {
+      "ioc_slippage_pct": 0.002
+    },
+    "sniper_mode": {
+      "flow_window": 3.0,
+      "min_trades": 20,
+      "min_net_volume": 10000.0
+    }
   }
 }
