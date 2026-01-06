@@ -370,11 +370,12 @@ class TickStream:
             self.market_state.update_trade(price, size, side, timestamp)
 
             # 调用交易回调（所有交易都会调用，用于更新 EMA）
-            # 🔥 修复：移除小单的提前 return，确保每次交易都调用回调
+            # 🔥 修复：必须 await 异步回调！
             if self._on_trade:
                 try:
                     logger.debug("触发 Engine 回调")
-                    self._on_trade(price, size, side, timestamp)
+                    # 🔥 关键修复：使用 asyncio.create_task 包装异步回调
+                    asyncio.create_task(self._on_trade(price, size, side, timestamp))
                 except Exception as e:
                     logger.error(f"交易回调函数异常: {e}")
 
