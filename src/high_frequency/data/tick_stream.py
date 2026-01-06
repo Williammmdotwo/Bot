@@ -359,27 +359,26 @@ class TickStream:
             # 添加每笔交易的日志（DEBUG 级别）
             logger.debug(f"收到成交: {price:.2f} x {size:.4f} = {usdt_value:.2f} USDT")
 
-            # 过滤小单（只记录 DEBUG 日志，不处理）
+            # 过滤小单（只记录 DEBUG 日志）
             if usdt_value < self.WHALE_THRESHOLD:
                 logger.debug(
                     f"过滤小单: price={price:.2f}, size={size:.4f}, "
                     f"usdt={usdt_value:.2f}"
                 )
-                # 小单也更新市场状态（用于流量压力分析）
-                self.market_state.update_trade(price, size, side, timestamp)
-                return
 
-            # 更新市场状态（大单）
+            # 更新市场状态（所有交易）
             self.market_state.update_trade(price, size, side, timestamp)
 
-            # 调用回调函数
+            # 调用交易回调（所有交易都会调用，用于更新 EMA）
+            # 🔥 修复：移除小单的提前 return，确保每次交易都调用回调
             if self._on_trade:
                 try:
+                    logger.debug("触发 Engine 回调")
                     self._on_trade(price, size, side, timestamp)
                 except Exception as e:
                     logger.error(f"交易回调函数异常: {e}")
 
-            # 调用大单回调
+            # 调用大单回调（只有大单才调用）
             if self._on_whale and usdt_value >= self.WHALE_THRESHOLD:
                 try:
                     self._on_whale(price, size, side, timestamp, usdt_value)

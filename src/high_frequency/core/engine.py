@@ -323,6 +323,9 @@ class HybridEngine:
         """
         self.tick_count += 1
 
+        # 🔥 调试日志：确认 on_tick 被调用
+        logger.debug(f"Engine 收到 Tick: price={price}, size={size}, side={side}, timestamp={timestamp}")
+
         #1. 更新 EMA（每次 Tick 都更新）
         self.ema_fast = self._calculate_ema(price, self.ema_fast, self.ema_fast_period)
         self.ema_slow = self._calculate_ema(price, self.ema_slow, self.ema_slow_period)
