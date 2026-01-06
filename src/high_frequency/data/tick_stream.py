@@ -6,7 +6,7 @@ WebSocket Tick 数据流处理器
 核心功能：
 - 使用 aiohttp 连接 OKX Public WebSocket
 - 订阅 trades 频道，实时接收成交数据
-- 自动过滤小单（< 5000 USDT）
+- 自动过滤小单（可配置阈值）
 - 自动重连机制（指数退避）
 
 设计原则：
@@ -48,8 +48,8 @@ class TickStream:
     WS_URL_PRODUCTION = "wss://ws.okx.com:8443/ws/v5/public"
     WS_URL_DEMO = "wss://wspap.okx.com:8443/ws/v5/public"
 
-    # 大单阈值（USDT）
-    WHALE_THRESHOLD = 5000.0
+    # 大单阈值（USDT）- 临时设置为 10 USDT
+    WHALE_THRESHOLD = 10.0
 
     def __init__(
         self,
@@ -306,6 +306,9 @@ class TickStream:
 
             # 计算交易金额（USDT）
             usdt_value = price * size
+
+            # 添加每笔交易的日志（DEBUG 级别）
+            logger.debug(f"收到成交: {price} x {size} = {usdt_value:.2f}")
 
             # 过滤小单
             if usdt_value < self.WHALE_THRESHOLD:
