@@ -48,8 +48,11 @@ class TickStream:
     WS_URL_PRODUCTION = "wss://ws.okx.com:8443/ws/v5/public"
     WS_URL_DEMO = "wss://wspap.okx.com:8443/ws/v5/public"
 
-    # 大单阈值（USDT）- 临时设置为 10 USDT
-    WHALE_THRESHOLD = 10.0
+    # 合约面值（永续合约，1 张 = 1 币）
+    CONTRACT_VAL = 1.0
+
+    # 大单阈值（USDT）- 提高到 10000 USDT
+    WHALE_THRESHOLD = 10000.0
 
     def __init__(
         self,
@@ -285,7 +288,7 @@ class TickStream:
         格式 1（数组格式）：
         [
             price,      # [0] 价格
-            size,       # [1] 数量
+            size,       # [1] 数量（张数）
             trade_id,    # [2] 交易ID
             timestamp,   # [3] 时间戳（毫秒）
             side         # [4] 方向（"buy" 或 "sell"）
@@ -294,7 +297,7 @@ class TickStream:
         格式 2（字典格式）：
         {
             "px": "234.56",      # 价格
-            "sz": "0.5",         # 数量
+            "sz": "0.5",         # 数量（张数）
             "tradeId": "...",       # 交易ID
             "ts": "17044864000000", # 时间戳（毫秒）
             "side": "buy"          # 方向（"buy" 或 "sell"）
@@ -311,12 +314,12 @@ class TickStream:
 
             # 尝试解析为字典格式（新格式）
             if isinstance(trade_item, dict):
-                logger.debug(f"检测到字典格式交易数据: {trade_item}")
                 try:
-                    price = float(trade_item.get("px"))
-                    size = float(trade_item.get("sz"))
-                    timestamp = int(trade_item.get("ts"))
-                    side = trade_item.get("side")
+                    # 强制转换为 float 类型（避免字符串比较问题）
+                    price = float(trade_item.get("px", "0"))
+                    size = float(trade_item.get("sz", "0"))
+                    timestamp = int(trade_item.get("ts", "0"))
+                    side = trade_item.get("side", "")
                 except (ValueError, TypeError) as e:
                     logger.error(f"字典格式解析失败: {e}, data={trade_item}")
                     return
@@ -327,11 +330,12 @@ class TickStream:
                     logger.debug(f"交易数据格式错误（数组长度不足）: {trade_item}")
                     return
                 try:
+                    # 强制转换为 float/int 类型
                     price = float(trade_item[0])
                     size = float(trade_item[1])
                     timestamp = int(trade_item[3])
-                    side = trade_item[4]
-                except (ValueError, IndexError) as e:
+                    side = str(trade_item[4])
+                except (ValueError, IndexError, TypeError) as e:
                     logger.error(f"数组格式解析失败: {e}, data={trade_item}")
                     return
             else:
@@ -348,21 +352,24 @@ class TickStream:
                 logger.error(f"无效的交易方向: {side}, data={trade_item}")
                 return
 
-            # 计算交易金额（USDT）
-            usdt_value = price * size
+            # 计算交易金额（USDT）- 使用合约面值
+            # SOL-USDT-SWAP: 1 张 = 1 SOL
+            usdt_value = price * size * self.CONTRACT_VAL
 
             # 添加每笔交易的日志（DEBUG 级别）
-            logger.debug(f"收到成交: {price} x {size} = {usdt_value:.2f}")
+            logger.debug(f"收到成交: {price:.2f} x {size:.4f} = {usdt_value:.2f} USDT")
 
-            # 过滤小单
+            # 过滤小单（只记录 DEBUG 日志，不处理）
             if usdt_value < self.WHALE_THRESHOLD:
                 logger.debug(
-                    f"过滤小单: price={price}, size={size}, "
+                    f"过滤小单: price={price:.2f}, size={size:.4f}, "
                     f"usdt={usdt_value:.2f}"
                 )
+                # 小单也更新市场状态（用于流量压力分析）
+                self.market_state.update_trade(price, size, side, timestamp)
                 return
 
-            # 更新市场状态
+            # 更新市场状态（大单）
             self.market_state.update_trade(price, size, side, timestamp)
 
             # 调用回调函数
@@ -379,10 +386,10 @@ class TickStream:
                 except Exception as e:
                     logger.error(f"大单回调函数异常: {e}")
 
-            # 记录大单
+            # 记录大单日志（只有超过 10000 USDT 才打印 INFO）
             if usdt_value >= self.WHALE_THRESHOLD:
                 logger.info(
-                    f"大单: price={price}, size={size}, "
+                    f"大单: price={price:.2f}, size={size:.4f}, "
                     f"side={side}, usdt={usdt_value:.2f}"
                 )
 
