@@ -79,11 +79,13 @@ class TickStream:
         self.market_state = market_state
         self.use_demo = use_demo
 
-        # 根据环境选择 WebSocket URL
+        # 始终使用实盘 URL 获取 Public 数据（trades 频道）
+        # 原因：OKX 模拟盘的 Public WebSocket 数据极少或断流
+        # 只在 Private 数据（下单）时才区分实盘/模拟盘
         if ws_url:
             self.ws_url = ws_url
         else:
-            self.ws_url = self.WS_URL_DEMO if use_demo else self.WS_URL_PRODUCTION
+            self.ws_url = self.WS_URL_PRODUCTION  # 始终使用实盘 URL
 
         self.reconnect_enabled = reconnect_enabled
         self.base_reconnect_delay = base_reconnect_delay
@@ -265,17 +267,22 @@ class TickStream:
 
             # 处理交易数据
             if "data" in data and isinstance(data["data"], list):
+                logger.debug(f"收到 {len(data['data'])} 笔交易数据")
                 for trade_item in data["data"]:
                     self._process_trade(trade_item)
+            else:
+                logger.debug(f"未处理的数据格式: {list(data.keys())}")
 
         except Exception as e:
-            logger.error(f"数据处理异常: {e}")
+            logger.error(f"数据处理异常: {e}, 原始数据: {data}")
 
-    def _process_trade(self, trade_item: list):
+    def _process_trade(self, trade_item):
         """
         处理单笔交易数据
 
-        OKX trades 数据格式：
+        OKX trades 数据格式（两种格式）：
+
+        格式 1（数组格式）：
         [
             price,      # [0] 价格
             size,       # [1] 数量
@@ -284,24 +291,61 @@ class TickStream:
             side         # [4] 方向（"buy" 或 "sell"）
         ]
 
+        格式 2（字典格式）：
+        {
+            "px": "234.56",      # 价格
+            "sz": "0.5",         # 数量
+            "tradeId": "...",       # 交易ID
+            "ts": "17044864000000", # 时间戳（毫秒）
+            "side": "buy"          # 方向（"buy" 或 "sell"）
+        }
+
         Args:
-            trade_item (list): 交易数据数组
+            trade_item: 交易数据（list 或 dict）
         """
         try:
-            # 验证数据格式
-            if not isinstance(trade_item, list) or len(trade_item) < 5:
-                logger.debug(f"交易数据格式错误: {trade_item}")
+            price = None
+            size = None
+            timestamp = None
+            side = None
+
+            # 尝试解析为字典格式（新格式）
+            if isinstance(trade_item, dict):
+                logger.debug(f"检测到字典格式交易数据: {trade_item}")
+                try:
+                    price = float(trade_item.get("px"))
+                    size = float(trade_item.get("sz"))
+                    timestamp = int(trade_item.get("ts"))
+                    side = trade_item.get("side")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"字典格式解析失败: {e}, data={trade_item}")
+                    return
+
+            # 尝试解析为数组格式（旧格式）
+            elif isinstance(trade_item, list):
+                if len(trade_item) < 5:
+                    logger.debug(f"交易数据格式错误（数组长度不足）: {trade_item}")
+                    return
+                try:
+                    price = float(trade_item[0])
+                    size = float(trade_item[1])
+                    timestamp = int(trade_item[3])
+                    side = trade_item[4]
+                except (ValueError, IndexError) as e:
+                    logger.error(f"数组格式解析失败: {e}, data={trade_item}")
+                    return
+            else:
+                logger.error(f"未知交易数据格式: {type(trade_item)}, data={trade_item}")
                 return
 
-            # 解析数据
-            price = float(trade_item[0])
-            size = float(trade_item[1])
-            timestamp = int(trade_item[3])
-            side = trade_item[4]
+            # 验证数据完整性
+            if price is None or size is None or timestamp is None or side is None:
+                logger.error(f"交易数据不完整: price={price}, size={size}, timestamp={timestamp}, side={side}")
+                return
 
             # 验证 side
             if side not in ["buy", "sell"]:
-                logger.debug(f"无效的交易方向: {side}")
+                logger.error(f"无效的交易方向: {side}, data={trade_item}")
                 return
 
             # 计算交易金额（USDT）
@@ -342,10 +386,8 @@ class TickStream:
                     f"side={side}, usdt={usdt_value:.2f}"
                 )
 
-        except (ValueError, IndexError) as e:
-            logger.error(f"交易数据解析失败: {e}, data={trade_item}")
         except Exception as e:
-            logger.error(f"交易处理异常: {e}")
+            logger.error(f"交易处理异常: {e}, 原始数据: {trade_item}", exc_info=True)
 
     async def _message_loop(self):
         """
@@ -361,6 +403,10 @@ class TickStream:
                         self._ws.receive(),
                         timeout=30.0
                     )
+
+                    # 添加原始数据心跳打印（调试用）
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        print(f"DEBUG RAW: {msg.data[:200]}")
 
                     # 处理消息
                     await self._handle_message(msg)
