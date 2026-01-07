@@ -220,10 +220,10 @@ async def print_hud(engine, risk_guard, market_state, whale_threshold, interval=
             latest_price = market_stats.get('latest_price')
             price_str = f"{latest_price:.2f}" if latest_price else "无数据"
 
-            # 3秒内大单数（净买入）
-            whale_count = market_stats.get('whale_trades', 0)
+            # 3秒内交易数（净买入）
+            # 🔥 修复：使用 trade_count（3秒内的笔数），而不是 whale_trades（累计大单数）
             net_buy_str = f"+{abs(net_volume):.0f} U" if net_volume > 0 else f"{net_volume:.0f} U"
-            flow_str = f"{whale_count} (净买入: {net_buy_str})"
+            flow_str = f"{trade_count} (净买入: {net_buy_str})"
 
             # 余额 & 盈亏
             current_balance = risk_stats.get('current_balance', 0)
@@ -247,7 +247,7 @@ async def print_hud(engine, risk_guard, market_state, whale_threshold, interval=
                 "📊 市场状态:",
                 f"  - 最新价格: {price_str}",
                 f"  - EMA(快/慢): {ema_str}",
-                f"  - 3s内大单数: {flow_str}",
+                f"  - 3s内交易数: {flow_str}",
                 "",
                 "🛡️ 账户状态:",
                 f"  - 余额: {pnl_str}",
