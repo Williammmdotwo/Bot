@@ -48,13 +48,10 @@ from datetime import datetime
 
 # 配置日志
 setup_logging()
-# 临时设置为 DEBUG 级别，查看 WebSocket 消息
-set_log_level('DEBUG')
-# 手动设置所有日志器的级别，确保 DEBUG 生效
-logging.getLogger().setLevel(logging.DEBUG)
-logging.getLogger('src.high_frequency.data.tick_stream').setLevel(logging.DEBUG)
+# 🔥 性能优化：设置为 INFO 级别，减少日志输出
+set_log_level('INFO')
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 # 全局变量（用于信号处理）
 tick_stream: Optional[TickStream] = None

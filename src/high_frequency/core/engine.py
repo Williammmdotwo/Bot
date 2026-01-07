@@ -330,7 +330,7 @@ class HybridEngine:
         self.ema_fast = self._calculate_ema(price, self.ema_fast, self.ema_fast_period)
         self.ema_slow = self._calculate_ema(price, self.ema_slow, self.ema_slow_period)
 
-        if self.tick_count % 100 == 0:  # 每 100 个 tick 记录一次
+        if self.tick_count % 1000 == 0:  # 🔥 性能优化：改为每 1000 个 tick 记录一次
             logger.info(
                 f"Tick #{self.tick_count}: price={price}, "
                 f"ema_fast={self.ema_fast}, ema_slow={self.ema_slow}"

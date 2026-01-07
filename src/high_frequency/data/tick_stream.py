@@ -411,10 +411,6 @@ class TickStream:
                         timeout=30.0
                     )
 
-                    # 添加原始数据心跳打印（调试用）
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        print(f"DEBUG RAW: {msg.data[:200]}")
-
                     # 处理消息
                     await self._handle_message(msg)
 
