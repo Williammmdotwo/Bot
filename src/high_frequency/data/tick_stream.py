@@ -386,9 +386,9 @@ class TickStream:
                 except Exception as e:
                     logger.error(f"大单回调函数异常: {e}")
 
-            # 记录大单日志（只有超过 10000 USDT 才打印 INFO）
+            # 记录大单日志（只写文件，不输出到终端）
             if usdt_value >= self.WHALE_THRESHOLD:
-                logger.info(
+                logger.debug(
                     f"大单: price={price:.2f}, size={size:.4f}, "
                     f"side={side}, usdt={usdt_value:.2f}"
                 )
