@@ -175,8 +175,15 @@ class RestClient:
                 data=body_json,
                 headers=headers
             ) as response:
-                # 读取响应
-                response_data = await response.json()
+                # 🚨 修复：读取响应文本（用于错误诊断）
+                response_text = await response.text()
+
+                # 尝试解析 JSON
+                try:
+                    response_data = json.loads(response_text)
+                except json.JSONDecodeError:
+                    # JSON 解析失败，使用原始文本
+                    response_data = {'code': 'N/A', 'msg': response_text}
 
                 # 记录请求日志
                 logger.debug(
@@ -186,14 +193,21 @@ class RestClient:
 
                 # 检查 HTTP 状态码
                 if response.status != 200:
-                    raise ClientError(
-                        f"HTTP 错误: {response.status} - {response_data.get('msg', 'Unknown error')}"
-                    )
+                    # 🚨 修复：打印详细的错误信息
+                    error_msg = f"HTTP 错误 {response.status}: {response_text}"
+                    logger.error(error_msg)
+
+                    # 如果是 400 错误（参数错误），通常重试也没用，直接抛出
+                    if response.status == 400:
+                        raise ValueError(error_msg)
+
+                    raise ClientError(error_msg)
 
                 # 检查 API 错误码
                 if response_data.get('code') != '0':
                     error_msg = response_data.get('msg', 'Unknown error')
-                    logger.error(f"API 错误: {response_data['code']} - {error_msg}")
+                    # 🚨 修复：打印完整的 API 响应
+                    logger.error(f"API 错误 {response_data['code']}: {response_text}")
                     raise ValueError(f"API 错误: {response_data['code']} - {error_msg}")
 
                 return response_data
@@ -267,8 +281,15 @@ class RestClient:
                 params=params,
                 headers=headers
             ) as response:
-                # 读取响应
-                response_data = await response.json()
+                # 🚨 修复：读取响应文本（用于错误诊断）
+                response_text = await response.text()
+
+                # 尝试解析 JSON
+                try:
+                    response_data = json.loads(response_text)
+                except json.JSONDecodeError:
+                    # JSON 解析失败，使用原始文本
+                    response_data = {'code': 'N/A', 'msg': response_text}
 
                 # 记录请求日志
                 logger.debug(
@@ -278,14 +299,21 @@ class RestClient:
 
                 # 检查 HTTP 状态码
                 if response.status != 200:
-                    raise ClientError(
-                        f"HTTP 错误: {response.status} - {response_data.get('msg', 'Unknown error')}"
-                    )
+                    # 🚨 修复：打印详细的错误信息
+                    error_msg = f"HTTP 错误 {response.status}: {response_text}"
+                    logger.error(error_msg)
+
+                    # 如果是 400 错误（参数错误），通常重试也没用，直接抛出
+                    if response.status == 400:
+                        raise ValueError(error_msg)
+
+                    raise ClientError(error_msg)
 
                 # 检查 API 错误码
                 if response_data.get('code') != '0':
                     error_msg = response_data.get('msg', 'Unknown error')
-                    logger.error(f"API 错误: {response_data['code']} - {error_msg}")
+                    # 🚨 修复：打印完整的 API 响应
+                    logger.error(f"API 错误 {response_data['code']}: {response_text}")
                     raise ValueError(f"API 错误: {response_data['code']} - {error_msg}")
 
                 return response_data

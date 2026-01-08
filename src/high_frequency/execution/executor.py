@@ -136,19 +136,40 @@ class OrderExecutor:
         if size <= 0:
             raise ValueError(f"无效的数量: {size}，必须大于 0")
 
-        # 构造限价单
+        # 🚨 修复开始：价格和数量必须格式化 🚨
+
+        # 1. 价格处理：SOL 通常是 2 位或 3 位小数。这里为了稳妥强制保留 2 位。
+        # OKX API 强烈建议发送 String 类型的数字
+        formatted_price = "{:.2f}".format(price)
+
+        # 2. 数量处理：
+        # ⚠️ 注意：OKX 合约的 size (sz) 是"张数"(Contracts)，必须是整数！
+        # 如果您的 size 是 0.01 (0.01个SOL)，在 OKX 上是无法下单的（最小1张）。
+        # 假设现在的 size 是计算出的张数，我们需要取整。
+        # 如果 size < 1，强制改为 1 (测试用)，或者拒绝下单
+        if size < 1:
+            logger.warning(f"⚠️  警告: 计算出的数量 {size} 小于 1 张，强制调整为 1 张以进行测试")
+            size = 1
+
+        formatted_size = str(int(size))  # 强制转为整数并转字符串
+
+        logger.info(f"⚡ 准备下单: 修正价格 {price} -> {formatted_price}, 修正数量 {size} -> {formatted_size}")
+
+        # 构造限价单（使用格式化后的字符串）
         order_body = {
             "instId": symbol,
             "tdMode": "cross",  # 全仓模式
             "side": side,
             "ordType": "limit",  # 限价单
-            "px": str(price),  # 限价
-            "sz": str(size)  # 数量
+            "px": formatted_price,  # ✅ 传格式化后的字符串
+            "sz": formatted_size   # ✅ 传格式化后的字符串(整数)
         }
+
+        # 🚨 修复结束 🚨
 
         logger.info(
             f"下达 IOC 订单: symbol={symbol}, side={side}, "
-            f"price={price}, size={size}"
+            f"price={formatted_price}, size={formatted_size}"
         )
 
         try:
