@@ -1,114 +1,106 @@
-# Athena Trader (v2.0.0) - Hybrid Crypto Trading System
+```markdown
+# Athena Trader (v2.0.1 "Speed Demon" - Stable) ⚡
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)![License](https://img.shields.io/badge/License-MIT-green)![Status](https://img.shields.io/badge/Status-Stable%20%2F%20HFT%20Active-brightgreen)
+> **Status**: 🟢 Online & Trading | **Engine**: Async HFT | **Exchange**: OKX/Binance
 
-**Athena Trader** 是一个工程化的加密货币量化交易系统，专为解决实盘与模拟盘环境差异、状态同步及延迟问题而设计。
-
-**v2.0.0 "Speed Demon"** 版本引入了全新的**双模架构 (Monorepo)**：保留了稳健的经典趋势策略，并新增了基于 `asyncio` 的毫秒级高频交易 (HFT) 引擎。
-
----
-
-## 🏗️ 系统架构 (Hybrid Architecture)
-
-本项目采用双轨并行架构，共享基础设施，但运行逻辑完全隔离：
-
-### 1. Athena Classic (稳健模式)
-*   **适用场景**：趋势跟踪、波段交易 (Swing Trading)。
-*   **核心技术**：`Requests` (同步轮询), `Pandas` (向量化计算), `PostgreSQL/Redis` (持久化)。
-*   **特点**：
-    *   **Shadow Ledger (影子账本)**：通过 `Target - Actual` 差值自动修正仓位，解决模拟盘状态不同步问题。
-    *   **Requests Bypass**：直连 OKX 签名接口，绕过 CCXT 路由，降低 30% 延迟。
-    *   **策略**：Trend Pullback (EMA + RSI 回调策略)。
-
-### 2. Athena Speed (激进模式 - HFT) 🚀 *New*
-*   **适用场景**：高频剥头皮 (Scalping)、接针 (Catching Knives)、动量突破。
-*   **核心技术**：`Asyncio` (异步非阻塞), `Aiohttp` (长连接), `WebSocket` (Tick流), `Deque` (纯内存滑动窗口)。
-*   **特点**：
-    *   **极速响应**：基于 Public Trade 流，端到端延迟 < 50ms (取决于服务器位置)。
-    *   **流式计算**：摒弃 K 线概念，使用滑动窗口实时计算“净买入压力”和“资金流向”。
-    *   **智能风控**：内置硬熔断机制 (Circuit Breaker)，单日亏损 > 3% 强制物理停机。
+Athena 是一个双模架构的加密货币量化交易系统，专为实盘环境优化。v2.0.1 版本在 "Speed Demon" 的基础上修复了核心逻辑漏洞，并打通了 OKX 实盘交易链路。
 
 ---
 
-## ⚔️ 策略说明
+## 📅 v2.0.1 关键修复与更新 (Critical Patches)
 
-### HFT 混合引擎 (Hybrid Engine)
-HFT 模块同时运行两套逻辑，互不干扰：
+**最后更新时间**: 2026-01-08
+**调试成果**: 成功完成首笔 OKX 实盘市价单 (Market Order)
 
-#### 🦅 模式 A: 秃鹫 (The Vulture)
-*   **逻辑**：寻找市场非理性的“闪崩”瞬间。
-*   **触发**：价格瞬间跌破 `Slow EMA * 0.99` (可配置)。
-*   **执行**：发送 **IOC (Immediate-Or-Cancel)** 限价买单。
-*   **优势**：只接飞刀的最低点，资金占用时间极短。
+### 🛠️ 核心修复 (Core Fixes)
+1.  **逻辑时间单位修复**:
+    *   修复了滑动窗口 (`_clean_windows`) 中毫秒(ms)与秒(s)单位错配导致的**内存泄漏**和**数据无限累加**问题。
+    *   结果：`3s内大单数` 统计恢复正常，不再无限增长。
+2.  **API 精度格式化**:
+    *   修复了向交易所发送浮点数价格（如 `136.1718...`）导致的 API 报错。
+    *   实现：强制将价格 (`price`) 和数量 (`sz`) 转换为交易所要求的 String 格式。
+3.  **市价单协议修正**:
+    *   修复了 `async_client` 在发送市价单 (Market) 时错误携带 `px` 参数导致报错 `51000 Parameter px error` 的问题。
+4.  **错误回显优化**:
+    *   重写了 `async_client` 的错误处理逻辑，现在能直接打印交易所返回的 `sMsg` (如 "Account mode error")，告别 "All operations failed" 盲猜。
 
-#### 🎯 模式 B: 狙击手 (The Sniper)
-*   **逻辑**：监控大户资金流向，追逐动量突破。
-*   **触发**：
-    1.  **量能爆发**：3秒内净买入量 > 阈值 (如 10,000 USDT) 且 成交笔数 > 20。
-    2.  **趋势确认**：价格 > 阻力位。
-*   **执行**：发送 **Market (市价)** 买单，极速抢入。
+### ✨ 新增特性 (New Features)
+*   **双模式切换 (Environment Switch)**:
+    *   引入 `.env` 变量 `STRATEGY_MODE`。
+    *   **PRODUCTION** (默认): 堡垒级安全逻辑 (必须突破阻力位 + 严格资金流)。
+    *   **DEV**: 激进测试模式 (放宽阻力位判定/使用市价单)，用于验证交易链路。
+*   **HUD 面板升级**: 修复了显示变量引用错误，新增“净买入”实时监控。
 
 ---
 
-## 🛠️ 安装与运行
+## 🏗️ 系统架构
 
-### 1. 环境准备
+### 1. 双轨并行 (Hybrid Architecture)
+*   **Athena Classic**: 基于 `Pandas` + `PostgreSQL` 的趋势跟踪系统（均线回调策略）。
+*   **Athena Speed (HFT)**: 全异步 `Asyncio` + `Aiohttp` + `Redis` 的高频交易系统。
+
+### 2. HFT 策略引擎
+*   **🦅 模式 A: 秃鹫 (The Vulture)**
+    *   **逻辑**: 逆势接针。在价格闪崩（Flash Crash）偏离 EMA 时，发送 IOC 限价单抢反弹。
+*   **🎯 模式 B: 狙击手 (The Sniper)**
+    *   **逻辑**: 顺势动量。监控微观资金流（Flow Pressure），在资金净买入超阈值且价格突破阻力时，发送市价单追涨。
+
+---
+
+## ⚙️ 实盘配置指南 (必读)
+
+为了确保机器人能成功下单，OKX 账户必须按以下标准配置：
+
+1.  **账户模式 (Account Mode)**
+    *   ✅ **单币种保证金模式 (Single-currency margin)** - *推荐*
+    *   ✅ 跨币种保证金模式 (Multi-currency margin) - *需关闭自动借币*
+    *   ❌ 简单交易模式 (Simple) - *不支持合约，无法使用*
+
+2.  **仓位模式 (Position Mode)**
+    *   ✅ **单向持仓 (One-way Mode)** - *HFT 策略核心要求*
+    *   ❌ 双向持仓 (Hedge Mode) - *会导致代码报错*
+
+3.  **合约设置**
+    *   交易对: `SOL-USDT-SWAP` (永续合约)
+    *   保证金: **全仓 (Cross)** - *适配代码中的 `tdMode: cross`*
+
+---
+
+## 🚀 快速启动
+
+### 1. 环境配置
+创建 `.env` 文件：
 ```bash
-# 安装依赖 (新增 aiohttp 等异步库)
-pip install -r requirements.txt
+# API Keys
+OKX_API_KEY=your_key
+OKX_SECRET_KEY=your_secret
+OKX_PASSPHRASE=your_pass
+
+# 策略模式
+# PRODUCTION = 严格生产模式 (默认)
+# DEV = 激进测试模式 (放宽条件，使用市价单)
+STRATEGY_MODE=DEV
 ```
 
-### 2. 配置文件
-在 `config/base.json` 中配置 API Key 和策略参数：
-```json
-{
-  "api": { ... },
-  "high_freq_strategies": {
-    "enabled": true,
-    "symbol": "SOL-USDT-SWAP",
-    "whale_threshold": 10000.0,  // 大单阈值
-    "sniper_mode": {
-      "min_net_volume": 10000,   // 狙击触发：3秒净买入量
-      "min_trade_count": 20      // 狙击触发：3秒成交笔数
-    }
-  }
-}
-```
-
-### 3. 启动模式
-
-**启动经典版 (Trend Pullback):**
-```bash
-python main_classic.py
-```
-
-**启动极速版 (HFT Speed Demon):**
+### 2. 运行 HFT 引擎
 ```bash
 python main_hft.py
 ```
-*(注：两者可同时运行，建议在 `screen` 或 `tmux` 中分窗口运行)*
 
 ---
 
-## 📝 更新日志 (Changelog)
+## ⚠️ 常见错误代码索引
 
-### v2.0.0 - Speed Demon Release (2026-01-06)
+如果在日志中遇到以下错误，请参考解决：
 
-#### ✨ 新增功能
-*   **HFT 核心**：重写底层网络层，移除 CCXT，使用 `aiohttp` 实现 V5 API 手动签名与长连接复用。
-*   **TickStream**：实现 WebSocket `public/trades` 频道订阅，支持断线重连。
-*   **HUD 看板**：新增 Heads-Up Display，每 10 秒在日志中记录 EMA、资金流压力、风控状态等系统快照。
-*   **流式风控**：新增 `CircuitBreaker` 单例，提供 60秒 冷却锁和日亏损熔断保护。
-
-#### 🐛 关键修复 (Hotfixes)
-*   **[Critical] 回调链路修复**：修复了 `TickStream` 接收到数据但未通过 Callback 传递给 `Engine` 的问题，解决了 EMA 无法计算的 Bug。
-*   **[Critical] 内存泄漏修复**：修复了 `MarketState` 中滑动窗口只进不出的问题。现在会正确清理 `timestamp < current - 3s` 的过期数据，防止内存溢出及量能计算错误。
-*   **[Fix] 大单过滤逻辑**：修正了合约张数 (`sz`) 与 USDT 面值的换算逻辑，解决了小额订单被误判为大单导致的日志刷屏问题。
-*   **[Fix] 日志分流**：HUD 信息不再输出到控制台，改为仅写入文件，确保控制台只显示关键的大单和交易信号。
+*   **`51000 Parameter px error`**: 市价单里传了价格参数。 -> *已在 v2.0.1 修复*。
+*   **`51010 Account mode error`**: 账户模式还是“简单模式”，去 OKX 网页端升级为“单币种保证金”。
+*   **`51121 Price not within limit`**: 限价单价格偏离盘口太远。 -> *建议在 DEV 模式下使用市价单*。
+*   **`Filter failure: sz`**: 下单数量小于交易所最小值（如 SOL 合约至少 1 张）。
 
 ---
 
-## ⚠️ 风险提示
-
-*   **HFT 模块** 涉及极高频的数据处理，建议部署在延迟 < 50ms 的服务器上（推荐 AWS 东京/新加坡 或 Vultr）。
-*   **实盘/模拟盘**：HFT 模块默认使用 **实盘 WebSocket 行情** (Public) + **模拟盘下单 API** (Private)。这可能导致微小的滑点，属于预期内的测试行为。
+## 📊 性能指标
+*   **端到端延迟**: < 50ms (本地 -> 交易所网关)
+*   **吞吐量**: 支持 100+ Ticks/秒 处理能力
+*   **风控**: 每日最大亏损熔断 / 最大持仓限制
