@@ -28,11 +28,11 @@ def get_timestamp() -> str:
     Returns:
         str: ISO 8601 格式的时间戳字符串
     """
-    # 获取 UTC 时间
-    now = datetime.now(timezone.utc)
-    # 格式化为 ISO 8601，保留毫秒
-    timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    return timestamp
+    # [修复] 强制使用 UTC 时间，精确到毫秒，符合 ISO 8601 格式
+    # 例如: 2023-01-08T12:00:00.123Z
+    dt = datetime.now(timezone.utc)
+    # OKX 要求格式: YYYY-MM-DDThh:mm:ss.sssZ
+    return dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
 
 
 def _sign_message(timestamp: str, method: str, request_path: str, body: str, secret_key: str) -> str:
@@ -54,8 +54,8 @@ def _sign_message(timestamp: str, method: str, request_path: str, body: str, sec
         >>> print(sign)
         '...'
     """
-    # 构造签名消息：timestamp + method + requestPath + body
-    message = timestamp + method + request_path + body
+    # [核对] 确保拼接顺序正确，且 method 必须大写
+    message = str(timestamp) + str(method).upper() + str(request_path) + str(body)
 
     # 使用 SecretKey 进行 HMAC-SHA256 签名
     signature = hmac.new(
