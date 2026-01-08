@@ -17,6 +17,7 @@ HFT 混合交易引擎
 
 import asyncio
 import logging
+import time
 from typing import Optional, List
 from ..data.memory_state import MarketState, Trade
 from ..execution.executor import OrderExecutor
@@ -117,6 +118,7 @@ class HybridEngine:
 
         # [新增] 当前持仓数量 (正为多/负为空/0为无)
         self.current_position = 0.0
+        self.last_sync_time = 0.0  # [新增] 上次持仓同步时间戳
 
         logger.info(
             f"HybridEngine 初始化: symbol={symbol}, mode={mode}, "
@@ -382,20 +384,24 @@ class HybridEngine:
         #2. 更新阻力位
         self._update_resistance(price)
 
-        # 🆕 [新增] 实时同步持仓状态
-        try:
-            # 注意：这是异步调用，可能会轻微增加 tick 处理延迟，但在 HFT 中知晓持仓是必须的
-            positions = await self.executor.get_positions(self.symbol)
-            if positions:
-                # OKX 单向持仓模式下，取第一个匹配数据的 'pos' 字段
-                pos_data = positions[0]
-                self.current_position = float(pos_data.get('pos', 0.0))
-            else:
-                self.current_position = 0.0
-        except Exception as e:
-            # 记录错误但不中断 tick 循环
-            # 注意：这里假设 logger 是全局可用或 self.logger
-            print(f"[Engine Warning] Sync position failed: {e}")
+        # 🆕 [修复] 持仓同步逻辑 (增加 2秒 冷却时间，防止 401 签名错误)
+        current_ts = time.time()
+        if current_ts - self.last_sync_time > 2.0:  # 每 2 秒同步一次
+            try:
+                # 只有通过了时间检查才发送请求
+                positions = await self.executor.get_positions(self.symbol)
+                if positions:
+                    pos_data = positions[0]
+                    self.current_position = float(pos_data.get('pos', 0.0))
+                else:
+                    self.current_position = 0.0
+
+                # 更新上次同步时间
+                self.last_sync_time = current_ts
+
+            except Exception as e:
+                # 降低日志级别，避免刷屏
+                pass
 
         #3. 秃鹫模式：闪崩接针
         if self.mode in ["hybrid", "vulture"]:
