@@ -115,6 +115,9 @@ class HybridEngine:
         self.sniper_triggers = 0
         self.trade_executions = 0
 
+        # [新增] 当前持仓数量 (正为多/负为空/0为无)
+        self.current_position = 0.0
+
         logger.info(
             f"HybridEngine 初始化: symbol={symbol}, mode={mode}, "
             f"order_size={order_size}, ema_fast={ema_fast_period}, ema_slow={ema_slow_period}, "
@@ -378,6 +381,21 @@ class HybridEngine:
 
         #2. 更新阻力位
         self._update_resistance(price)
+
+        # 🆕 [新增] 实时同步持仓状态
+        try:
+            # 注意：这是异步调用，可能会轻微增加 tick 处理延迟，但在 HFT 中知晓持仓是必须的
+            positions = await self.executor.get_positions(self.symbol)
+            if positions:
+                # OKX 单向持仓模式下，取第一个匹配数据的 'pos' 字段
+                pos_data = positions[0]
+                self.current_position = float(pos_data.get('pos', 0.0))
+            else:
+                self.current_position = 0.0
+        except Exception as e:
+            # 记录错误但不中断 tick 循环
+            # 注意：这里假设 logger 是全局可用或 self.logger
+            print(f"[Engine Warning] Sync position failed: {e}")
 
         #3. 秃鹫模式：闪崩接针
         if self.mode in ["hybrid", "vulture"]:

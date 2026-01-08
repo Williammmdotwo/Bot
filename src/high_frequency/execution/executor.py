@@ -363,7 +363,14 @@ class OrderExecutor:
             params=params
         )
 
-        positions = response.get("data", [])
+        # [修复] 兼容 API 返回列表或字典两种情况
+        if isinstance(response, list):
+            positions = response
+        elif isinstance(response, dict):
+            positions = response.get("data", [])
+        else:
+            logger.warning(f"未知持仓数据格式: {type(response)}")
+            positions = []
 
         return positions
 
