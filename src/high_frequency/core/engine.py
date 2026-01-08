@@ -63,7 +63,8 @@ class HybridEngine:
         ioc_slippage_pct: float = 0.002,
         sniper_flow_window: float = 3.0,
         sniper_min_trades: int = 20,
-        sniper_min_net_volume: float = 10000.0
+        sniper_min_net_volume: float = 10000.0,
+        strategy_mode: str = "PRODUCTION"
     ):
         """
         初始化混合引擎
@@ -81,6 +82,7 @@ class HybridEngine:
             sniper_flow_window (float): 狙击模式流量分析窗口（秒），默认 3.0
             sniper_min_trades (int): 狙击模式最小交易笔数，默认 20
             sniper_min_net_volume (float): 狙击模式最小净流量（USDT），默认 10000.0
+            strategy_mode (str): 策略模式（"PRODUCTION" 或 "DEV"），默认 "PRODUCTION"
         """
         self.market_state = market_state
         self.executor = executor
@@ -94,6 +96,9 @@ class HybridEngine:
         self.sniper_flow_window = sniper_flow_window
         self.sniper_min_trades = sniper_min_trades
         self.sniper_min_net_volume = sniper_min_net_volume
+
+        # 策略模式（PRODUCTION = 堡垒模式，DEV = 激进模式）
+        self.strategy_mode = strategy_mode.upper()
 
         # EMA 状态
         self.ema_fast: Optional[float] = None
@@ -112,7 +117,8 @@ class HybridEngine:
 
         logger.info(
             f"HybridEngine 初始化: symbol={symbol}, mode={mode}, "
-            f"order_size={order_size}, ema_fast={ema_fast_period}, ema_slow={ema_slow_period}"
+            f"order_size={order_size}, ema_fast={ema_fast_period}, ema_slow={ema_slow_period}, "
+            f"strategy_mode={self.strategy_mode}"
         )
 
     def _calculate_ema(
@@ -197,20 +203,33 @@ class HybridEngine:
         """
         秃鹫模式 (Vulture)：闪崩接针策略
 
-        触发条件：price <= ema_fast * 0.99
+        触发条件：
+        - PRODUCTION 模式：price <= ema_fast * 0.99（严格暴跌）
+        - DEV 模式：price <= ema_fast * 0.997（放宽 70%，即跌幅从 1% 降到 0.3%）
+
         动作：下达 IOC 买单（带滑点）
 
         Args:
             price (float): 当前价格
             ema_fast (float): 快速 EMA 值
         """
+        # 根据策略模式计算阈值
+        if self.strategy_mode == "DEV":
+            # DEV 模式：跌幅要求降低 70%（从 1% 降到 0.3%）
+            price_drop_threshold = 0.997
+            mode_suffix = " [DEV MODE TRIGGER]"
+        else:
+            # PRODUCTION 模式：保持严格逻辑
+            price_drop_threshold = 0.99
+            mode_suffix = ""
+
         # 检查触发条件
-        if price <= ema_fast * 0.99:
-            self.vulture_triggers += 1
+        if price <= ema_fast * price_drop_threshold:
+            self.vulture_triggers +=1
 
             logger.info(
-                f"秃鹫模式触发: price={price}, ema_fast={ema_fast}, "
-                f"threshold={ema_fast * 0.99}, trigger_count={self.vulture_triggers}"
+                f"秃鹫模式触发{mode_suffix}: price={price}, ema_fast={ema_fast}, "
+                f"threshold={ema_fast * price_drop_threshold}, trigger_count={self.vulture_triggers}"
             )
 
             # 风控检查
@@ -248,7 +267,9 @@ class HybridEngine:
         触发条件：
         1. 最近 3 秒内交易笔数 >= sniper_min_trades（默认 20）
         2. 最近 3 秒内净流量（买入-卖出）>= sniper_min_net_volume（默认 10000 USDT）
-        3. price > resistance（突破阻力位）
+
+        PRODUCTION 模式：price > resistance（严格突破）
+        DEV 模式：price > resistance * 0.9995（放宽阻力位，允许在阻力位下方 0.05% 抢跑）
 
         动作：下达 IOC 买单（模拟市价单，带滑点）
 
@@ -261,22 +282,34 @@ class HybridEngine:
             window_seconds=self.sniper_flow_window
         )
 
+        # 根据策略模式计算价格条件
+        if self.strategy_mode == "DEV":
+            # DEV 模式：放宽阻力位限制，允许在阻力位下方 0.05% 抢跑
+            price_condition = price > (self.resistance * 0.9995)
+            mode_suffix = " [DEV MODE TRIGGER]"
+            resistance_log_str = f"{self.resistance * 0.9995:.4f} (放宽 0.05%)"
+        else:
+            # PRODUCTION 模式：严格突破阻力位
+            price_condition = price > self.resistance
+            mode_suffix = ""
+            resistance_log_str = f"{self.resistance:.4f}"
+
         # [新增] 调试日志：看看差多少触发（只输出到文件，不输出到终端）
         if net_volume >= self.sniper_min_net_volume:
             logger.debug(
-                f"👀 发现大单! 净量:{net_volume:.0f} | 价格:{price:.2f} vs 阻力:{self.resistance:.4f} | "
-                f"满足价格条件? {price > self.resistance} | 交易笔数:{trade_count}"
+                f"👀 发现大单! 净量:{net_volume:.0f} | 价格:{price:.2f} vs 阻力:{resistance_log_str} | "
+                f"满足价格条件? {price_condition} | 交易笔数:{trade_count}"
             )
 
         # 检查触发条件
         if (trade_count >= self.sniper_min_trades and
             net_volume >= self.sniper_min_net_volume and
-            price > self.resistance):
+            price_condition):
 
-            self.sniper_triggers += 1
+            self.sniper_triggers +=1
 
             logger.info(
-                f"狙击模式触发: trade_count={trade_count}, net_volume={net_volume:.2f}, "
+                f"狙击模式触发{mode_suffix}: trade_count={trade_count}, net_volume={net_volume:.2f}, "
                 f"intensity={intensity:.2f}, price={price}, "
                 f"resistance={self.resistance}, trigger_count={self.sniper_triggers}"
             )

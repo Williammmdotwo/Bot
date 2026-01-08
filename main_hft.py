@@ -329,7 +329,24 @@ async def main():
             print("  - OKX_PASSPHRASE")
             return
 
-    # 4. 加载 HFT 配置
+    # 4. 读取策略模式（环境变量）
+    strategy_mode = os.getenv("STRATEGY_MODE", "PRODUCTION").upper()
+
+    # 打印策略模式警告
+    if strategy_mode == "DEV":
+        print("\n" + "=" * 60)
+        print("⚠️  警告：当前运行在 DEV 模式（激进策略）")
+        print("=" * 60)
+        print("🔥 DEV 模式特性：")
+        print("  - 秃鹫模式：跌幅要求降低 70%（1% → 0.3%）")
+        print("  - 狙击模式：阻力位放宽 0.05%")
+        print("  ⚠️  开发测试专用，请勿用于实盘交易！")
+        print("=" * 60)
+        logger.warning("⚠️  策略模式：DEV（激进模式）- 仅用于开发测试！")
+    else:
+        logger.info("🛡️  策略模式：PRODUCTION（堡垒模式）")
+
+    # 5. 加载 HFT 配置
     logger.info("📋 加载 HFT 配置...")
     hft_config = await load_hft_config()
 
@@ -387,7 +404,8 @@ async def main():
         ioc_slippage_pct=ioc_slippage_pct,
         sniper_flow_window=sniper_flow_window,
         sniper_min_trades=sniper_min_trades,
-        sniper_min_net_volume=sniper_min_net_volume
+        sniper_min_net_volume=sniper_min_net_volume,
+        strategy_mode=strategy_mode
     )
 
     # 初始化 Tick 流
