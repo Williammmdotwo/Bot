@@ -261,6 +261,13 @@ class HybridEngine:
             window_seconds=self.sniper_flow_window
         )
 
+        # [新增] 调试日志：看看差多少触发（只输出到文件，不输出到终端）
+        if net_volume >= self.sniper_min_net_volume:
+            logger.debug(
+                f"👀 发现大单! 净量:{net_volume:.0f} | 价格:{price:.2f} vs 阻力:{self.resistance:.4f} | "
+                f"满足价格条件? {price > self.resistance} | 交易笔数:{trade_count}"
+            )
+
         # 检查触发条件
         if (trade_count >= self.sniper_min_trades and
             net_volume >= self.sniper_min_net_volume and
