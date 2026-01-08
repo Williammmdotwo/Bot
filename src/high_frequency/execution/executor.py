@@ -153,55 +153,46 @@ class OrderExecutor:
 
         formatted_size = str(int(size))  # 强制转为整数并转字符串
 
-        logger.info(f"⚡ 准备下单: 修正价格 {price} -> {formatted_price}, 修正数量 {size} -> {formatted_size}")
+        logger.info(f"⚡ 准备下单: 修正数量 {size} -> {formatted_size}")
 
-        # 构造限价单（使用格式化后的字符串）
+        # 🚀 终极修改：改用市价单 (Market Order) 🚀
+        # 原因：Error 51121 显示限价单容易因为价格保护被拒绝。
+        # 市价单能保证在 DEV 模式下立即成交。
+
+        logger.info(f"⚡ [强力模式] 正在发送市价单 (Market Order) 以确保成交...")
+
+        # 构造市价单（市价单不需要价格）
         order_body = {
             "instId": symbol,
             "tdMode": "cross",  # 全仓模式
             "side": side,
-            "ordType": "limit",  # 限价单
-            "px": formatted_price,  # ✅ 传格式化后的字符串
+            "ordType": "market",  # ✅ 市价单
+            # "px": formatted_price,  # ❌ 市价单不需要价格
             "sz": formatted_size   # ✅ 传格式化后的字符串(整数)
         }
 
         # 🚨 修复结束 🚨
 
         logger.info(
-            f"下达 IOC 订单: symbol={symbol}, side={side}, "
-            f"price={formatted_price}, size={formatted_size}"
+            f"下达市价单: symbol={symbol}, side={side}, size={formatted_size}"
         )
 
         try:
-            # 1. 发送限价单
+            # 1. 发送市价单（市价单会立即成交，不需要撤单）
             response = await self.rest_client.post_signed(
                 self.ORDER_ENDPOINT,
                 order_body
             )
 
-            # 提取订单 ID
+            # 检查响应
             order_data = response.get("data", [])
             if not order_data:
                 raise ValueError("API 返回数据为空")
 
             order_id = order_data[0].get("ordId")
-            if not order_id:
-                raise ValueError("订单 ID 为空")
+            logger.debug(f"市价单已提交: order_id={order_id}")
 
-            logger.debug(f"限价单已提交: order_id={order_id}")
-
-            # 2. 立即撤单（实现 IOC 效果）
-            # 短暂延迟，给交易所处理时间
-            await asyncio.sleep(0.05)  # 50ms
-
-            try:
-                cancel_response = await self._cancel_order(order_id)
-                logger.info(f"IOC 订单已撤单: order_id={order_id}")
-            except Exception as e:
-                # 撤单失败不影响订单状态，记录日志即可
-                logger.warning(f"IOC 订单撤单失败: {e}")
-
-            # 返回原始下单响应
+            # 市价单已成交，直接返回响应（不需要撤单）
             return response
 
         except ValueError as e:
