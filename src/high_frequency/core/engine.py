@@ -384,24 +384,15 @@ class HybridEngine:
         #2. 更新阻力位
         self._update_resistance(price)
 
-        # 🆕 [修复] 持仓同步逻辑 (增加 2秒 冷却时间，防止 401 签名错误)
+        # 🆕 [修复版] 持仓同步逻辑 (先更新时间戳，防止死循环)
         current_ts = time.time()
-        if current_ts - self.last_sync_time > 2.0:  # 每 2 秒同步一次
-            try:
-                # 只有通过了时间检查才发送请求
-                positions = await self.executor.get_positions(self.symbol)
-                if positions:
-                    pos_data = positions[0]
-                    self.current_position = float(pos_data.get('pos', 0.0))
-                else:
-                    self.current_position = 0.0
+        # 将频率降低到 5 秒一次，减轻 API 压力
+        if current_ts - self.last_sync_time > 5.0:
+            # 关键：先更新时间，无论后续成功与否，都强制冷却 5 秒
+            self.last_sync_time = current_ts
 
-                # 更新上次同步时间
-                self.last_sync_time = current_ts
-
-            except Exception as e:
-                # 降低日志级别，避免刷屏
-                pass
+            # 使用 create_task 异步执行，完全不阻塞 Tick 处理
+            asyncio.create_task(self._safe_update_position())
 
         #3. 秃鹫模式：闪崩接针
         if self.mode in ["hybrid", "vulture"]:
@@ -411,6 +402,21 @@ class HybridEngine:
         #4. 狙击模式：大单追涨
         if self.mode in ["hybrid", "sniper"]:
             await self._sniper_strategy(price, timestamp)
+
+    async def _safe_update_position(self):
+        """[新增] 安全的异步持仓更新，异常不影响主线程"""
+        try:
+            positions = await self.executor.get_positions(self.symbol)
+            if positions:
+                # 兼容直接返回列表的情况
+                pos_data = positions[0] if isinstance(positions, list) else positions.get('data', [{}])[0]
+                # 兼容 pos 字段为字符串的情况
+                self.current_position = float(pos_data.get('pos', 0.0))
+            else:
+                self.current_position = 0.0
+        except Exception:
+            # 发生 401 或网络错误时保持静默，不要刷屏日志
+            pass
 
     def get_statistics(self) -> dict:
         """
@@ -457,3 +463,4 @@ class HybridEngine:
         logger.info(
             f"重置统计: vulture={old_vulture}, sniper={old_sniper}, trades={old_trades}"
         )
+        self.tick_count = 0
