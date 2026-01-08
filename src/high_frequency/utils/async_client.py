@@ -115,6 +115,48 @@ class RestClient:
 
         return self.session
 
+    def _get_timestamp(self) -> str:
+        # [修复] 强制使用 UTC 时间，并符合 ISO 8601 (2023-01-01T12:00:00.000Z)
+        from datetime import datetime, timezone
+        # 获取当前 UTC 时间
+        dt = datetime.now(timezone.utc)
+        # 格式化为 ISO 字符串，包含毫秒
+        # replace('+00:00', 'Z') 是为了满足 OKX 对 UTC 后缀的严格要求
+        return dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+    def _sign(self, timestamp: str, method: str, request_path: str, body: str = "") -> str:
+        # 拼接字符串：timestamp + method + requestPath + body
+        message = f"{timestamp}{method.upper()}{request_path}{body}"
+
+        import hmac
+        import hashlib
+        import base64
+
+        mac = hmac.new(
+            bytes(self.secret_key, encoding="utf-8"),
+            bytes(message, encoding="utf-8"),
+            digestmod=hashlib.sha256
+        )
+        return base64.b64encode(mac.digest()).decode("utf-8")
+
+    def _get_headers(self, request_method: str, request_path: str, body: str = "") -> dict:
+        timestamp = self._get_timestamp()
+        sign = self._sign(timestamp, request_method, request_path, body)
+
+        headers = {
+            "OK-ACCESS-KEY": self.api_key,
+            "OK-ACCESS-SIGN": sign,
+            "OK-ACCESS-TIMESTAMP": timestamp,
+            "OK-ACCESS-PASSPHRASE": self.passphrase,
+            "Content-Type": "application/json"
+        }
+
+        # [修复] 确保模拟盘标志被正确添加
+        if self.use_demo:
+            headers["x-simulated-trading"] = "1"
+
+        return headers
+
     async def post_signed(
         self,
         endpoint: str,
@@ -154,19 +196,8 @@ class RestClient:
         # 转换请求体为 JSON 字符串
         body_json = json.dumps(body, separators=(',', ':'))  # 紧凑格式，减少体积
 
-        # 生成签名头
-        headers = generate_headers_with_auto_timestamp(
-            method="POST",
-            request_path=endpoint,
-            body=body_json,
-            api_key=self.api_key,
-            secret_key=self.secret_key,
-            passphrase=self.passphrase
-        )
-
-        # 如果是模拟交易，添加模拟交易头
-        if self.use_demo:
-            headers['x-simulated-trading'] = '1'
+        # [修复] 使用内置的签名方法
+        headers = self._get_headers("POST", endpoint, body_json)
 
         # 发送请求
         try:
@@ -260,19 +291,8 @@ class RestClient:
         # GET 请求的 body 为空字符串
         body_json = ""
 
-        # 生成签名头
-        headers = generate_headers_with_auto_timestamp(
-            method="GET",
-            request_path=request_path,
-            body=body_json,
-            api_key=self.api_key,
-            secret_key=self.secret_key,
-            passphrase=self.passphrase
-        )
-
-        # 如果是模拟交易，添加模拟交易头
-        if self.use_demo:
-            headers['x-simulated-trading'] = '1'
+        # [修复] 使用内置的签名方法
+        headers = self._get_headers("GET", request_path, body_json)
 
         # 发送请求
         try:

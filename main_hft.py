@@ -437,7 +437,43 @@ async def main():
     print("=" * 60)
 
     try:
-        # 7. 启动 Tick 流
+        # 7. 🔍 启动诊断（解决幽灵故障）
+        print("\n" + "=" * 60)
+        print("🔍 HFT 引擎启动诊断中...")
+        print("=" * 60)
+
+        # 7.1 查余额（铁证如山）
+        real_usdt = await executor.get_usdt_balance()
+        print(f"💰 [账户审计] API 看到的 USDT 余额: {real_usdt:.2f}")
+        logger.info(f"💰 [账户审计] API 看到的 USDT 余额: {real_usdt:.2f}")
+
+        if real_usdt < 10:
+            print("\n" + "!" * 60)
+            print(f"🛑 余额过低 ({real_usdt:.2f})！")
+            print("如果网页端有钱，说明资金在 [资金账户] 而非 [交易账户]。")
+            print("请按以下步骤操作：")
+            print("  1. 登录 OKX 网页端")
+            print("  2. 切换到模拟盘模式")
+            print("  3. 点击 '资产' -> '资金划转'")
+            print("  4. 从 '资金账户' 划转到 '交易账户'")
+            print("!" * 60 + "\n")
+            logger.critical(f"🛑 余额过低 ({real_usdt:.2f})！请检查资金划转。")
+        else:
+            print(f"✅ 余额充足 ({real_usdt:.2f} USDT)")
+
+        # 7.2 强制设置 10 倍杠杆（激活合约配置）
+        print("\n🔧 正在初始化合约配置...")
+        logger.info("🔧 正在初始化合约配置...")
+        leverage_success = await executor.set_leverage(symbol, lever="10", mgn_mode="cross")
+
+        if leverage_success:
+            print("✅ 杠杆设置成功: 10x (全仓模式)")
+        else:
+            print("⚠️  杠杆设置失败，但继续运行...")
+
+        print("=" * 60)
+
+        # 8. 启动 Tick 流
         logger.info("📡 连接 WebSocket...")
         await tick_stream.start()
 

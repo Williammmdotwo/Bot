@@ -339,6 +339,47 @@ class OrderExecutor:
 
         return response
 
+    async def get_usdt_balance(self) -> float:
+        """
+        [新增] 查询 USDT 可用余额
+
+        Returns:
+            float: USDT 可用余额
+        """
+        try:
+            balance_endpoint = "/api/v5/account/balance"
+            response = await self.rest_client.get_signed(balance_endpoint)
+
+            if isinstance(response, dict) and response.get('data'):
+                for detail in response['data'][0].get('details', []):
+                    if detail.get('ccy') == 'USDT':
+                        return float(detail.get('availBal', 0.0))
+            return 0.0
+        except Exception as e:
+            logger.error(f"❌ 查询余额失败: {e}")
+            return 0.0
+
+    async def set_leverage(self, symbol: str, lever: str = "10", mgn_mode: str = "cross") -> bool:
+        """[新增] 强制设置合约杠杆倍数和保证金模式"""
+        try:
+            endpoint = "/api/v5/account/set-leverage"
+            body = {
+                "instId": symbol,
+                "lever": lever,
+                "mgnMode": mgn_mode
+            }
+            response = await self.rest_client.post_signed(endpoint, body)
+
+            if response.get("code") == "0":
+                logger.info(f"✅ 杠杆设置成功: {symbol} -> {lever}x ({mgn_mode})")
+                return True
+            else:
+                logger.warning(f"⚠️  杠杆设置可能有误: {response}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ 设置杠杆异常: {e}")
+            return False
+
     async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         查询持仓信息
