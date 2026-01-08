@@ -136,13 +136,7 @@ class OrderExecutor:
         if size <= 0:
             raise ValueError(f"无效的数量: {size}，必须大于 0")
 
-        # 🚨 修复开始：价格和数量必须格式化 🚨
-
-        # 1. 价格处理：SOL 通常是 2 位或 3 位小数。这里为了稳妥强制保留 2 位。
-        # OKX API 强烈建议发送 String 类型的数字
-        formatted_price = "{:.2f}".format(price)
-
-        # 2. 数量处理：
+        # 🚨 修复：数量处理 🚨
         # ⚠️ 注意：OKX 合约的 size (sz) 是"张数"(Contracts)，必须是整数！
         # 如果您的 size 是 0.01 (0.01个SOL)，在 OKX 上是无法下单的（最小1张）。
         # 假设现在的 size 是计算出的张数，我们需要取整。
@@ -155,21 +149,24 @@ class OrderExecutor:
 
         logger.info(f"⚡ 准备下单: 修正数量 {size} -> {formatted_size}")
 
-        # 🚀 终极修改：改用市价单 (Market Order) 🚀
+        # 🚀 改用市价单 (Market Order) 🚀
         # 原因：Error 51121 显示限价单容易因为价格保护被拒绝。
         # 市价单能保证在 DEV 模式下立即成交。
 
-        logger.info(f"⚡ [强力模式] 正在发送市价单 (Market Order) 以确保成交...")
+        logger.info(f"⚡ [市价单] 正在发送市价单 (Market Order) 以确保成交...")
 
-        # 构造市价单（市价单不需要价格）
+        # ✅ 关键修复：动态构造 order_body
+        # 市价单绝对不能包含 px 参数
         order_body = {
             "instId": symbol,
             "tdMode": "cross",  # 全仓模式
             "side": side,
             "ordType": "market",  # ✅ 市价单
-            # "px": formatted_price,  # ❌ 市价单不需要价格
             "sz": formatted_size   # ✅ 传格式化后的字符串(整数)
         }
+
+        # 🚨 重要：市价单不要传递 px 参数！
+        # 如果需要限价单，再单独添加 px
 
         # 🚨 修复结束 🚨
 
