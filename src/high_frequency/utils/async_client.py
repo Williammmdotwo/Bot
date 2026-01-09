@@ -187,9 +187,10 @@ class RestClient:
         body: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        发送签名的 POST 请求
+        发送签名的 POST 请求 (修复 POST Body 格式)
 
-        自动调用 auth.py 进行签名，添加 OK-ACCESS-* 头。
+        OKX 要求 POST Body 的 JSON 不能包含空格。
+        aiohttp 默认的 json 序列化可能有空格，需要强制手动序列化。
 
         Args:
             endpoint (str): API 端点路径（如：/api/v5/trade/order）
@@ -217,18 +218,23 @@ class RestClient:
         # 获取 Session
         session = await self._get_session()
 
-        # 转换请求体为 JSON 字符串
-        body_json = json.dumps(body, separators=(',', ':'))  # 紧凑格式，减少体积
+        # [修复] 1. 强制去除 JSON 中的空格 (separators=(',', ':'))
+        # OKX 要求 JSON 不能有空格和换行
+        json_body = json.dumps(body, separators=(',', ':'))
 
-        # [修复] 使用内置的签名方法
-        headers = self._get_headers("POST", endpoint, body_json)
+        # [修复] 2. 生成 Header (使用无空格的字符串 body)
+        headers = self._get_headers("POST", endpoint, json_body)
+
+        # [修复] 3. 构造完整的 URL
+        url = f"{self.base_url}{endpoint}"
 
         # 发送请求
         try:
             async with session.post(
-                endpoint,
-                data=body_json,
-                headers=headers
+                url,  # [修复] 使用完整 URL 而不是相对路径
+                data=json_body,  # [修复] 传入字符串而不是字典
+                headers=headers,
+                timeout=self.timeout
             ) as response:
                 # 🚨 修复：读取响应文本（用于错误诊断）
                 response_text = await response.text()
@@ -242,7 +248,7 @@ class RestClient:
 
                 # 记录请求日志
                 logger.debug(
-                    f"POST {endpoint} - Status: {response.status}, "
+                    f"POST {url} - Status: {response.status}, "
                     f"Code: {response_data.get('code', 'N/A')}"
                 )
 
@@ -283,7 +289,7 @@ class RestClient:
         params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        发送签名的 GET 请求
+        发送签名的 GET 请求 (修复参数签名问题)
 
         Args:
             endpoint (str): API 端点路径（如：/api/v5/account/balance）
@@ -303,27 +309,31 @@ class RestClient:
         # 获取 Session
         session = await self._get_session()
 
-        # 构造请求路径（包含查询参数）
+        # [修复] 完全重写 get_signed 方法，手动处理查询参数的拼接
+        from urllib.parse import urlencode
+
+        # 1. 处理查询参数
         request_path = endpoint
         if params:
-            # 对查询参数进行排序和编码
-            from urllib.parse import urlencode
+            # 将字典转换为 URL 查询字符串 (例如: ?instId=SOL-USDT-SWAP&instType=SWAP)
+            # 注意：OKX 要求参数按字母顺序排序
             sorted_params = sorted(params.items())
             query_string = urlencode(sorted_params)
             request_path = f"{endpoint}?{query_string}"
 
+        # 2. 生成 Header (注意：这里传入带参数的 request_path)
         # GET 请求的 body 为空字符串
-        body_json = ""
+        headers = self._get_headers("GET", request_path, "")
 
-        # [修复] 使用内置的签名方法
-        headers = self._get_headers("GET", request_path, body_json)
+        # 3. 发送请求 (使用完整的 request_path)
+        url = f"{self.base_url}{request_path}"
 
         # 发送请求
         try:
             async with session.get(
-                endpoint,
-                params=params,
-                headers=headers
+                url,
+                headers=headers,
+                timeout=self.timeout
             ) as response:
                 # 🚨 修复：读取响应文本（用于错误诊断）
                 response_text = await response.text()
@@ -337,7 +347,7 @@ class RestClient:
 
                 # 记录请求日志
                 logger.debug(
-                    f"GET {endpoint} - Status: {response.status}, "
+                    f"GET {url} - Status: {response.status}, "
                     f"Code: {response_data.get('code', 'N/A')}"
                 )
 

@@ -87,14 +87,20 @@ class UserStream:
         self.passphrase = passphrase
         self.use_demo = use_demo
 
-        # 根据环境选择 URL
+        # [修复] 强制使用生产环境域名以避开 502 错误
+        # OKX 允许通过生产域名进行模拟盘鉴权
+        # 原有逻辑:
+        # if use_demo:
+        #     self.ws_url = self.WS_URL_DEMO
+        # else:
+        #     self.ws_url = self.WS_URL_PRODUCTION
+        #
+        # 修复为：统一使用生产环境域名，通过 Header 鉴权区分模拟盘
         if ws_url:
             self.ws_url = ws_url
         else:
-            if use_demo:
-                self.ws_url = self.WS_URL_DEMO
-            else:
-                self.ws_url = self.WS_URL_PRODUCTION
+            # 强制使用生产环境域名
+            self.ws_url = self.WS_URL_PRODUCTION
 
         self.reconnect_enabled = reconnect_enabled
         self.max_reconnect_attempts = max_reconnect_attempts
