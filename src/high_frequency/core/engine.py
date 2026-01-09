@@ -120,6 +120,10 @@ class HybridEngine:
         self.current_position = 0.0
         self.last_sync_time = 0.0  # [新增] 上次持仓同步时间戳
 
+        # [新增] 持仓详细信息（用于实时私有流）
+        self.entry_price: Optional[float] = None  # 开仓均价
+        self.entry_time: Optional[int] = None  # 开仓时间（毫秒）
+
         logger.info(
             f"HybridEngine 初始化: symbol={symbol}, mode={mode}, "
             f"order_size={order_size}, ema_fast={ema_fast_period}, ema_slow={ema_slow_period}, "
@@ -402,6 +406,48 @@ class HybridEngine:
         #4. 狙击模式：大单追涨
         if self.mode in ["hybrid", "sniper"]:
             await self._sniper_strategy(price, timestamp)
+
+    async def update_position_state(self, positions: list):
+        """
+        [新增] 从私有 WebSocket 推送更新持仓状态
+
+        Args:
+            positions (list): 持仓数据列表
+        """
+        if not positions:
+            self.current_position = 0.0
+            self.entry_price = None
+            self.entry_time = None
+            logger.debug("WebSocket 持仓推送: 无持仓")
+            return
+
+        # 只取当前交易对的持仓
+        for pos in positions:
+            if pos.get('instId') == self.symbol:
+                # 更新持仓量（兼容字符串）
+                pos_val = pos.get('pos', '0')
+                self.current_position = float(pos_val) if isinstance(pos_val, str) else float(pos_val)
+
+                # 更新开仓均价
+                avg_px = pos.get('avgPx')
+                self.entry_price = float(avg_px) if avg_px else None
+
+                # 更新开仓时间
+                c_time = pos.get('cTime')
+                self.entry_time = int(c_time) if c_time else None
+
+                logger.info(
+                    f"✅ WebSocket 持仓更新: symbol={self.symbol}, "
+                    f"pos={self.current_position}, avgPx={self.entry_price}, "
+                    f"entryTime={self.entry_time}"
+                )
+                return
+
+        # 如果没找到当前交易对的持仓
+        self.current_position = 0.0
+        self.entry_price = None
+        self.entry_time = None
+        logger.debug(f"WebSocket 持仓推送: {self.symbol} 无持仓")
 
     async def _safe_update_position(self):
         """[新增] 安全的异步持仓更新，异常不影响主线程"""

@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.high_frequency.config_loader import load_hft_config
 from src.high_frequency.data.memory_state import MarketState
 from src.high_frequency.data.tick_stream import TickStream
+from src.high_frequency.data.user_stream import UserStream
 from src.high_frequency.execution.executor import OrderExecutor
 from src.high_frequency.execution.circuit_breaker import RiskGuard
 from src.high_frequency.core.engine import HybridEngine
@@ -55,6 +56,7 @@ logger.setLevel(logging.INFO)
 
 # 全局变量（用于信号处理）
 tick_stream: Optional[TickStream] = None
+user_stream: Optional[UserStream] = None
 executor: Optional[OrderExecutor] = None
 stop_event = asyncio.Event()
 
@@ -67,7 +69,7 @@ async def cleanup():
     logger.info("🔄 开始清理资源...")
 
     try:
-        # 1. 批量撤单
+        #1. 批量撤单
         logger.info("📋 撤销所有挂单...")
         if executor:
             try:
@@ -77,16 +79,25 @@ async def cleanup():
             except Exception as e:
                 logger.error(f"⚠️  撤单失败: {e}")
 
-        # 2. 停止 Tick 流
-        logger.info("📡 停止 WebSocket 连接...")
+        #2. 停止私有流（UserStream）
+        logger.info("📡 停止 Private WebSocket...")
+        if user_stream:
+            try:
+                await user_stream.stop()
+                logger.info("✓ Private WebSocket 已断开")
+            except Exception as e:
+                logger.error(f"⚠️  停止 Private WebSocket 失败: {e}")
+
+        #3. 停止 Tick 流
+        logger.info("📡 停止 Public WebSocket...")
         if tick_stream:
             try:
                 await tick_stream.stop()
-                logger.info("✓ WebSocket 已断开")
+                logger.info("✓ Public WebSocket 已断开")
             except Exception as e:
-                logger.error(f"⚠️  停止 WebSocket 失败: {e}")
+                logger.error(f"⚠️  停止 Public WebSocket 失败: {e}")
 
-        # 3. 关闭 Executor
+        #4. 关闭 Executor
         logger.info("🔌 关闭订单执行器...")
         if executor:
             try:
@@ -288,7 +299,7 @@ async def statistics_printer(engine, risk_guard, market_state, interval=30):
 
 async def main():
     """主函数"""
-    global tick_stream, executor, stop_event
+    global tick_stream, user_stream, executor, stop_event
 
     # 1. 加载环境变量
     load_dotenv()
@@ -415,6 +426,14 @@ async def main():
         use_demo=use_demo  # 传递环境参数
     )
 
+    # 初始化私有流（UserStream）- 实时持仓推送
+    user_stream = UserStream(
+        api_key=api_key,
+        secret_key=secret_key,
+        passphrase=passphrase,
+        use_demo=use_demo
+    )
+
     # 设置交易回调（每次 Tick 都调用）
     # 🔥 修复：使用 set_trade_callback 而不是 set_whale_callback
     # 这样每次交易都会更新 EMA，而不是只有大单才更新
@@ -422,6 +441,9 @@ async def main():
         await engine.on_tick(price, size, side, timestamp)
 
     tick_stream.set_trade_callback(on_trade)
+
+    # 设置持仓更新回调（UserStream 推送）
+    user_stream.set_positions_callback(engine.update_position_state)
 
     # 6. 启动引擎
     print("\n" + "=" * 60)
@@ -474,8 +496,12 @@ async def main():
         print("=" * 60)
 
         # 8. 启动 Tick 流
-        logger.info("📡 连接 WebSocket...")
+        logger.info("📡 连接 Public WebSocket...")
         await tick_stream.start()
+
+        # 8.1 启动私有流（UserStream）- 实时持仓推送
+        logger.info("📡 连接 Private WebSocket...")
+        await user_stream.start()
 
         print("\n✓ HFT 引擎已启动，等待交易信号...")
         print("✓ 按 Ctrl+C 停止\n")
