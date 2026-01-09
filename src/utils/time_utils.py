@@ -98,22 +98,37 @@ async def get_okx_server_time() -> datetime:
     Raises:
         Exception: 网络请求失败
     """
+    import time
+
     url = "https://www.okx.com/api/v5/public/time"
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, timeout=5) as response:
             if response.status == 200:
                 data = await response.json()
-                if data.get('code') == '0' and data.get('data'):
-                    timestamp_ms = data['data'][0]['ts']
-                    # 转换为 UTC 时间
-                    server_time = datetime.fromtimestamp(
-                        timestamp_ms / 1000,
-                        tz=timezone.utc
-                    )
+                # [修复] 强制将 API 返回的字符串时间戳转换为浮点数
+                # OKX 返回的时间戳通常在 data[0]['ts'] 中
+                try:
+                    # 假设 response 结构为 {'code': '0', 'data': [{'ts': '167...'}]}
+                    if isinstance(data, dict) and 'data' in data and len(data['data']) > 0:
+                        server_ts_str = data['data'][0]['ts']
+                        server_ts = float(server_ts_str) / 1000.0  # 转换为秒
+                        # 转换为 UTC 时间
+                        server_time = datetime.fromtimestamp(
+                            server_ts,
+                            tz=timezone.utc
+                        )
+                        return server_time
+                    else:
+                        # 兜底：如果格式不对，使用本地时间
+                        logger.warning(f"OKX API 返回格式异常: {data}")
+                        server_time = datetime.now(timezone.utc)
+                        return server_time
+                except Exception as e:
+                    # 兜底：如果转换失败，使用本地时间
+                    logger.warning(f"OKX API 时间戳转换失败: {e}")
+                    server_time = datetime.now(timezone.utc)
                     return server_time
-                else:
-                    raise Exception(f"OKX API 返回错误: {data}")
             else:
                 raise Exception(f"HTTP 请求失败: {response.status}")
 

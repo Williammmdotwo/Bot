@@ -62,8 +62,8 @@ class UserStream:
         use_demo: bool = False,
         ws_url: Optional[str] = None,
         reconnect_enabled: bool = True,
-        base_reconnect_delay: float = 1.0,
-        max_reconnect_delay: float = 60.0,
+        base_reconnect_delay: Optional[float] = None,
+        max_reconnect_delay: Optional[float] = None,
         max_reconnect_attempts: int = 10
     ):
         """
@@ -76,8 +76,10 @@ class UserStream:
             use_demo (bool): 是否使用模拟盘环境，默认为 False
             ws_url (Optional[str]): WebSocket URL，默认根据环境自动选择
             reconnect_enabled (bool): 是否启用自动重连，默认为 True
-            base_reconnect_delay (float): 基础重连延迟（秒），默认为 1.0
-            max_reconnect_delay (float): 最大重连延迟（秒），默认为 60.0
+            base_reconnect_delay (Optional[float]): 基础重连延迟（秒）
+                None 表示自动选择（模拟盘 3.0 秒，实盘 1.0 秒）
+            max_reconnect_delay (Optional[float]): 最大重连延迟（秒）
+                None 表示自动选择（模拟盘 120.0 秒，实盘 60.0 秒）
             max_reconnect_attempts (int): 最大重连次数，默认为 10
         """
         self.api_key = api_key
@@ -95,9 +97,23 @@ class UserStream:
                 self.ws_url = self.WS_URL_PRODUCTION
 
         self.reconnect_enabled = reconnect_enabled
-        self.base_reconnect_delay = base_reconnect_delay
-        self.max_reconnect_delay = max_reconnect_delay
         self.max_reconnect_attempts = max_reconnect_attempts
+
+        # [优化] 根据环境自动设置重连延迟
+        # 模拟盘连接不稳定，使用更长的退避时间
+        if use_demo:
+            # 模拟盘：基础延迟 3 秒，最大延迟 120 秒
+            self.base_reconnect_delay = base_reconnect_delay if base_reconnect_delay is not None else 3.0
+            self.max_reconnect_delay = max_reconnect_delay if max_reconnect_delay is not None else 120.0
+        else:
+            # 实盘：基础延迟 1 秒，最大延迟 60 秒
+            self.base_reconnect_delay = base_reconnect_delay if base_reconnect_delay is not None else 1.0
+            self.max_reconnect_delay = max_reconnect_delay if max_reconnect_delay is not None else 60.0
+
+        logger.info(
+            f"UserStream 初始化: use_demo={use_demo}, ws_url={self.ws_url}, "
+            f"base_reconnect_delay={self.base_reconnect_delay}s, max_reconnect_delay={self.max_reconnect_delay}s"
+        )
 
         # 连接状态
         self._session: Optional[ClientSession] = None
@@ -110,10 +126,6 @@ class UserStream:
         # 回调函数
         self._on_positions: Optional[Callable] = None
         self._on_orders: Optional[Callable] = None
-
-        logger.info(
-            f"UserStream 初始化: use_demo={use_demo}, ws_url={self.ws_url}"
-        )
 
     def set_positions_callback(self, callback: Callable):
         """
@@ -190,19 +202,13 @@ class UserStream:
         OKX Private WebSocket 需要先发送登录包进行鉴权。
         """
         try:
-            # 生成签名
-            login_timestamp = self._get_timestamp()
-            login_sign = self._calculate_sign(login_timestamp)
+            # 获取登录参数
+            login_params = self._get_login_params()
 
             # 构造登录包
             login_msg = {
                 "op": "login",
-                "args": [{
-                    "apiKey": self.api_key,
-                    "passphrase": self.passphrase,
-                    "timestamp": login_timestamp,
-                    "sign": login_sign
-                }]
+                "args": [login_params]
             }
 
             # 转换为 JSON 字符串
@@ -255,45 +261,41 @@ class UserStream:
             logger.error(f"订阅频道失败: {e}")
             raise
 
-    def _get_timestamp(self) -> str:
+    def _get_login_params(self) -> dict:
         """
-        获取 ISO 8601 格式的时间戳
+        生成 WebSocket 登录参数
+
+        直接硬编码标准的时间生成逻辑，确保签名正确。
 
         Returns:
-            str: ISO 8601 格式的时间戳字符串
+            dict: 包含 apiKey, passphrase, timestamp, sign 的字典
         """
         from datetime import datetime, timezone
-        dt = datetime.now(timezone.utc)
-        return dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
-
-    def _calculate_sign(self, timestamp: str) -> str:
-        """
-        计算签名
-
-        OKX WebSocket 登录签名字符串格式：timestamp + method + requestPath + body
-        对于登录请求：timestamp + "GET" + "/users/self/verify" + ""
-
-        Args:
-            timestamp (str): 时间戳
-
-        Returns:
-            str: Base64 编码的签名
-        """
         import hmac
-        import hashlib
         import base64
+        import hashlib
 
-        # [修复] OKX WebSocket 登录签名字符串格式
-        # 格式：timestamp + method + requestPath + body
-        # 对于登录：timestamp + "GET" + "/users/self/verify" + ""
+        # 1. 生成 ISO 时间戳 (UTC)
+        # 必须是: 2023-01-01T12:00:00.000Z 格式
+        dt = datetime.now(timezone.utc)
+        timestamp = dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+        # 2. 生成签名
+        # 格式: timestamp + 'GET' + '/users/self/verify'
         message = f"{timestamp}GET/users/self/verify"
-
         mac = hmac.new(
-            bytes(self.secret_key, encoding="utf-8"),
-            bytes(message, encoding="utf-8"),
+            bytes(self.secret_key, encoding='utf-8'),
+            bytes(message, encoding='utf-8'),
             digestmod=hashlib.sha256
         )
-        return base64.b64encode(mac.digest()).decode("utf-8")
+        sign = base64.b64encode(mac.digest()).decode('utf-8')
+
+        return {
+            "apiKey": self.api_key,
+            "passphrase": self.passphrase,
+            "timestamp": timestamp,
+            "sign": sign
+        }
 
     async def _handle_message(self, message: WSMessage):
         """
