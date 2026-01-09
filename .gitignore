@@ -179,3 +179,5 @@ staging/
 !logs/risk_manager.log
 !logs/strategy_engine.log
 *.log
+
+/docs/
