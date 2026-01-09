@@ -197,27 +197,42 @@ class UserStream:
 
     async def _send_login(self):
         """
-        发送登录包
+        发送登录请求
 
         OKX Private WebSocket 需要先发送登录包进行鉴权。
         """
         try:
-            # 获取登录参数
-            login_params = self._get_login_params()
+            import hmac, base64, hashlib
+            from datetime import datetime, timezone
 
-            # 构造登录包
+            # [修复] 强制使用标准 UTC ISO 格式 (例如 2023-01-01T12:00:00.123Z)
+            dt = datetime.now(timezone.utc)
+            timestamp = dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+            # 构造签名字符串: timestamp + 'GET' + '/users/self/verify'
+            message = f"{timestamp}GET/users/self/verify"
+
+            mac = hmac.new(
+                bytes(self.secret_key, encoding='utf-8'),
+                bytes(message, encoding='utf-8'),
+                digestmod=hashlib.sha256
+            )
+            sign = base64.b64encode(mac.digest()).decode('utf-8')
+
             login_msg = {
                 "op": "login",
-                "args": [login_params]
+                "args": [{
+                    "apiKey": self.api_key,
+                    "passphrase": self.passphrase,
+                    "timestamp": timestamp,
+                    "sign": sign
+                }]
             }
 
-            # 转换为 JSON 字符串
-            json_str = json.dumps(login_msg, separators=(',', ':'))
+            logger.info(f"发送登录包: {login_msg}")
 
-            logger.info(f"发送登录包: {json_str[:200]}...")
-
-            # 发送登录包
-            await self._ws.send_str(json_str)
+            # 发送登录包（使用 send_json 而不是 send_str）
+            await self._ws.send_json(login_msg)
 
             logger.info("登录包已发送")
 

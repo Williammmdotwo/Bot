@@ -140,6 +140,7 @@ class RestClient:
         return base64.b64encode(mac.digest()).decode("utf-8")
 
     def _get_headers(self, request_method: str, request_path: str, body: str = "") -> dict:
+        # [修复] 确保这里和 WebSocket 用的是完全一样的逻辑
         timestamp = self._get_timestamp()
         sign = self._sign(timestamp, request_method, request_path, body)
 
@@ -154,6 +155,12 @@ class RestClient:
         # [修复] 确保模拟盘标志被正确添加
         if self.use_demo:
             headers["x-simulated-trading"] = "1"
+
+        # [新增] 调试日志：输出时间戳和签名
+        logger.debug(
+            f"REST 请求头: method={request_method}, path={request_path}, "
+            f"timestamp={timestamp}, sign={sign[:20]}..."
+        )
 
         return headers
 

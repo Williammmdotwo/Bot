@@ -342,12 +342,18 @@ class HybridEngine:
                 self.trade_executions += 1
                 logger.info(f"秃鹫订单已提交: {response}")
 
-                # [新增] 更新开仓状态
-                self.current_position = dynamic_size
-                self.entry_price = price
-                self.entry_time = current_time
+                # 🛑 [修复] 乐观更新持仓状态 (Optimistic Update)
+                # 防止在等待 WS 推送的间隙重复触发下单信号
+                # 假设成交成功，立即修改本地状态
+                self.current_position = float(dynamic_size)  # 标记为已持仓
+                self.entry_price = price  # 临时记录开仓价
+                self.entry_time = timestamp  # 记录开仓时间（毫秒）
                 self.highest_price = price
-                logger.info(f"✅ 开仓记录: type=秃鹫, price={price}, size={dynamic_size}")
+
+                logger.info(
+                    f"🔒 [乐观锁] 本地状态已更新，暂停开仓，等待 PMS 确认... "
+                    f"(type=秃鹫, price={price}, size={dynamic_size})"
+                )
 
             except Exception as e:
                 logger.error(f"秃鹫订单执行失败: {e}")
@@ -439,12 +445,18 @@ class HybridEngine:
                 self.trade_executions += 1
                 logger.info(f"狙击订单已提交: {response}")
 
-                # [新增] 更新开仓状态
-                self.current_position = dynamic_size
-                self.entry_price = price
-                self.entry_time = current_time
+                # 🛑 [修复] 乐观更新持仓状态 (Optimistic Update)
+                # 防止在等待 WS 推送的间隙重复触发下单信号
+                # 假设成交成功，立即修改本地状态
+                self.current_position = float(dynamic_size)  # 标记为已持仓
+                self.entry_price = price  # 临时记录开仓价
+                self.entry_time = timestamp  # 记录开仓时间（毫秒）
                 self.highest_price = price
-                logger.info(f"✅ 开仓记录: type=狙击, price={price}, size={dynamic_size}")
+
+                logger.info(
+                    f"🔒 [乐观锁] 本地状态已更新，暂停开仓，等待 PMS 确认... "
+                    f"(type=狙击, price={price}, size={dynamic_size})"
+                )
 
             except Exception as e:
                 logger.error(f"狙击订单执行失败: {e}")
