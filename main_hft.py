@@ -45,7 +45,8 @@ from src.high_frequency.execution.executor import OrderExecutor
 from src.high_frequency.execution.circuit_breaker import RiskGuard
 from src.high_frequency.core.engine import HybridEngine
 from src.utils.logging_config import setup_logging, set_log_level, get_hud_logger
-from src.utils.time_utils import sync_time_check_async, get_timestamp
+from src.utils.time_utils import check_time_sync, get_timestamp
+from src.high_frequency.utils.auth import set_time_offset, get_time_offset
 from datetime import datetime
 
 # 配置日志
@@ -302,13 +303,25 @@ async def main():
     """主函数"""
     global tick_stream, user_stream, executor, stop_event
 
-    #0. 🔍 时间同步检查（解决 API 签名问题）
+    #0. 🔍 时间同步检查并校准时间戳（解决 API 签名问题）
     try:
         print("\n" + "=" * 60)
-        print("🔍 检查系统时间同步...")
+        print("🔍 检查系统时间同步并校准时间戳...")
         print("=" * 60)
-        await sync_time_check_async()
-        print("✅ 时间同步正常\n")
+
+        # 调用时间同步检查
+        time_sync_result = await check_time_sync()
+        time_offset = time_sync_result.get('time_offset', 0.0)
+
+        # 设置全局时间偏移量（用于校准所有 API 签名）
+        set_time_offset(time_offset)
+
+        print(f"本地时间: {time_sync_result.get('local_time')}")
+        print(f"服务器时间: {time_sync_result.get('server_time')}")
+        print(f"时间偏移量: {time_offset:.3f} 秒")
+        print(f"✅ 时间校准完成，所有 API 请求将使用校准后的时间戳\n")
+
+        logger.info(f"🕐 时间校准: 偏移量 = {time_offset:.3f} 秒")
     except Exception as e:
         print(f"\n❌ 时间同步检查失败: {e}")
         print("请先同步系统时间后重试。")

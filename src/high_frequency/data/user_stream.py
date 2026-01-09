@@ -206,20 +206,16 @@ class UserStream:
         发送登录请求
 
         OKX Private WebSocket 需要先发送登录包进行鉴权。
+        [修复] 必须使用统一的 OkxSigner 工具类，确保时间戳格式一致
         """
         try:
-            import hmac, base64, hashlib
-            from datetime import datetime, timezone
+            # [修复] 必须使用统一工具类
+            from ..utils.auth import OkxSigner
 
-            # [尝试修复] 调整时间戳精度
-            # 1. 获取当前 UTC 时间
-            dt = datetime.now(timezone.utc)
+            # 使用统一的时间戳生成方法（包含时间偏移量校准）
+            timestamp = OkxSigner.get_timestamp()
 
-            # 2. 使用 strftime 精确控制格式，确保毫秒是 3 位
-            # 格式：2023-01-01T12:00:00.123Z
-            timestamp = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-
-            # 3. 构造签名字符串: timestamp + 'GET' + '/users/self/verify'
+            # 构造签名字符串: timestamp + 'GET' + '/users/self/verify'
             # 确保 GET 是大写
             message = f"{timestamp}GET/users/self/verify"
 
@@ -231,12 +227,8 @@ class UserStream:
                 f"message={message} (total={len(message)} chars)"
             )
 
-            mac = hmac.new(
-                bytes(self.secret_key, encoding='utf-8'),
-                bytes(message, encoding='utf-8'),
-                digestmod=hashlib.sha256
-            )
-            sign = base64.b64encode(mac.digest()).decode('utf-8')
+            # 使用统一的签名方法
+            sign = OkxSigner.sign(timestamp, "GET", "/users/self/verify", "", self.secret_key)
 
             logger.debug(f"🔐 [WebSocket 签名结果] sign={sign}")
 
