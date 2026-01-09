@@ -180,4 +180,5 @@ staging/
 !logs/strategy_engine.log
 *.log
 
+# Documentation - ignore generated docs
 /docs/
