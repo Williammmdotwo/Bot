@@ -289,7 +289,10 @@ class RestClient:
         params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        发送签名的 GET 请求 (修复参数签名问题)
+        发送签名的 GET 请求 (关键修复：参数正确参与签名)
+
+        日志里 REST API 报 Invalid Sign，通常是因为 GET 请求的参数没有正确参与签名。
+        OKX 规定：如果是 GET 请求，request_path 必须包含 ?key=value。
 
         Args:
             endpoint (str): API 端点路径（如：/api/v5/account/balance）
@@ -297,11 +300,6 @@ class RestClient:
 
         Returns:
             Dict[str, Any]: API 响应数据
-
-        Example:
-            >>> response = await client.get_signed("/api/v5/account/balance")
-            >>> print(response['data'])
-            [...]
         """
         if self._closed:
             raise RuntimeError("ClientSession 已关闭")
@@ -309,33 +307,30 @@ class RestClient:
         # 获取 Session
         session = await self._get_session()
 
-        # [修复] 完全重写 get_signed 方法，手动处理查询参数的拼接
         from urllib.parse import urlencode
 
-        # 1. 处理查询参数
+        # 1. 构造完整的 request_path (包含查询参数)
         request_path = endpoint
         if params:
-            # 将字典转换为 URL 查询字符串 (例如: ?instId=SOL-USDT-SWAP&instType=SWAP)
-            # 注意：OKX 要求参数按字母顺序排序
-            sorted_params = sorted(params.items())
-            query_string = urlencode(sorted_params)
-            request_path = f"{endpoint}?{query_string}"
+            # 过滤掉 None 值的参数
+            clean_params = {k: v for k, v in params.items() if v is not None}
+            if clean_params:
+                # OKX 要求参数不需要排序，但为了稳健，我们这里不强制排序，只做编码
+                # safe 参数确保逗号等字符不被过度转义
+                query_string = urlencode(clean_params, safe=',')
+                request_path = f"{endpoint}?{query_string}"
 
-        # 2. 生成 Header (注意：这里传入带参数的 request_path)
+        # 2. 生成 Header (注意：传入的是带问号的完整路径)
         # GET 请求的 body 为空字符串
         headers = self._get_headers("GET", request_path, "")
 
-        # 3. 发送请求 (使用完整的 request_path)
+        # 3. 拼接完整 URL
         url = f"{self.base_url}{request_path}"
 
-        # 发送请求
+        # 4. 发送请求 (params 设为 None，因为参数已经拼在 url 里了)
         try:
-            async with session.get(
-                url,
-                headers=headers,
-                timeout=self.timeout
-            ) as response:
-                # 🚨 修复：读取响应文本（用于错误诊断）
+            async with session.get(url, headers=headers, timeout=self.timeout) as response:
+                # 读取响应文本（用于错误诊断）
                 response_text = await response.text()
 
                 # 尝试解析 JSON
@@ -353,7 +348,7 @@ class RestClient:
 
                 # 检查 HTTP 状态码
                 if response.status != 200:
-                    # 🚨 修复：打印详细的错误信息
+                    # 打印详细的错误信息
                     error_msg = f"HTTP 错误 {response.status}: {response_text}"
                     logger.error(error_msg)
 
@@ -366,7 +361,7 @@ class RestClient:
                 # 检查 API 错误码
                 if response_data.get('code') != '0':
                     error_msg = response_data.get('msg', 'Unknown error')
-                    # 🚨 修复：打印完整的 API 响应
+                    # 打印完整的 API 响应
                     logger.error(f"API 错误 {response_data['code']}: {response_text}")
                     raise ValueError(f"API 错误: {response_data['code']} - {error_msg}")
 
