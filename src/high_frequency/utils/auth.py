@@ -28,11 +28,11 @@ def get_timestamp() -> str:
     Returns:
         str: ISO 8601 格式的时间戳字符串
     """
-    # [修复] 强制使用 UTC 时间，精确到毫秒，符合 ISO 8601 格式
+    # [修复] 统一使用 strftime 方法，确保毫秒是 3 位
     # 例如: 2023-01-08T12:00:00.123Z
     dt = datetime.now(timezone.utc)
     # OKX 要求格式: YYYY-MM-DDThh:mm:ss.sssZ
-    return dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    return dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
 
 def _sign_message(timestamp: str, method: str, request_path: str, body: str, secret_key: str) -> str:

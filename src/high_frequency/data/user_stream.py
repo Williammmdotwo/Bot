@@ -217,12 +217,22 @@ class UserStream:
             # 确保 GET 是大写
             message = f"{timestamp}GET/users/self/verify"
 
+            # [新增] 详细的签名调试日志
+            logger.debug(
+                f"🔐 [WebSocket 签名计算] "
+                f"timestamp={timestamp}, method=GET, "
+                f"request_path=/users/self/verify, "
+                f"message={message} (total={len(message)} chars)"
+            )
+
             mac = hmac.new(
                 bytes(self.secret_key, encoding='utf-8'),
                 bytes(message, encoding='utf-8'),
                 digestmod=hashlib.sha256
             )
             sign = base64.b64encode(mac.digest()).decode('utf-8')
+
+            logger.debug(f"🔐 [WebSocket 签名结果] sign={sign}")
 
             login_msg = {
                 "op": "login",
@@ -296,9 +306,10 @@ class UserStream:
         import hashlib
 
         # 1. 生成 ISO 时间戳 (UTC)
+        # [修复] 统一使用 strftime 方法，确保毫秒是 3 位
         # 必须是: 2023-01-01T12:00:00.000Z 格式
         dt = datetime.now(timezone.utc)
-        timestamp = dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        timestamp = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
         # 2. 生成签名
         # 格式: timestamp + 'GET' + '/users/self/verify'
