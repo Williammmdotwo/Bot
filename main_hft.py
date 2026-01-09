@@ -381,6 +381,10 @@ async def main():
     sniper_min_trades = sniper_mode_config.get("min_trades", 20)  # 默认 20 笔
     sniper_min_net_volume = sniper_mode_config.get("min_net_volume", 10000.0)  # 默认 10000 USDT
 
+    # [新增] 加载动态资金管理配置
+    risk_ratio = hft_config.get("risk_ratio", 0.2)  # 默认使用 20% 的余额
+    leverage = hft_config.get("leverage", 10)  # 默认 10 倍杠杆
+
     # 5. 初始化模块
     logger.info("🔧 初始化模块...")
 
@@ -416,7 +420,9 @@ async def main():
         sniper_flow_window=sniper_flow_window,
         sniper_min_trades=sniper_min_trades,
         sniper_min_net_volume=sniper_min_net_volume,
-        strategy_mode=strategy_mode
+        strategy_mode=strategy_mode,
+        risk_ratio=risk_ratio,  # [新增] 风险比例
+        leverage=leverage  # [新增] 杠杆倍数
     )
 
     # 初始化 Tick 流

@@ -20,7 +20,16 @@ DEFAULT_HFT_CONFIG = {
     "enabled": False,
     "mode": "hybrid",
     "memory_limit_mb": 500,
-    "tick_channels": ["trades"]
+    "tick_channels": ["trades"],
+    # [新增] 动态资金管理配置
+    "symbol": "BTC-USDT-SWAP",
+    "order_size": 1,
+    "ema_fast_period": 9,
+    "ema_slow_period": 21,
+    "ioc_slippage_pct": 0.002,
+    "whale_threshold": 100.0,
+    "risk_ratio": 0.2,  # 风险比例：使用 20% 的余额
+    "leverage": 10  # 杠杆倍数
 }
 
 

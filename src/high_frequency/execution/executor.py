@@ -415,6 +415,80 @@ class OrderExecutor:
 
         return positions
 
+    async def close_position(
+        self,
+        symbol: str,
+        size: float,
+        direction: str = "sell"
+    ) -> Dict[str, Any]:
+        """
+        [新增] 平仓方法 - 发送反向市价单
+
+        Args:
+            symbol (str): 交易对（如：BTC-USDT-SWAP）
+            size (float): 平仓数量（张数，必须是整数）
+            direction (str): 方向（"sell" 平多单，"buy" 平空单），默认 "sell"
+
+        Returns:
+            Dict[str, Any]: API 响应数据
+
+        Example:
+            >>> response = await executor.close_position(
+            ...     symbol="BTC-USDT-SWAP",
+            ...     size=10,
+            ...     direction="sell"
+            ... )
+            >>> print(response['data'][0]['ordId'])
+            '1234567890'
+        """
+        # 参数验证
+        if direction not in ["buy", "sell"]:
+            raise ValueError(f"无效的平仓方向: {direction}，必须是 'buy' 或 'sell'")
+
+        if size <= 0:
+            raise ValueError(f"无效的平仓数量: {size}，必须大于 0")
+
+        # 数量处理：必须是整数张数
+        formatted_size = str(int(size))
+
+        # 构造市价单（Market Order）
+        order_body = {
+            "instId": symbol,
+            "tdMode": "cross",  # 全仓模式
+            "side": direction,
+            "ordType": "market",  # 市价单，确保立即成交
+            "sz": formatted_size
+        }
+
+        logger.info(
+            f"🔄 平仓订单: symbol={symbol}, side={direction}, "
+            f"size={formatted_size}, ordType=market"
+        )
+
+        try:
+            # 发送市价单
+            response = await self.rest_client.post_signed(
+                self.ORDER_ENDPOINT,
+                order_body
+            )
+
+            # 检查响应
+            order_data = response.get("data", [])
+            if not order_data:
+                raise ValueError("API 返回数据为空")
+
+            order_id = order_data[0].get("ordId")
+            logger.debug(f"平仓订单已提交: order_id={order_id}")
+
+            return response
+
+        except ValueError as e:
+            logger.error(f"平仓订单参数错误: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"平仓订单执行失败: {e}")
+            raise RuntimeError(f"平仓订单执行失败: {e}")
+
     async def close(self):
         """
         关闭订单执行器
