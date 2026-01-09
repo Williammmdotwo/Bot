@@ -141,7 +141,11 @@ class RestClient:
 
     def _get_headers(self, request_method: str, request_path: str, body: str = "") -> dict:
         # [修复] 确保这里和 WebSocket 用的是完全一样的逻辑
+        # 时间戳必须与签名字符串中的完全一致
         timestamp = self._get_timestamp()
+
+        # [关键] x-simulated-trading 不参与签名计算，只放在 Header 里
+        # 签名字符串 = timestamp + method + requestPath + body
         sign = self._sign(timestamp, request_method, request_path, body)
 
         headers = {
@@ -153,6 +157,7 @@ class RestClient:
         }
 
         # [修复] 确保模拟盘标志被正确添加
+        # 注意：这个 Header 不参与签名计算！
         if self.use_demo:
             headers["x-simulated-trading"] = "1"
 

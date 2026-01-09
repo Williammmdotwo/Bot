@@ -205,11 +205,16 @@ class UserStream:
             import hmac, base64, hashlib
             from datetime import datetime, timezone
 
-            # [修复] 强制使用 UTC 时间，精确到毫秒，带 Z 后缀
+            # [尝试修复] 调整时间戳精度
+            # 1. 获取当前 UTC 时间
             dt = datetime.now(timezone.utc)
-            timestamp = dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
 
-            # 构造签名字符串: timestamp + 'GET' + '/users/self/verify'
+            # 2. 使用 strftime 精确控制格式，确保毫秒是 3 位
+            # 格式：2023-01-01T12:00:00.123Z
+            timestamp = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+
+            # 3. 构造签名字符串: timestamp + 'GET' + '/users/self/verify'
+            # 确保 GET 是大写
             message = f"{timestamp}GET/users/self/verify"
 
             mac = hmac.new(
@@ -229,7 +234,7 @@ class UserStream:
                 }]
             }
 
-            logger.info(f"发送登录包: {login_msg}")
+            logger.info(f"发送登录包 (TS={timestamp}): {login_msg}")
 
             # 发送登录包（使用 send_json 而不是 send_str）
             await self._ws.send_json(login_msg)
