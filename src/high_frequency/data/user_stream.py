@@ -270,6 +270,9 @@ class UserStream:
         """
         计算签名
 
+        OKX WebSocket 登录签名字符串格式：timestamp + method + requestPath + body
+        对于登录请求：timestamp + "GET" + "/users/self/verify" + ""
+
         Args:
             timestamp (str): 时间戳
 
@@ -280,7 +283,9 @@ class UserStream:
         import hashlib
         import base64
 
-        # 拼接：timestamp + "GET" + "/users/self/verify"
+        # [修复] OKX WebSocket 登录签名字符串格式
+        # 格式：timestamp + method + requestPath + body
+        # 对于登录：timestamp + "GET" + "/users/self/verify" + ""
         message = f"{timestamp}GET/users/self/verify"
 
         mac = hmac.new(

@@ -45,6 +45,7 @@ from src.high_frequency.execution.executor import OrderExecutor
 from src.high_frequency.execution.circuit_breaker import RiskGuard
 from src.high_frequency.core.engine import HybridEngine
 from src.utils.logging_config import setup_logging, set_log_level, get_hud_logger
+from src.utils.time_utils import sync_time_check_async, get_timestamp
 from datetime import datetime
 
 # 配置日志
@@ -301,7 +302,19 @@ async def main():
     """主函数"""
     global tick_stream, user_stream, executor, stop_event
 
-    # 1. 加载环境变量
+    #0. 🔍 时间同步检查（解决 API 签名问题）
+    try:
+        print("\n" + "=" * 60)
+        print("🔍 检查系统时间同步...")
+        print("=" * 60)
+        await sync_time_check_async()
+        print("✅ 时间同步正常\n")
+    except Exception as e:
+        print(f"\n❌ 时间同步检查失败: {e}")
+        print("请先同步系统时间后重试。")
+        return
+
+    #1. 加载环境变量
     load_dotenv()
 
     # 2. 判断是否使用模拟交易
