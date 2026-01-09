@@ -133,6 +133,10 @@ class HybridEngine:
         # [新增] 出场引擎状态
         self.highest_price: Optional[float] = None  # 持仓后的最高价格（用于追踪止盈）
 
+        # [新增] 安全气囊 - 策略冷却时间
+        self.last_vulture_time = 0.0  # 秃鹫模式最后触发时间
+        self.last_sniper_time = 0.0  # 狙击模式最后触发时间
+
         logger.info(
             f"HybridEngine 初始化: symbol={symbol}, mode={mode}, "
             f"order_size={order_size}, ema_fast={ema_fast_period}, ema_slow={ema_slow_period}, "
@@ -332,6 +336,7 @@ class HybridEngine:
                     f"slippage={self.ioc_slippage_pct*100:.2f}%, size={dynamic_size}"
                 )
 
+                # [执行下单]
                 response = await self.executor.place_ioc_order(
                     symbol=self.symbol,
                     side="buy",
@@ -339,24 +344,25 @@ class HybridEngine:
                     size=dynamic_size
                 )
 
-                self.trade_executions += 1
-                logger.info(f"秃鹫订单已提交: {response}")
-
-                # 🛑 [修复] 乐观更新持仓状态 (Optimistic Update)
-                # 防止在等待 WS 推送的间隙重复触发下单信号
-                # 假设成交成功，立即修改本地状态
-                self.current_position = float(dynamic_size)  # 标记为已持仓
-                self.entry_price = price  # 临时记录开仓价
-                self.entry_time = timestamp  # 记录开仓时间（毫秒）
-                self.highest_price = price
+                # 🛑 [修复] 乐观锁 (变量名修正)
+                # 下单成功后立即执行，确保即使日志打印出错，状态也能更新
+                self.current_position = float(dynamic_size)  # 1. 立即标记持仓
+                self.entry_price = price  # 2. 记录价格
+                self.entry_time = int(time.time() * 1000)  # 3. 记录时间 (毫秒)
+                self.highest_price = price  # 4. 初始化最高价
 
                 logger.info(
                     f"🔒 [乐观锁] 本地状态已更新，暂停开仓，等待 PMS 确认... "
                     f"(type=秃鹫, price={price}, size={dynamic_size})"
                 )
 
+                self.trade_executions += 1
+                logger.info(f"秃鹫订单已提交: {response}")
+
             except Exception as e:
                 logger.error(f"秃鹫订单执行失败: {e}")
+                # [新增] 发生异常时，强制设置一个较长的冷却时间，防止死循环下单
+                self.last_vulture_time = time.time() + 60.0  # 强制冷却 60 秒
 
     async def _sniper_strategy(self, price: float, current_time: int):
         """
@@ -435,6 +441,7 @@ class HybridEngine:
                     f"resistance={self.resistance}"
                 )
 
+                # [执行下单]
                 response = await self.executor.place_ioc_order(
                     symbol=self.symbol,
                     side="buy",
@@ -442,24 +449,25 @@ class HybridEngine:
                     size=dynamic_size
                 )
 
-                self.trade_executions += 1
-                logger.info(f"狙击订单已提交: {response}")
-
-                # 🛑 [修复] 乐观更新持仓状态 (Optimistic Update)
-                # 防止在等待 WS 推送的间隙重复触发下单信号
-                # 假设成交成功，立即修改本地状态
-                self.current_position = float(dynamic_size)  # 标记为已持仓
-                self.entry_price = price  # 临时记录开仓价
-                self.entry_time = timestamp  # 记录开仓时间（毫秒）
-                self.highest_price = price
+                # 🛑 [修复] 乐观锁 (变量名修正)
+                # 下单成功后立即执行，确保即使日志打印出错，状态也能更新
+                self.current_position = float(dynamic_size)  # 1. 立即标记持仓
+                self.entry_price = price  # 2. 记录价格
+                self.entry_time = int(time.time() * 1000)  # 3. 记录时间 (毫秒)
+                self.highest_price = price  # 4. 初始化最高价
 
                 logger.info(
                     f"🔒 [乐观锁] 本地状态已更新，暂停开仓，等待 PMS 确认... "
                     f"(type=狙击, price={price}, size={dynamic_size})"
                 )
 
+                self.trade_executions += 1
+                logger.info(f"狙击订单已提交: {response}")
+
             except Exception as e:
                 logger.error(f"狙击订单执行失败: {e}")
+                # [新增] 发生异常时，强制设置一个较长的冷却时间，防止死循环下单
+                self.last_sniper_time = time.time() + 60.0  # 强制冷却 60 秒
 
     async def _check_exit_signals(self, current_price: float, timestamp: int):
         """

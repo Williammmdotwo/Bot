@@ -205,7 +205,7 @@ class UserStream:
             import hmac, base64, hashlib
             from datetime import datetime, timezone
 
-            # [修复] 强制使用标准 UTC ISO 格式 (例如 2023-01-01T12:00:00.123Z)
+            # [修复] 强制使用 UTC 时间，精确到毫秒，带 Z 后缀
             dt = datetime.now(timezone.utc)
             timestamp = dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
 
