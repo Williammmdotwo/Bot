@@ -375,8 +375,8 @@ class OkxRestGateway(RestGateway):
         """
         try:
             # 构造订单数据
-            # 1. 确保 ordType 大写（OKX API 需要 MARKET/LIMIT）
-            ord_type_upper = order_type.upper() if order_type else 'MARKET'
+            # 1. 确保 ordType 小写（OKX V5 API 需要 market/limit）
+            ord_type_lower = order_type.lower() if order_type else 'market'
 
             # 2. 确保 sz 是整数（SWAP/FUTURES 合约必须整数）
             size_int = int(size) if size is not None else 1
@@ -386,9 +386,8 @@ class OkxRestGateway(RestGateway):
 
             body = {
                 'instId': symbol,
-                'tdMode': 'cross',
                 'side': side,
-                'ordType': ord_type_upper,
+                'ordType': ord_type_lower,
                 'sz': str(size_int)
             }
 
@@ -408,9 +407,9 @@ class OkxRestGateway(RestGateway):
                 logger.debug(f"🏷️  生成 clOrdId: {body['clOrdId']} (strategy_id={strategy_id})")
 
             # 添加额外参数，但只保留 OKX API 支持的字段
-            # OKX V5 API 支持的下单字段白名单（不包含 posSide）
+            # OKX V5 API 支持的下单字段白名单（不包含 posSide 和 tdMode）
             okx_order_fields = {
-                'instId', 'tdMode', 'side', 'ordType', 'sz', 'px',
+                'instId', 'side', 'ordType', 'sz', 'px',
                 'reduceOnly', 'clOrdId', 'ccy'
             }
 
