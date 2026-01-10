@@ -395,8 +395,24 @@ class OkxRestGateway(RestGateway):
             if order_type in ['limit', 'ioc'] and price:
                 body['px'] = str(price)
 
-            # 添加额外参数
-            body.update(kwargs)
+            # 添加额外参数，但只保留 OKX API 支持的字段
+            # OKX V5 API 支持的下单字段白名单
+            okx_order_fields = {
+                'instId', 'tdMode', 'side', 'ordType', 'sz', 'px',
+                'posSide', 'reduceOnly', 'tag', 'clOrdId', 'ccy'
+            }
+
+            # 过滤：只保留 OKX API 支持的字段
+            for key in list(kwargs.keys()):
+                if key in okx_order_fields:
+                    body[key] = kwargs[key]
+                # 可选：将 strategy_id 映射到 tag 字段（交易所端可看到策略来源）
+                elif key == 'strategy_id' and isinstance(kwargs[key], str):
+                    # tag 只能是字母数字，长度限制 16 位
+                    tag_value = kwargs[key][:16].replace('-', '').replace('_', '')
+                    if tag_value:  # 非空才添加
+                        body['tag'] = tag_value
+                        logger.debug(f"🏷️  策略 ID {kwargs[key]} 映射到 tag: {tag_value}")
 
             logger.info(f"下单: {body}")
 
