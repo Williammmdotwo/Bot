@@ -1,184 +1,500 @@
-import logging
-import time
-import json
-from typing import Any
+"""
+订单管理器 (Order Manager)
 
-from ..tracking import track
+订单生命周期的大总管，负责下单、撤单和订单状态跟踪。
+
+核心职责：
+- 接收策略下单请求
+- 风控检查
+- 调用 Gateway 发单
+- 追踪订单状态
+- 自动撤单
+
+设计原则：
+- 监听网关的订单推送
+- 维护本地订单状态
+- 提供统一的订单接口
+"""
+
+import logging
+from typing import Dict, Optional
+from dataclasses import dataclass
+from ..core.event_types import Event, EventType
+from ..gateways.base_gateway import RestGateway
 
 logger = logging.getLogger(__name__)
 
 
-async def execute_trade_logic(
-    signal_data: dict,
-    use_demo: bool,
-    stop_loss_pct: float,
-    take_profit_pct: float,
-    ccxt_exchange: Any,
-    postgres_pool: Any,
-    redis_client: Any
-) -> dict:
-    """执行交易的核心逻辑"""
-    try:
-        # 提取信号信息
-        signal = signal_data.get('signal', 'HOLD')
-        symbol = signal_data.get('symbol', 'BTC-USDT')
-        confidence = signal_data.get('confidence', 0.0)
-        decision_id = signal_data.get('decision_id', '')
+@dataclass
+class Order:
+    """订单信息"""
+    order_id: str
+    symbol: str
+    side: str           # "buy" or "sell"
+    order_type: str      # "market", "limit", "ioc"
+    size: float
+    price: float
+    filled_size: float = 0.0
+    status: str = "pending"  # pending, live, filled, cancelled, rejected
+    strategy_id: str = "default"
+    raw: dict = None
 
-        if signal not in ['BUY', 'SELL']:
-            return {
-                "status": "ignored",
-                "order_id": None,
-                "symbol": symbol,
-                "side": signal.lower(),
-                "amount": 0.0,
-                "price": None,
-                "message": f"Signal {signal} is not a trading signal"
-            }
 
-        # === 凭证检查修复 ===
-        # 获取 API Key (兼容各种 ccxt 版本)
-        api_key = getattr(ccxt_exchange, 'apiKey', None)
+class OrderManager:
+    """
+    订单管理器
 
-        # 检查是否应该使用模拟模式
-        should_use_simulation = False
+    负责订单生命周期的管理，包括下单、撤单和状态跟踪。
 
-        # 1. 检查 mock 模式 (测试用)
-        if hasattr(ccxt_exchange, 'mock_mode') and ccxt_exchange.mock_mode:
-            should_use_simulation = True
-            logger.warning("DemoCCXTExchange is in mock mode, using simulation")
+    Example:
+        >>> om = OrderManager(
+        ...     rest_gateway=gateway,
+        ...     event_bus=event_bus
+        ... )
+        >>>
+        >>> # 下单
+        >>> order = await om.submit_order(
+        ...     symbol="BTC-USDT-SWAP",
+        ...     side="buy",
+        ...     order_type="market",
+        ...     size=0.1,
+        ...     strategy_id="vulture"
+        ... )
+        >>>
+        >>> # 撤单
+        >>> await om.cancel_order(order.order_id, order.symbol)
+    """
 
-        # 2. 检查 API Key 是否存在
-        elif not api_key:
-            should_use_simulation = True
-            logger.warning(f"⚠️ No API credentials found in exchange object! (apiKey={api_key}) Using simulation.")
+    def __init__(
+        self,
+        rest_gateway: RestGateway,
+        event_bus=None
+    ):
+        """
+        初始化订单管理器
 
-        if should_use_simulation:
-            logger.info(f"Simulating {signal} trade for {symbol} (confidence: {confidence})")
-            return {
-                "status": "simulated",
-                "order_id": f"demo_{decision_id}_{int(time.time())}",
-                "symbol": symbol,
-                "side": signal.lower(),
-                "amount": signal_data.get('position_size', 0.0),
-                "price": 90000.0 if signal == "BUY" else 91000.0,
-                "message": f"Simulated {signal} order for {symbol}"
-            }
+        Args:
+            rest_gateway (RestGateway): REST API 网关
+            event_bus: 事件总线实例
+        """
+        self._rest_gateway = rest_gateway
+        self._event_bus = event_bus
 
-        # === 真实交易执行 ===
-        logger.info(f"🚀 Executing {signal} trade on OKX ({'Demo' if use_demo else 'Real'}) for {symbol}")
-        side = signal.lower()
+        # 本地订单 {order_id: Order}
+        self._orders: Dict[str, Order] = {}
 
-        # 1. 获取仓位大小
-        raw_amount = signal_data.get('position_size', None)
+        # Symbol -> OrderId 映射（用于快速查找）
+        self._symbol_to_orders: Dict[str, Dict[str, Order]] = {}
 
-        # 向后兼容默认值
-        if raw_amount is None or raw_amount <= 0:
-            raw_amount = 0.001
-            logger.warning(f"No valid position_size provided, using default: {raw_amount}")
+        logger.info("OrderManager 初始化")
 
-        # 2. 精度处理 (注意：这里不能用 await，因为 rest_client 初始化的是同步 ccxt)
+    async def submit_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        size: float,
+        price: Optional[float] = None,
+        strategy_id: str = "default",
+        **kwargs
+    ) -> Optional[Order]:
+        """
+        提交订单
+
+        Args:
+            symbol (str): 交易对
+            side (str): 方向（buy/sell）
+            order_type (str): 订单类型（market/limit/ioc）
+            size (float): 数量
+            price (float): 价格（限价单必需）
+            strategy_id (str): 策略 ID
+            **kwargs: 其他参数
+
+        Returns:
+            Order: 订单对象，失败返回 None
+        """
         try:
-            # 确保 markets 已加载
-            if not ccxt_exchange.markets:
-                logger.info("Loading markets for precision info...")
-                ccxt_exchange.load_markets() # 同步调用，无 await
+            logger.info(
+                f"收到下单请求: {symbol} {side} {order_type} "
+                f"{size:.4f} @ {price if price else 'market'}"
+            )
 
-            # market = ccxt_exchange.market(symbol) # 可选检查
-            amount = ccxt_exchange.amount_to_precision(symbol, raw_amount)
+            # TODO: 风控检查
+            # - 检查策略资金是否充足
+            # - 检查持仓限制
+            # - 检查风险参数
 
-            # 确保 amount 是数值类型
-            if not isinstance(amount, (int, float)):
-                try:
-                    amount = float(amount)
-                except:
-                    logger.warning(f"amount_to_precision returned non-numeric: {amount}")
-                    amount = float(raw_amount)
+            # 调用 Gateway 下单
+            response = await self._rest_gateway.place_order(
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                size=size,
+                price=price,
+                strategy_id=strategy_id,
+                **kwargs
+            )
 
-            logger.info(f"Precision applied: {raw_amount} -> {amount}")
+            if not response:
+                logger.error(f"下单失败: {symbol} {side} {size:.4f}")
+                return None
 
-        except Exception as precision_error:
-            amount = float(raw_amount)
-            logger.warning(f"Precision handling failed ({precision_error}), using raw amount: {amount}")
+            # 提取订单 ID
+            order_id = response.get('ordId')
+            if not order_id:
+                logger.error(f"订单响应缺少 ordId: {response}")
+                return None
 
-        logger.info(f"Creating {signal.upper()} Market Order: {symbol} x {amount}")
+            # 创建本地订单对象
+            order = Order(
+                order_id=order_id,
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                size=size,
+                price=price if price else 0.0,
+                filled_size=float(response.get('fillSz', 0)),
+                status='live',
+                strategy_id=strategy_id,
+                raw=response
+            )
 
-        # 3. 创建市价单 (同步调用，无 await)
-        # 注意：这里调用的是 RESTClient.signer，我们已经给它打过 URL 补丁了
-        order = ccxt_exchange.create_market_order(
-            symbol=symbol,
-            side=side,
-            amount=amount
+            # 保存订单
+            self._orders[order_id] = order
+
+            if symbol not in self._symbol_to_orders:
+                self._symbol_to_orders[symbol] = {}
+            self._symbol_to_orders[symbol][order_id] = order
+
+            logger.info(
+                f"订单提交成功: {order_id} - {symbol} {side} {size:.4f}"
+            )
+
+            # 推送订单事件
+            if self._event_bus:
+                event = Event(
+                    type=EventType.ORDER_SUBMITTED,
+                    data={
+                        'order_id': order_id,
+                        'symbol': symbol,
+                        'side': side,
+                        'order_type': order_type,
+                        'size': size,
+                        'price': price if price else 0.0,
+                        'strategy_id': strategy_id,
+                        'raw': response
+                    },
+                    source="order_manager"
+                )
+                self._event_bus.put_nowait(event)
+
+            return order
+
+        except Exception as e:
+            logger.error(f"下单异常: {e}")
+            return None
+
+    async def cancel_order(
+        self,
+        order_id: str,
+        symbol: str
+    ) -> bool:
+        """
+        撤销订单
+
+        Args:
+            order_id (str): 订单 ID
+            symbol (str): 交易对
+
+        Returns:
+            bool: 撤单是否成功
+        """
+        try:
+            logger.info(f"收到撤单请求: {order_id} - {symbol}")
+
+            # 检查订单是否存在
+            order = self._orders.get(order_id)
+            if not order:
+                logger.error(f"订单不存在: {order_id}")
+                return False
+
+            # 检查订单状态
+            if order.status in ['filled', 'cancelled']:
+                logger.warning(
+                    f"订单已{order.status}，无法撤单: {order_id}"
+                )
+                return False
+
+            # 调用 Gateway 撤单
+            response = await self._rest_gateway.cancel_order(
+                order_id=order_id,
+                symbol=symbol
+            )
+
+            if not response:
+                logger.error(f"撤单失败: {order_id}")
+                return False
+
+            # 更新订单状态
+            order.status = 'cancelled'
+            logger.info(f"订单已撤销: {order_id}")
+
+            # 推送撤单事件
+            if self._event_bus:
+                event = Event(
+                    type=EventType.ORDER_CANCELLED,
+                    data={
+                        'order_id': order_id,
+                        'symbol': symbol,
+                        'raw': response
+                    },
+                    source="order_manager"
+                )
+                self._event_bus.put_nowait(event)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"撤单异常: {e}")
+            return False
+
+    async def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
+        """
+        撤销所有订单
+
+        Args:
+            symbol (str): 交易对（可选），None 表示撤销所有订单
+
+        Returns:
+            int: 成功撤销的订单数量
+        """
+        try:
+            logger.info(f"撤销所有订单: symbol={symbol or 'all'}")
+
+            # 获取待撤销的订单
+            orders_to_cancel = []
+
+            if symbol:
+                # 撤销指定交易对的订单
+                orders = self._symbol_to_orders.get(symbol, {})
+                for order in orders.values():
+                    if order.status in ['pending', 'live']:
+                        orders_to_cancel.append(order)
+            else:
+                # 撤销所有订单
+                for order in self._orders.values():
+                    if order.status in ['pending', 'live']:
+                        orders_to_cancel.append(order)
+
+            # 撤销订单
+            success_count = 0
+            for order in orders_to_cancel:
+                success = await self.cancel_order(order.order_id, order.symbol)
+                if success:
+                    success_count += 1
+
+            logger.info(f"撤销订单完成: 成功 {success_count}/{len(orders_to_cancel)}")
+            return success_count
+
+        except Exception as e:
+            logger.error(f"撤销所有订单异常: {e}")
+            return 0
+
+    def on_order_update(self, event: Event):
+        """
+        监听订单更新事件
+
+        Args:
+            event (Event): ORDER_UPDATE 事件
+        """
+        try:
+            data = event.data
+            order_id = data.get('order_id')
+
+            if not order_id:
+                return
+
+            # 查找订单
+            order = self._orders.get(order_id)
+
+            if not order:
+                # 新订单，创建记录
+                order = Order(
+                    order_id=order_id,
+                    symbol=data.get('symbol'),
+                    side=data.get('side'),
+                    order_type=data.get('order_type'),
+                    size=data.get('size', 0),
+                    price=data.get('price', 0),
+                    filled_size=data.get('filled_size', 0),
+                    status=data.get('status', 'pending'),
+                    raw=data
+                )
+                self._orders[order_id] = order
+
+                symbol = order.symbol
+                if symbol not in self._symbol_to_orders:
+                    self._symbol_to_orders[symbol] = {}
+                self._symbol_to_orders[symbol][order_id] = order
+
+            else:
+                # 更新现有订单
+                order.filled_size = data.get('filled_size', order.filled_size)
+                order.status = data.get('status', order.status)
+                order.raw = data
+
+            logger.debug(
+                f"订单更新: {order_id} - status={order.status}, "
+                f"filled={order.filled_size:.4f}/{order.size:.4f}"
+            )
+
+        except Exception as e:
+            logger.error(f"处理订单更新事件失败: {e}")
+
+    def on_order_filled(self, event: Event):
+        """
+        监听订单成交事件
+
+        Args:
+            event (Event): ORDER_FILLED 事件
+        """
+        try:
+            data = event.data
+            order_id = data.get('order_id')
+
+            if not order_id:
+                return
+
+            # 更新订单状态
+            order = self._orders.get(order_id)
+            if order:
+                order.filled_size = data.get('filled_size', order.filled_size)
+                order.status = 'filled'
+
+                logger.info(
+                    f"订单成交: {order_id} - "
+                    f"{order.symbol} {order.side} {order.filled_size:.4f}"
+                )
+
+                # 清理已完成订单
+                self._cleanup_order(order_id)
+
+        except Exception as e:
+            logger.error(f"处理订单成交事件失败: {e}")
+
+    def on_order_cancelled(self, event: Event):
+        """
+        监听订单取消事件
+
+        Args:
+            event (Event): ORDER_CANCELLED 事件
+        """
+        try:
+            data = event.data
+            order_id = data.get('order_id')
+
+            if not order_id:
+                return
+
+            # 更新订单状态
+            order = self._orders.get(order_id)
+            if order:
+                order.status = 'cancelled'
+                logger.info(f"订单已取消: {order_id}")
+
+                # 清理已完成订单
+                self._cleanup_order(order_id)
+
+        except Exception as e:
+            logger.error(f"处理订单取消事件失败: {e}")
+
+    def _cleanup_order(self, order_id: str):
+        """
+        清理已完成订单
+
+        Args:
+            order_id (str): 订单 ID
+        """
+        order = self._orders.get(order_id)
+        if not order:
+            return
+
+        # 从 symbol 映射中移除
+        symbol_orders = self._symbol_to_orders.get(order.symbol)
+        if symbol_orders and order_id in symbol_orders:
+            del symbol_orders[order_id]
+
+            # 如果没有订单了，清理 symbol
+            if not symbol_orders:
+                del self._symbol_to_orders[order.symbol]
+
+    def get_order(self, order_id: str) -> Optional[Order]:
+        """
+        获取订单
+
+        Args:
+            order_id (str): 订单 ID
+
+        Returns:
+            Order: 订单对象，如果不存在返回 None
+        """
+        return self._orders.get(order_id)
+
+    def get_orders_by_symbol(self, symbol: str) -> Dict[str, Order]:
+        """
+        获取指定交易对的所有订单
+
+        Args:
+            symbol (str): 交易对
+
+        Returns:
+            dict: {order_id: Order}
+        """
+        return self._symbol_to_orders.get(symbol, {}).copy()
+
+    def get_all_orders(self) -> Dict[str, Order]:
+        """
+        获取所有订单
+
+        Returns:
+            dict: {order_id: Order}
+        """
+        return self._orders.copy()
+
+    def get_summary(self) -> dict:
+        """
+        获取订单汇总信息
+
+        Returns:
+            dict: 汇总信息
+        """
+        pending_count = sum(
+            1 for o in self._orders.values()
+            if o.status == 'pending'
+        )
+        live_count = sum(
+            1 for o in self._orders.values()
+            if o.status == 'live'
+        )
+        filled_count = sum(
+            1 for o in self._orders.values()
+            if o.status == 'filled'
+        )
+        cancelled_count = sum(
+            1 for o in self._orders.values()
+            if o.status == 'cancelled'
         )
 
-        logger.info(f"✅ Order Placed! ID: {order['id']}")
-
-        # 4. 数据库记录
-        if postgres_pool:
-            try:
-                insert_sql = """
-                INSERT INTO trades (
-                    decision_id, order_id, symbol, side, order_type, amount, price,
-                    status, reason, created_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()
-                )
-                """
-                # execute 是 asyncpg 的方法，需要 await
-                await postgres_pool.execute(
-                    insert_sql,
-                    decision_id,
-                    order['id'],
-                    symbol,
-                    side,
-                    'market',
-                    amount,
-                    order.get('price', 0),
-                    order.get('status', 'open'),
-                    f'TRADE_SIGNAL_{signal}'
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to log trade to database: {db_error}")
-        else:
-            logger.warning("Database pool not available, skipping log")
-
-        # 5. Redis 事件
-        if redis_client:
-            trade_message = {
-                "event": "trade_executed",
-                "symbol": symbol,
-                "side": side,
-                "order_id": order['id'],
-                "amount": amount,
-                "decision_id": decision_id
-            }
-            try:
-                # publish 是 redis 的方法，需要 await
-                await redis_client.publish('trade_events', json.dumps(trade_message))
-            except Exception as redis_error:
-                logger.error(f"Failed to publish to Redis: {redis_error}")
-
-        # 6. 订单跟踪
-        try:
-            await track(order['id'], ccxt_exchange, postgres_pool)
-        except Exception as track_error:
-            logger.error(f"Failed to start order tracking: {track_error}")
-
         return {
-            "status": "executed",
-            "order_id": order['id'],
-            "symbol": symbol,
-            "side": side,
-            "amount": amount,
-            "price": order.get('price'),
-            "message": f"Successfully executed {signal} order for {symbol}"
+            'total_orders': len(self._orders),
+            'pending_count': pending_count,
+            'live_count': live_count,
+            'filled_count': filled_count,
+            'cancelled_count': cancelled_count
         }
 
-    except Exception as e:
-        logger.error(f"Error executing trade: {e}")
-        return {
-            "status": "failed",
-            "message": f"Trade execution failed: {str(e)}",
-            "symbol": signal_data.get('symbol', 'UNKNOWN'),
-            "side": signal_data.get('signal', 'UNKNOWN').lower()
-        }
+    def reset(self):
+        """重置所有订单状态"""
+        self._orders.clear()
+        self._symbol_to_orders.clear()
+        logger.info("订单管理器已重置")
