@@ -13,6 +13,7 @@
 - 不使用 ccxt，直接使用 aiohttp
 - Session 在 __init__ 中创建，所有请求复用
 - 支持模拟交易模式
+- [v2.0.3] 使用统一的 OkxSigner 工具类，确保与 WebSocket 签名逻辑一致
 """
 
 import json
@@ -20,7 +21,7 @@ import logging
 from typing import Dict, Any, Optional
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, ClientError
-from .auth import generate_headers_with_auto_timestamp
+from .auth import OkxSigner
 
 logger = logging.getLogger(__name__)
 
@@ -115,51 +116,26 @@ class RestClient:
 
         return self.session
 
-    def _get_timestamp(self) -> str:
-        # [修复] 统一使用与 WebSocket 完全相同的时间戳生成方法
-        from datetime import datetime, timezone
-        # 获取当前 UTC 时间
-        dt = datetime.now(timezone.utc)
-        # 使用 strftime 精确控制格式，确保毫秒是 3 位
-        # 格式：2023-01-01T12:00:00.123Z
-        return dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    def _get_headers(self, request_method: str, request_path: str, body: str = "") -> dict:
+        """
+        生成 REST API 请求头（使用统一的 OkxSigner 工具类）
 
-    def _sign(self, timestamp: str, method: str, request_path: str, body: str = "") -> str:
-        # 拼接字符串：timestamp + method + requestPath + body
-        message = f"{timestamp}{method.upper()}{request_path}{body}"
+        [v2.0.3] 改用统一的 OkxSigner 工具类，确保与 WebSocket 签名逻辑一致
+        """
+        # [v2.0.3] 使用统一的 OkxSigner 工具类生成时间戳（ISO 模式）
+        timestamp = OkxSigner.get_timestamp(mode='iso')
 
-        import hmac
-        import hashlib
-        import base64
+        # [v2.0.3] 使用统一的 OkxSigner 工具类生成签名
+        sign = OkxSigner.sign(timestamp, request_method, request_path, body, self.secret_key)
 
         # [新增] 详细的签名调试日志
         logger.debug(
-            f"🔐 [签名计算] "
-            f"timestamp={timestamp}, method={method.upper()}, "
-            f"request_path={request_path}, body={body[:50] if len(body) > 50 else body}, "
-            f"message={message[:100]}... (total={len(message)} chars)"
+            f"🔐 [REST 签名计算 - ISO 模式] "
+            f"timestamp={timestamp}, method={request_method.upper()}, "
+            f"request_path={request_path}, body={body[:50] if len(body) > 50 else body}"
         )
 
-        mac = hmac.new(
-            bytes(self.secret_key, encoding="utf-8"),
-            bytes(message, encoding="utf-8"),
-            digestmod=hashlib.sha256
-        )
-        sign = base64.b64encode(mac.digest()).decode("utf-8")
-
-        logger.debug(f"🔐 [签名结果] sign={sign}")
-
-        return sign
-
-    def _get_headers(self, request_method: str, request_path: str, body: str = "") -> dict:
-        # [修复] 确保这里和 WebSocket 用的是完全一样的逻辑
-        # 时间戳必须与签名字符串中的完全一致
-        timestamp = self._get_timestamp()
-
-        # [关键] x-simulated-trading 不参与签名计算，只放在 Header 里
-        # 签名字符串 = timestamp + method + requestPath + body
-        sign = self._sign(timestamp, request_method, request_path, body)
-
+        # 构造请求头
         headers = {
             "OK-ACCESS-KEY": self.api_key,
             "OK-ACCESS-SIGN": sign,

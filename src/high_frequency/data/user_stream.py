@@ -206,14 +206,15 @@ class UserStream:
         发送登录请求
 
         OKX Private WebSocket 需要先发送登录包进行鉴权。
-        [修复] 必须使用统一的 OkxSigner 工具类，确保时间戳格式一致
+        [v2.0.3] 使用 Unix Epoch 时间戳模式（降维打击），绕过 ISO 格式解析问题
         """
         try:
-            # [修复] 必须使用统一工具类
+            # [v2.0.3] 必须使用统一工具类，并指定 Unix 模式
             from ..utils.auth import OkxSigner
 
-            # 使用统一的时间戳生成方法（包含时间偏移量校准）
-            timestamp = OkxSigner.get_timestamp()
+            # [降维打击] 使用 Unix Epoch 时间戳（字符串格式）
+            # 例如: "1704862800.123"
+            timestamp = OkxSigner.get_timestamp(mode='unix')
 
             # 构造签名字符串: timestamp + 'GET' + '/users/self/verify'
             # 确保 GET 是大写
@@ -221,7 +222,7 @@ class UserStream:
 
             # [新增] 详细的签名调试日志
             logger.debug(
-                f"🔐 [WebSocket 签名计算] "
+                f"🔐 [WebSocket 签名计算 - Unix 模式] "
                 f"timestamp={timestamp}, method=GET, "
                 f"request_path=/users/self/verify, "
                 f"message={message} (total={len(message)} chars)"
@@ -242,7 +243,7 @@ class UserStream:
                 }]
             }
 
-            logger.info(f"发送登录包 (TS={timestamp}): {login_msg}")
+            logger.info(f"发送登录包 (Unix TS={timestamp}): {login_msg}")
 
             # 发送登录包（使用 send_json 而不是 send_str）
             await self._ws.send_json(login_msg)

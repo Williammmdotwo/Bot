@@ -1,21 +1,27 @@
 """
-OKX V5 API 签名工具 (最简绝对正确版)
+OKX V5 API 签名工具 (最简绝对正确版 + Unix 模式)
 
 本模块提供 OKX V5 API 的签名功能，遵循以下原则：
 - 使用 Python 最原始、最不会出错的 UTC 格式化方式
 - 抛弃所有花哨的写法，确保绝对正确
 - 支持时间校准功能
+- [新增] 支持 Unix Epoch 时间戳模式（用于 WebSocket 降维打击）
 
 OKX V5 API 签名算法：
 1. 构造签名消息：timestamp + method + requestPath + body
 2. 使用 SecretKey 进行 HMAC-SHA256 签名
 3. Base64 编码签名结果
+
+时间戳模式：
+- iso: ISO 8601 格式（用于 REST API），如 2026-01-10T12:00:00.000Z
+- unix: Unix Epoch 秒数（用于 WebSocket），如 1704862800.123
 """
 
 import hmac
 import base64
 import hashlib
 import datetime
+import time
 
 # 全局时间偏移量（秒）
 _TIME_OFFSET = 0.0
@@ -49,19 +55,42 @@ class OkxSigner:
         return _TIME_OFFSET
 
     @staticmethod
-    def get_timestamp():
+    def get_timestamp(mode: str = 'iso'):
         """
-        获取 ISO 8601 格式时间戳 (UTC)
-        格式: YYYY-MM-DDThh:mm:ss.sssZ
+        获取时间戳（支持 ISO 或 Unix 模式）
+
+        Args:
+            mode (str): 时间戳模式
+                - 'iso': ISO 8601 格式（用于 REST API），默认
+                - 'unix': Unix Epoch 秒数（用于 WebSocket 推荐）
 
         Returns:
-            str: ISO 8601 格式的时间戳
-        """
-        # 使用 standard UTC
-        dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=_TIME_OFFSET)
+            str: 时间戳字符串
+                - ISO 模式: YYYY-MM-DDThh:mm:ss.sssZ
+                - Unix 模式: 秒数（字符串格式），如 "1704862800.123"
 
-        # 强制格式化，确保毫秒为3位
-        return dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+        Example:
+            >>> # REST API 使用 ISO 格式
+            >>> ts_iso = OkxSigner.get_timestamp(mode='iso')
+            >>> print(ts_iso)
+            '2026-01-10T12:00:00.000Z'
+
+            >>> # WebSocket 使用 Unix 格式（降维打击）
+            >>> ts_unix = OkxSigner.get_timestamp(mode='unix')
+            >>> print(ts_unix)
+            '1704862800.123'
+        """
+        # 获取校准后的时间（Unix 秒数，带毫秒）
+        server_time = time.time() + _TIME_OFFSET
+
+        if mode == 'unix':
+            # WebSocket 必杀技：直接用 Unix 秒数（字符串格式）
+            # 保留小数点后 3 位（毫秒精度）
+            return f"{server_time:.3f}"
+        else:
+            # REST API 继续用调试通了 ISO 格式
+            dt = datetime.datetime.fromtimestamp(server_time, datetime.timezone.utc)
+            return dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
     @staticmethod
     def sign(timestamp, method, request_path, body, secret_key):
@@ -108,9 +137,9 @@ def get_time_offset() -> float:
     return OkxSigner.get_time_offset()
 
 
-def get_timestamp() -> str:
-    """获取 ISO 8601 格式的时间戳（向后兼容）"""
-    return OkxSigner.get_timestamp()
+def get_timestamp(mode: str = 'iso') -> str:
+    """获取时间戳（向后兼容，支持模式切换）"""
+    return OkxSigner.get_timestamp(mode=mode)
 
 
 def _sign_message(timestamp: str, method: str, request_path: str, body: str, secret_key: str) -> str:
