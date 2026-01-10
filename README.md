@@ -8,7 +8,7 @@ Athena 是一个双模架构的加密货币量化交易系统，专为实盘环�
 
 ## 📅 v2.0.3 关键更新与优化 (Unix Strike)
 
-**最后更新时间**: 2026-01-10
+**最后更新时间**: 2026-01-11
 **重大改进**: WebSocket 实施"降维打击"，使用 Unix Epoch 时间戳彻底解决鉴权问题
 
 ### 🚀 核心改进 (Core Improvements)
@@ -40,12 +40,76 @@ Athena 是一个双模架构的加密货币量化交易系统，专为实盘环�
 - 向后兼容，默认模式为 ISO
 **影响**: ✅ 灵活适配不同 API 要求，提升系统兼容性
 
-#### 4. ✅ 诊断工具升级
+#### 4. ✅ aiohttp URL 传递修复 (CRITICAL)
+**问题**: 服务器运行时报 `AssertionError`，REST API 无法工作
+**原因**: ClientSession 设置了 `base_url`，但请求时传递完整 URL（相对路径 + 绝对路径冲突）
+**解决**:
+- `post_signed()` 和 `get_signed()` 改用相对路径（如 `/api/v5/account/balance`）
+- aiohttp 自动使用 `base_url` 拼接完整 URL
+- 避免 `url.is_absolute()` 断言失败
+**影响**: ✅ REST API 请求恢复正常，查询余额、设置杠杆等功能全部可用
+
+#### 5. ✅ REST API 错误日志增强
+**新增**: 详细的错误诊断输出
+- 显示完整 API 响应（包括错误码、错误消息）
+- 显示请求上下文（URL、模拟盘模式、请求头）
+- 支持多种错误字段格式（`msg`、`sMsg`、`message`）
+**影响**: ✅ 快速定位 API 错误原因，无需盲目猜测
+
+#### 6. ✅ WebSocket 订阅误判修复
+**问题**: 频道订阅成功被误判为失败
+**原因**: OKX 的订阅成功包不包含 `code` 字段
+**解决**:
+- `event: 'subscribe'` 本身就是成功信号
+- 不再检查 `code` 字段
+- 打印完整订阅响应
+**影响**: ✅ 订阅逻辑正确，不再误判订阅失败
+
+#### 7. ✅ 模拟盘 Header 验证
+**验证**: 确保 `x-simulated-trading: 1` 正确添加
+- 代码链路：`main_hft.py` → `OrderExecutor` → `RestClient` → `_get_headers()`
+- Header 在签名后添加，不参与签名计算
+- 支持模拟盘和实盘环境切换
+**影响**: ✅ 模拟盘功能完全可用，实盘和模拟盘无缝切换
+
+#### 8. ✅ 诊断工具升级
 **新增**: `debug_auth.py` 测试 Unix 模式
 - 测试 1-4: 保留原有 ISO 模式测试（用于对比）
 - 测试 5: **新增 Unix 模式测试**（v2.0.3 必杀技）
 - 详细输出 Unix 时间戳和签名信息
 **影响**: ✅ 快速验证 Unix 模式是否生效
+
+### 📊 实测验证 (2026-01-11)
+
+**测试环境**: 服务器（Ubuntu 22.04, Python 3.10）
+**测试结果**: ✅ **完全成功**
+
+**验证项目**:
+1. ✅ 时间同步检查通过（偏差 0.13 秒）
+2. ✅ 模拟交易环境正确识别
+3. ✅ HFT 配置加载成功（17 个参数）
+4. ✅ RestClient 初始化成功（use_demo=True）
+5. ✅ API 查询余额成功（89363.21 USDT）
+6. ✅ 杠杆设置成功（SOL-USDT-SWAP → 10x）
+7. ✅ Public WebSocket 连接成功
+8. ✅ Private WebSocket 连接成功（模拟盘 URL）
+9. ✅ WebSocket 登录成功（Unix Epoch 模式）
+10. ✅ 频道订阅成功（positions、orders）
+11. ✅ HUD 状态正常显示（价格、EMA、资金流、余额、战绩）
+12. ✅ 自动重连机制正常（连接断开后自动重连）
+13. ✅ 优雅退出成功（撤单、断开连接、清理资源）
+
+**日志关键点**:
+```
+✅ 时间同步正常（偏差 0.13 秒）
+✅ 模拟盘 Header 已添加: x-simulated-trading = 1
+✅ 登录成功（Unix TS=1768063737.982）
+✅ 频道订阅成功: positions | orders
+✅ 杠杆设置成功: SOL-USDT-SWAP -> 10x (cross)
+📊 市场数据正常流入（SOL-USDT-SWAP）
+🎯 EMA 计算正常（快/慢）
+🛡️ 风控正常（余额监控、冷却机制）
+```
 
 ### 📝 代码变更清单
 
