@@ -117,6 +117,9 @@ class OkxPublicWsGateway(WebSocketGateway):
 
             logger.info(f"WebSocket 连接成功: {self.symbol}")
 
+            # 标记为运行中（必须在创建消息循环之前）
+            self._is_running = True
+
             # 订阅 trades 频道
             await self.subscribe(['trades'])
 
@@ -261,11 +264,8 @@ class OkxPublicWsGateway(WebSocketGateway):
             # 处理订阅响应
             if "event" in data:
                 if data["event"] == "subscribe":
-                    code = data.get("code")
-                    if code == "0":
-                        logger.info(f"订阅成功: {data.get('arg', {})}")
-                    else:
-                        logger.error(f"订阅失败: {data}")
+                    # OKX 订阅成功响应没有 code 字段
+                    logger.info(f"订阅成功: {data.get('arg', {})}")
                 elif data["event"] == "error":
                     logger.error(f"OKX API 错误: {data}")
                 return
@@ -325,6 +325,7 @@ class OkxPublicWsGateway(WebSocketGateway):
 
             # 推送 TICK 事件到事件总线
             if self._event_bus:
+                from ...core.event_types import Event
                 event = Event(
                     type=EventType.TICK,
                     data={
@@ -337,7 +338,7 @@ class OkxPublicWsGateway(WebSocketGateway):
                     },
                     source="okx_ws_public"
                 )
-                self.publish_event(event)
+                await self.publish_event(event)
 
         except Exception as e:
             logger.error(f"交易处理异常: {e}, 原始数据: {trade_item}", exc_info=True)
@@ -420,7 +421,7 @@ class OkxPublicWsGateway(WebSocketGateway):
                 },
                 source="okx_ws_public"
             )
-            self.publish_event(event)
+            await self.publish_event(event)
 
     async def on_close(self):
         """连接关闭回调"""
