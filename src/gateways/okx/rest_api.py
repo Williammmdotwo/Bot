@@ -389,8 +389,7 @@ class OkxRestGateway(RestGateway):
                 'tdMode': 'cross',
                 'side': side,
                 'ordType': ord_type_upper,
-                'sz': str(size_int),
-                'posSide': 'net'  # 单向持仓模式必须显式指定
+                'sz': str(size_int)
             }
 
             # limit/ioc 订单需要价格
@@ -409,10 +408,10 @@ class OkxRestGateway(RestGateway):
                 logger.debug(f"🏷️  生成 clOrdId: {body['clOrdId']} (strategy_id={strategy_id})")
 
             # 添加额外参数，但只保留 OKX API 支持的字段
-            # OKX V5 API 支持的下单字段白名单
+            # OKX V5 API 支持的下单字段白名单（不包含 posSide）
             okx_order_fields = {
                 'instId', 'tdMode', 'side', 'ordType', 'sz', 'px',
-                'posSide', 'reduceOnly', 'clOrdId', 'ccy'
+                'reduceOnly', 'clOrdId', 'ccy'
             }
 
             # 过滤：只保留 OKX API 支持的字段
@@ -591,6 +590,47 @@ class OkxRestGateway(RestGateway):
         except Exception as e:
             logger.error(f"获取 K线失败: {e}")
             return []
+
+    async def set_leverage(
+        self,
+        symbol: str,
+        leverage: int,
+        mgn_mode: str = "cross"
+    ) -> Dict[str, Any]:
+        """
+        设置杠杆
+
+        Args:
+            symbol (str): 交易对
+            leverage (int): 杠杆倍数
+            mgn_mode (str): 保证金模式（cross/isolated）
+
+        Returns:
+            dict: 设置结果
+        """
+        try:
+            body = {
+                'instId': symbol,
+                'lever': str(leverage),
+                'mgnMode': mgn_mode
+            }
+
+            response = await self._request(
+                "POST",
+                "/api/v5/account/set-leverage",
+                data=body
+            )
+
+            data_list = response.get('data', [])
+            if data_list:
+                logger.info(f"✅ 杠杆已设置: {symbol} {leverage}x ({mgn_mode})")
+                return data_list[0]
+
+            return {}
+
+        except Exception as e:
+            logger.error(f"设置杠杆失败: {e}")
+            raise
 
     async def close(self):
         """关闭网关"""

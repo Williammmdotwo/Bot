@@ -317,16 +317,31 @@ class Engine:
         else:
             logger.info("✅ Private WebSocket 已连接")
 
-        # 2. 启动 Strategies
+        # 2. 设置杠杆（为所有策略的交易对设置 10x 杠杆）
+        logger.info("设置杠杆...")
+        # 获取所有策略使用的交易对
+        symbols = set()
+        for strategy in self._strategies:
+            if hasattr(strategy, 'symbol'):
+                symbols.add(strategy.symbol)
+
+        # 设置杠杆
+        for symbol in symbols:
+            try:
+                await self._rest_gateway.set_leverage(symbol, leverage=10)
+            except Exception as e:
+                logger.warning(f"设置杠杆失败 {symbol}: {e}（继续运行）")
+
+        # 3. 启动 Strategies
         logger.info("启动 Strategies...")
         for strategy in self._strategies:
             await strategy.start()
         logger.info("✅ 所有策略已启动")
 
-        # 3. 设置信号处理
+        # 4. 设置信号处理
         self._setup_signal_handlers()
 
-        # 4. 进入主循环
+        # 5. 进入主循环
         self._running = True
         logger.info("✅ 系统启动完成，进入主循环")
 
@@ -380,7 +395,7 @@ class Engine:
             await self._rest_gateway.disconnect()
             logger.info("✅ REST Gateway 已断开")
 
-        # 3. 停止 EventBus
+        # 4. 停止 EventBus
         if self._event_bus:
             await self._event_bus.stop()
             logger.info("✅ EventBus 已停止")
