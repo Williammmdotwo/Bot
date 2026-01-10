@@ -374,12 +374,21 @@ class OkxRestGateway(RestGateway):
         """
         try:
             # 构造订单数据
+            # 1. 确保 ordType 大写（OKX API 需要 MARKET/LIMIT）
+            ord_type_upper = order_type.upper() if order_type else 'MARKET'
+
+            # 2. 确保 sz 是整数（SWAP/FUTURES 合约必须整数）
+            size_int = int(size) if size is not None else 1
+            if size_int < 1:
+                logger.warning(f"⚠️  size {size} 小于 1，强制设为 1")
+                size_int = 1
+
             body = {
                 'instId': symbol,
                 'tdMode': 'cross',
                 'side': side,
-                'ordType': order_type.upper(),
-                'sz': str(size)
+                'ordType': ord_type_upper,
+                'sz': str(size_int)
             }
 
             # limit/ioc 订单需要价格

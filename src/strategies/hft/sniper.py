@@ -162,12 +162,22 @@ class SniperStrategy(BaseStrategy):
                 )
 
                 # 7. 跟随交易
+                # 强制取整：OKX SWAP 合约的 sz 必须是整数
+                position_size_int = int(self.config.position_size)
+                if position_size_int < 1:
+                    logger.warning(
+                        f"⚠️  position_size {self.config.position_size} 小于 1，"
+                        f"强制设为 1"
+                    )
+                    position_size_int = 1
+
                 if side == 'buy':
                     # 大单买入 → 我们也买入
                     await self.buy(
                         symbol=self.symbol,
-                        size=self.config.position_size,
-                        order_type=self.config.order_type
+                        size=position_size_int,
+                        order_type=self.config.order_type,
+                        price=price  # 传入价格，用于资金检查
                     )
                     self._increment_signals()
 
@@ -175,8 +185,9 @@ class SniperStrategy(BaseStrategy):
                     # 大单卖出 → 我们也卖出
                     await self.sell(
                         symbol=self.symbol,
-                        size=self.config.position_size,
-                        order_type=self.config.order_type
+                        size=position_size_int,
+                        order_type=self.config.order_type,
+                        price=price  # 传入价格，用于资金检查
                     )
                     self._increment_signals()
 
