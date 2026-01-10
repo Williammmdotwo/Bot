@@ -174,7 +174,7 @@ class Engine:
         # 6. 加载 Strategies
         strategies_config = self.config.get('strategies', [])
         for strategy_config in strategies_config:
-            strategy = self._load_strategy(strategy_config)
+            strategy = await self._load_strategy(strategy_config)
             if strategy:
                 self._strategies.append(strategy)
         logger.info(f"✅ 已加载 {len(self._strategies)} 个策略")
