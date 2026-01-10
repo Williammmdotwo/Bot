@@ -26,6 +26,7 @@ from .event_types import Event, EventType
 from ..oms.capital_commander import CapitalCommander
 from ..oms.position_manager import PositionManager
 from ..oms.order_manager import OrderManager
+from ..risk.pre_trade import PreTradeCheck
 
 from ..gateways.okx.rest_api import OkxRestGateway
 from ..gateways.okx.ws_public_gateway import OkxPublicWsGateway
@@ -149,14 +150,28 @@ class Engine:
         )
         logger.info("✅ Private WebSocket 已创建")
 
-        # 4. 创建 OrderManager（需要注入 REST Gateway）
+        # 4. 创建风控检查器
+        risk_config = self.config.get('risk', {})
+        self._pre_trade_check = PreTradeCheck(
+            max_order_amount=risk_config.get('max_order_amount', 2000.0),
+            max_frequency=risk_config.get('max_frequency', 5),
+            frequency_window=risk_config.get('frequency_window', 1.0)
+        )
+        logger.info(
+            f"✅ PreTradeCheck 已初始化: "
+            f"max_amount={risk_config.get('max_order_amount', 2000.0)} USDT, "
+            f"max_frequency={risk_config.get('max_frequency', 5)}/1s"
+        )
+
+        # 5. 创建 OrderManager（注入风控检查器）
         self._order_manager = OrderManager(
             rest_gateway=self._rest_gateway,
-            event_bus=self._event_bus
+            event_bus=self._event_bus,
+            pre_trade_check=self._pre_trade_check
         )
-        logger.info("✅ OrderManager 已初始化")
+        logger.info("✅ OrderManager 已初始化（已集成风控）")
 
-        # 5. 加载 Strategies
+        # 6. 加载 Strategies
         strategies_config = self.config.get('strategies', [])
         for strategy_config in strategies_config:
             strategy = self._load_strategy(strategy_config)
@@ -164,11 +179,11 @@ class Engine:
                 self._strategies.append(strategy)
         logger.info(f"✅ 已加载 {len(self._strategies)} 个策略")
 
-        # 6. 注册事件处理器
+        # 7. 注册事件处理器
         await self._register_event_handlers()
         logger.info("✅ 事件处理器已注册")
 
-        # 7. 分配策略资金
+        # 8. 分配策略资金
         await self._allocate_strategy_capitals()
         logger.info("✅ 策略资金已分配")
 
@@ -193,12 +208,16 @@ class Engine:
                 from ..strategies.hft.vulture import VultureStrategy
                 strategy = VultureStrategy(
                     event_bus=self._event_bus,
+                    order_manager=self._order_manager,
+                    capital_commander=self._capital_commander,
                     **params
                 )
             elif strategy_type == 'sniper':
                 from ..strategies.hft.sniper import SniperStrategy
                 strategy = SniperStrategy(
                     event_bus=self._event_bus,
+                    order_manager=self._order_manager,
+                    capital_commander=self._capital_commander,
                     **params
                 )
             else:
@@ -436,14 +455,22 @@ def create_default_config() -> dict:
         'private_ws': {
             'use_demo': True
         },
+        'risk': {
+            'max_order_amount': 2000.0,
+            'max_frequency': 5,
+            'frequency_window': 1.0
+        },
         'strategies': [
             {
-                'id': 'vulture',
-                'type': 'vulture',
+                'id': 'sniper',
+                'type': 'sniper',
                 'capital': 2000.0,
                 'params': {
                     'symbol': 'BTC-USDT-SWAP',
-                    'position_size': 0.1
+                    'position_size': 0.1,
+                    'cooldown_seconds': 5.0,
+                    'order_type': 'market',
+                    'min_big_order_usdt': 5000.0
                 }
             }
         ]

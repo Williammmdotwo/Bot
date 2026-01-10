@@ -17,10 +17,12 @@
 """
 
 import logging
+import time
 from typing import Dict, Optional
 from dataclasses import dataclass
 from ..core.event_types import Event, EventType
 from ..gateways.base_gateway import RestGateway
+from ..risk.pre_trade import PreTradeCheck
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,8 @@ class OrderManager:
     def __init__(
         self,
         rest_gateway: RestGateway,
-        event_bus=None
+        event_bus=None,
+        pre_trade_check: Optional[PreTradeCheck] = None
     ):
         """
         初始化订单管理器
@@ -76,9 +79,11 @@ class OrderManager:
         Args:
             rest_gateway (RestGateway): REST API 网关
             event_bus: 事件总线实例
+            pre_trade_check (PreTradeCheck): 交易前检查器
         """
         self._rest_gateway = rest_gateway
         self._event_bus = event_bus
+        self._pre_trade_check = pre_trade_check or PreTradeCheck()
 
         # 本地订单 {order_id: Order}
         self._orders: Dict[str, Order] = {}
@@ -119,7 +124,23 @@ class OrderManager:
                 f"{size:.4f} @ {price if price else 'market'}"
             )
 
-            # TODO: 风控检查
+            # 1. 风控检查
+            amount_usdt = price * size if price else 0
+            if amount_usdt > 0:
+                risk_passed, risk_reason = self._pre_trade_check.check({
+                    'symbol': symbol,
+                    'side': side,
+                    'size': size,
+                    'price': price if price else 0,
+                    'amount_usdt': amount_usdt,
+                    'order_id': f"{symbol}_{time.time()}"
+                })
+
+                if not risk_passed:
+                    logger.error(f"风控拒绝下单: {risk_reason}")
+                    return None
+
+            # 2. 其他风控检查（待实现）
             # - 检查策略资金是否充足
             # - 检查持仓限制
             # - 检查风险参数

@@ -1,208 +1,237 @@
 """
-狙击手策略 (Sniper Strategy)
+HFT 狙击策略 (HFT Sniper Strategy)
 
-大单追涨策略：监控微观资金流，在突破阻力位时追涨。
+大单狙击策略：检测大单并跟随交易。
 
-触发条件：
-1. 最近 3 秒内交易笔数 >= min_trades（默认 20）
-2. 最近 3 秒内净流量（买入-卖出）>= min_net_volume（默认 10000 USDT）
-3. PRODUCTION 模式：price > resistance（严格突破）
-   DEV 模式：price > resistance * 0.9995（放宽阻力位 0.05%）
+策略逻辑：
+- 监听 TICK 事件
+- 检测单笔交易金额超过阈值（默认 5000 USDT）
+- 买入方向跟随大单
+- 设置冷却时间（默认 5 秒）防止重复触发
 
-动作：下达 IOC 买单（模拟市价单，带滑点）
+风险控制：
+- 冷却机制：5 秒内不重复触发
+- 资金检查：确保资金充足
 """
 
 import logging
 import time
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any
+from dataclasses import dataclass
+
+from ...core.event_types import Event
+from ...core.event_bus import EventBus
+from ...oms.order_manager import OrderManager
+from ...oms.capital_commander import CapitalCommander
 from ..base_strategy import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class SniperConfig:
+    """狙击策略配置"""
+    symbol: str = "BTC-USDT-SWAP"
+    position_size: float = 0.1      # 每次下单数量
+    cooldown_seconds: float = 5.0   # 冷却时间（秒）
+    order_type: str = "market"      # 订单类型
+    min_big_order_usdt: float = 5000.0  # 大单阈值（USDT）
+
+
 class SniperStrategy(BaseStrategy):
     """
-    狙击手策略 (Sniper)
+    HFT 狙击策略
 
-    监控大单资金流，在突破阻力位时追涨。
-
-    Attributes:
-        flow_window (float): 流量分析窗口（秒），默认 3.0
-        min_trades (int): 最小交易笔数，默认 20
-        min_net_volume (float): 最小净流量（USDT），默认 10000.0
-        slippage_pct (float): 滑点百分比（默认 0.002 = 0.2%）
-        resistance (float): 阻力位
+    检测大单并跟随交易。
 
     Example:
-        >>> strategy = SniperStrategy(
+        >>> sniper = SniperStrategy(
+        ...     event_bus=event_bus,
+        ...     order_manager=order_manager,
+        ...     capital_commander=capital_commander,
         ...     symbol="BTC-USDT-SWAP",
-        ...     mode="PRODUCTION"
+        ...     position_size=0.1
         ... )
-        >>> await strategy.on_tick(price=50000.0, timestamp=1234567890000)
+        >>> await sniper.start()
     """
 
     def __init__(
         self,
-        symbol: str,
-        mode: str = "PRODUCTION",
-        flow_window: float = 3.0,
-        min_trades: int = 20,
-        min_net_volume: float = 10000.0,
-        slippage_pct: float = 0.002
+        event_bus: EventBus,
+        order_manager: OrderManager,
+        capital_commander: CapitalCommander,
+        symbol: str = "BTC-USDT-SWAP",
+        position_size: float = 0.1,
+        cooldown_seconds: float = 5.0,
+        order_type: str = "market",
+        min_big_order_usdt: float = 5000.0,
+        mode: str = "PRODUCTION"
     ):
         """
-        初始化狙击手策略
+        初始化狙击策略
 
         Args:
+            event_bus (EventBus): 事件总线
+            order_manager (OrderManager): 订单管理器
+            capital_commander (CapitalCommander): 资金指挥官
             symbol (str): 交易对
-            mode (str): 策略模式（PRODUCTION/DEV）
-            flow_window (float): 流量分析窗口（秒），默认 3.0
-            min_trades (int): 最小交易笔数，默认 20
-            min_net_volume (float): 最小净流量（USDT），默认 10000.0
-            slippage_pct (float): 滑点百分比（默认 0.002 = 0.2%）
+            position_size (float): 每次下单数量
+            cooldown_seconds (float): 冷却时间（秒）
+            order_type (str): 订单类型
+            min_big_order_usdt (float): 大单阈值（USDT）
+            mode (str): 策略模式
         """
-        super().__init__(symbol, mode)
-
-        self.flow_window = flow_window
-        self.min_trades = min_trades
-        self.min_net_volume = min_net_volume
-        self.slippage_pct = slippage_pct
-
-        # 根据模式设置价格条件
-        if self.mode == "DEV":
-            self.price_condition_factor = 0.9995  # 放宽 0.05%
-            self.mode_suffix = " [DEV MODE]"
-        else:
-            self.price_condition_factor = 1.0  # 严格
-            self.mode_suffix = ""
-
-        # 阻力位
-        self.resistance: float = 0.0
-        self._price_history: List[float] = []
-        self._resistance_window = 50  # 阻力位窗口大小
-
-        # 统计信息
-        self.trigger_count = 0
-        self.trade_executions = 0
-
-        # 冷却时间
-        self.last_trigger_time = 0.0
-
-        logger.info(
-            f"狙击手策略初始化: symbol={symbol}, mode={mode}, "
-            f"flow_window={flow_window}, min_trades={min_trades}, "
-            f"min_net_volume={min_net_volume}"
+        super().__init__(
+            event_bus=event_bus,
+            order_manager=order_manager,
+            capital_commander=capital_commander,
+            symbol=symbol,
+            mode=mode
         )
 
-    def _update_resistance(self, price: float):
-        """
-        更新阻力位
+        # 策略配置
+        self.config = SniperConfig(
+            symbol=symbol,
+            position_size=position_size,
+            cooldown_seconds=cooldown_seconds,
+            order_type=order_type,
+            min_big_order_usdt=min_big_order_usdt
+        )
 
-        阻力位定义为最近 50 笔交易中的最高价。
+        # 策略状态
+        self._big_orders_detected = 0
+        self._big_order_amount_total = 0.0
+
+        logger.info(
+            f"狙击策略配置: symbol={symbol}, "
+            f"position_size={position_size}, "
+            f"cooldown={cooldown_seconds}s, "
+            f"min_big_order={min_big_order_usdt} USDT"
+        )
+
+    async def on_tick(self, event: Event):
+        """
+        处理 Tick 事件（策略核心逻辑）
+
+        检测大单并跟随交易。
 
         Args:
-            price (float): 当前价格
+            event (Event): TICK 事件
+                data: {
+                    'symbol': str,
+                    'price': float,
+                    'size': float,
+                    'side': str,
+                    'usdt_value': float,
+                    'timestamp': int
+                }
         """
-        # 添加价格到历史记录
-        self._price_history.append(price)
+        try:
+            # 1. 检查策略是否启用
+            if not self.is_enabled():
+                return
 
-        # 只保留最近 N 个价格
-        if len(self._price_history) > self._resistance_window:
-            self._price_history.pop(0)
+            # 2. 检查冷却时间
+            current_time = time.time()
+            if current_time - self._last_trade_time < self.config.cooldown_seconds:
+                return
 
-        # 更新阻力位（最大值）
-        self.resistance = max(self._price_history)
+            # 3. 解析 Tick 数据
+            data = event.data
+            symbol = data.get('symbol')
+            price = data.get('price', 0)
+            size = data.get('size', 0)
+            side = data.get('side', '').lower()
+            usdt_value = data.get('usdt_value', 0)
 
-        logger.debug(f"更新阻力位: {self.resistance}")
+            # 4. 检查交易对是否匹配
+            if symbol != self.symbol:
+                return
 
-    async def on_tick(self, price: float, size: float = 0.0, side: str = "", timestamp: int = 0):
-        """
-        处理 Tick 数据
+            # 5. 增加 Tick 计数
+            self._increment_ticks()
 
-        Args:
-            price (float): 当前价格
-            size (float): 交易数量
-            side (str): 交易方向
-            timestamp (int): 时间戳（毫秒）
-        """
-        if not self.is_enabled():
-            return
+            # 6. 检测大单
+            if self._is_big_order(usdt_value):
+                self._big_orders_detected += 1
+                self._big_order_amount_total += usdt_value
 
-        # 更新阻力位
-        self._update_resistance(price)
+                logger.info(
+                    f"🎯 检测到大单: {symbol} {side.upper()} "
+                    f"{size:.4f} @ {price:.2f} = {usdt_value:.2f} USDT"
+                )
 
-        # 检查触发条件
-        await self._check_and_execute(price, timestamp)
+                # 7. 跟随交易
+                if side == 'buy':
+                    # 大单买入 → 我们也买入
+                    await self.buy(
+                        symbol=self.symbol,
+                        size=self.config.position_size,
+                        order_type=self.config.order_type
+                    )
+                    self._increment_signals()
 
-    async def _check_and_execute(self, price: float, timestamp: int):
-        """
-        检查并执行交易
+                elif side == 'sell':
+                    # 大单卖出 → 我们也卖出
+                    await self.sell(
+                        symbol=self.symbol,
+                        size=self.config.position_size,
+                        order_type=self.config.order_type
+                    )
+                    self._increment_signals()
 
-        Args:
-            price (float): 当前价格
-            timestamp (int): 当前时间戳（毫秒）
-        """
-        # 检查冷却时间
-        current_time = time.time()
-        if current_time - self.last_trigger_time < 5.0:  # 冷却 5 秒
-            logger.debug(f"狙击手策略冷却中，跳过")
-            return
-
-        # TODO: 这里需要从市场状态获取流量数据
-        # 暂时使用占位符，后续需要从事件总线订阅市场数据
-        net_volume = 0.0
-        trade_count = 0
-        intensity = 0.0
-
-        # 根据策略模式计算价格条件
-        price_condition = price > (self.resistance * self.price_condition_factor)
-
-        # 调试日志
-        if net_volume >= self.min_net_volume:
-            logger.debug(
-                f"👀 发现大单! 净量:{net_volume:.0f} | 价格:{price:.2f} vs 阻力:{self.resistance * self.price_condition_factor:.4f} | "
-                f"满足价格条件? {price_condition} | 交易笔数:{trade_count}"
-            )
-
-        # 检查触发条件
-        if (trade_count >= self.min_trades and
-            net_volume >= self.min_net_volume and
-            price_condition):
-
-            self.trigger_count += 1
-            self.last_trigger_time = current_time
-
-            logger.info(
-                f"狙击手策略触发{self.mode_suffix}: trade_count={trade_count}, "
-                f"net_volume={net_volume:.2f}, intensity={intensity:.2f}, "
-                f"price={price}, resistance={self.resistance}, "
-                f"trigger_count={self.trigger_count}"
-            )
-
-            # 生成买入信号
-            signal = {
-                'strategy': 'sniper',
-                'signal': 'BUY',
-                'symbol': self.symbol,
-                'price': price,
-                'type': 'ioc',  # IOC 订单
-                'slippage_pct': self.slippage_pct,
-                'timestamp': int(time.time() * 1000)
-            }
-
-            await self.on_signal(signal)
+        except Exception as e:
+            logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
 
     async def on_signal(self, signal: Dict[str, Any]):
         """
-        处理策略信号
+        处理策略信号（狙击策略不使用此方法）
 
         Args:
             signal (dict): 策略信号
         """
-        if signal.get('signal') == 'BUY':
-            self.trade_executions += 1
-            logger.info(f"狙击手策略信号: {signal}")
-        # 实际的订单执行由 OMS 处理
+        pass
+
+    def _is_big_order(self, usdt_value: float) -> bool:
+        """
+        判断是否为大单
+
+        Args:
+            usdt_value (float): 交易金额（USDT）
+
+        Returns:
+            bool: 是否为大单
+        """
+        return usdt_value >= self.config.min_big_order_usdt
+
+    def update_config(self, **kwargs):
+        """
+        更新策略配置
+
+        Args:
+            **kwargs: 配置参数
+                - position_size: float
+                - cooldown_seconds: float
+                - order_type: str
+                - min_big_order_usdt: float
+        """
+        if 'position_size' in kwargs:
+            self.config.position_size = kwargs['position_size']
+            logger.info(f"position_size 更新为 {kwargs['position_size']:.4f}")
+
+        if 'cooldown_seconds' in kwargs:
+            self.config.cooldown_seconds = kwargs['cooldown_seconds']
+            logger.info(f"cooldown_seconds 更新为 {kwargs['cooldown_seconds']}s")
+
+        if 'order_type' in kwargs:
+            self.config.order_type = kwargs['order_type']
+            logger.info(f"order_type 更新为 {kwargs['order_type']}")
+
+        if 'min_big_order_usdt' in kwargs:
+            self.config.min_big_order_usdt = kwargs['min_big_order_usdt']
+            logger.info(
+                f"min_big_order_usdt 更新为 {kwargs['min_big_order_usdt']:.2f} USDT"
+            )
 
     def get_statistics(self) -> Dict[str, Any]:
         """
@@ -211,27 +240,28 @@ class SniperStrategy(BaseStrategy):
         Returns:
             dict: 统计数据
         """
-        stats = super().get_statistics()
-        stats.update({
-            'flow_window': self.flow_window,
-            'min_trades': self.min_trades,
-            'min_net_volume': self.min_net_volume,
-            'trigger_count': self.trigger_count,
-            'trade_executions': self.trade_executions,
-            'resistance': self.resistance
+        base_stats = super().get_statistics()
+
+        base_stats.update({
+            'big_orders_detected': self._big_orders_detected,
+            'big_order_amount_total': self._big_order_amount_total,
+            'avg_big_order_amount': (
+                self._big_order_amount_total / self._big_orders_detected
+                if self._big_orders_detected > 0 else 0.0
+            ),
+            'config': {
+                'position_size': self.config.position_size,
+                'cooldown_seconds': self.config.cooldown_seconds,
+                'order_type': self.config.order_type,
+                'min_big_order_usdt': self.config.min_big_order_usdt
+            }
         })
-        return stats
+
+        return base_stats
 
     def reset_statistics(self):
         """重置统计信息"""
-        old_triggers = self.trigger_count
-        old_trades = self.trade_executions
-
-        self.trigger_count = 0
-        self.trade_executions = 0
-        self.resistance = 0.0
-        self._price_history = []
-
-        logger.info(
-            f"狙击手策略重置统计: triggers={old_triggers}, trades={old_trades}"
-        )
+        super().reset_statistics()
+        self._big_orders_detected = 0
+        self._big_order_amount_total = 0.0
+        logger.info(f"狙击策略统计信息已重置")
