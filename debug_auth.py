@@ -141,8 +141,10 @@ async def test_ws_login():
     print("🔗 测试 WebSocket 鉴权 (ISO 模式 - 保留对比)")
     print("-" * 60)
 
-    # 尝试使用生产环境 WS 地址连接模拟盘 (绕过 502)
-    url = "wss://ws.okx.com:8443/ws/v5/private"
+    # [v2.0.3 修复] 使用模拟盘专用地址
+    # 实盘地址: wss://ws.okx.com:8443/ws/v5/private
+    # 模拟盘地址: wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999
+    url = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
 
     timestamp = OkxSigner.get_timestamp(mode='iso')
     # WS 登录 path 固定，method 固定 GET
@@ -262,8 +264,10 @@ async def test_ws_with_time_correction():
     print(f"✅ 已设置时间偏移量: {time_diff:.3f} 秒")
     print()
 
-    # 尝试使用生产环境 WS 地址连接模拟盘 (绕过 502)
-    url = "wss://ws.okx.com:8443/ws/v5/private"
+    # [v2.0.3 修复] 使用模拟盘专用地址
+    # 实盘地址: wss://ws.okx.com:8443/ws/v5/private
+    # 模拟盘地址: wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999
+    url = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
 
     # 使用校准后的时间戳（ISO 模式）
     timestamp = OkxSigner.get_timestamp(mode='iso')
@@ -334,8 +338,10 @@ async def test_ws_unix_mode():
     print(f"✅ 已设置时间偏移量: {time_diff:.3f} 秒")
     print()
 
-    # 尝试使用生产环境 WS 地址连接模拟盘 (绕过 502)
-    url = "wss://ws.okx.com:8443/ws/v5/private"
+    # [v2.0.3 修复] 使用模拟盘专用地址
+    # 实盘地址: wss://ws.okx.com:8443/ws/v5/private
+    # 模拟盘地址: wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999
+    url = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
 
     # [v2.0.3] 使用 Unix Epoch 时间戳（降维打击）
     timestamp = OkxSigner.get_timestamp(mode='unix')

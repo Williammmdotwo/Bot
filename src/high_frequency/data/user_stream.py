@@ -51,8 +51,9 @@ class UserStream:
     """
 
     # OKX Private WebSocket URL
+    # [v2.0.3 修复] 使用正确的模拟盘地址（必须带 ?brokerId=9999）
     WS_URL_PRODUCTION = "wss://ws.okx.com:8443/ws/v5/private"
-    WS_URL_DEMO = "wss://wspap.okx.com:8443/ws/v5/private"
+    WS_URL_DEMO = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
 
     def __init__(
         self,
@@ -67,7 +68,7 @@ class UserStream:
         max_reconnect_attempts: int = 10
     ):
         """
-        初始化私用数据流处理器
+        初始化私有数据流处理器
 
         Args:
             api_key (str): OKX API Key
@@ -87,20 +88,18 @@ class UserStream:
         self.passphrase = passphrase
         self.use_demo = use_demo
 
-        # [修复] 强制使用生产环境域名以避开 502 错误
-        # OKX 允许通过生产域名进行模拟盘鉴权
-        # 原有逻辑:
-        # if use_demo:
-        #     self.ws_url = self.WS_URL_DEMO
-        # else:
-        #     self.ws_url = self.WS_URL_PRODUCTION
-        #
-        # 修复为：统一使用生产环境域名，通过 Header 鉴权区分模拟盘
+        # [v2.0.3 修复] 根据环境选择正确的 WebSocket URL
+        # WebSocket 不通过 Header 区分环境，而是靠 URL
+        # 实盘: wss://ws.okx.com:8443/ws/v5/private
+        # 模拟盘: wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999
         if ws_url:
             self.ws_url = ws_url
         else:
-            # 强制使用生产环境域名
-            self.ws_url = self.WS_URL_PRODUCTION
+            # 根据环境自动选择 URL
+            if use_demo:
+                self.ws_url = self.WS_URL_DEMO
+            else:
+                self.ws_url = self.WS_URL_PRODUCTION
 
         self.reconnect_enabled = reconnect_enabled
         self.max_reconnect_attempts = max_reconnect_attempts

@@ -177,18 +177,21 @@ Athena 是一个双模架构的加密货币量化交易系统，专为实盘环�
 
 ## 🐛 当前已知 BUG (Known Issues)
 
-### ⚠️ WebSocket "Invalid timestamp" 错误 (Code: 60004)
-**状态**: ✅ 已通过 Unix 模式彻底解决（v2.0.3）
+### ⚠️ WebSocket 环境配置错误 (Code: 50101)
+**状态**: ✅ 已通过 Unix 模式和正确 URL 配置解决（v2.0.3）
 
 **问题描述**:
-- REST API 鉴权成功
-- WebSocket 登录返回 `{'event': 'error', 'msg': 'Invalid timestamp', 'code': '60004'}`
+- WebSocket 登录返回 `{'event': 'error', 'msg': 'APIKey does not match current environment', 'code': '50101'}`
+- 原因：使用模拟盘 API Key 连接了实盘 WebSocket 地址
 
-**v2.0.3 解决方案 - 降维打击**:
-1. ✅ WebSocket 改用 Unix Epoch 时间戳（`1704862800.123`）
-2. ✅ 绕过所有 ISO 8601 字符串解析问题
+**v2.0.3 解决方案**:
+1. ✅ WebSocket 使用 Unix Epoch 时间戳（`1704862800.123`）
+2. ✅ 根据环境自动选择正确的 WebSocket URL
 3. ✅ 统一使用 `OkxSigner` 工具类，确保签名一致
-4. ✅ REST API 继续使用 ISO 模式（已验证稳定）
+
+**WebSocket URL 配置**:
+- **实盘**: `wss://ws.okx.com:8443/ws/v5/private`
+- **模拟盘**: `wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999`
 
 **验证方法**:
 运行诊断脚本，查看 Unix 模式测试结果：
@@ -199,13 +202,15 @@ python debug_auth.py
 **预期输出**:
 ```
 🔗 [v2.0.3] 测试 WebSocket 鉴权（Unix 模式 - 降维打击）
+连接: wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999
 ✨ Unix 时间戳: 1704862800.123
 ✅ WebSocket 鉴权成功（Unix 模式 - 降维打击）！
 ```
 
 **技术原理**:
 - Unix 时间戳是纯数字，无需字符串解析
-- 避免时区转换、格式化等复杂逻辑
+- WebSocket 通过 URL 区分环境（不是 Header）
+- 模拟盘必须使用专用地址（带 `?brokerId=9999`）
 - 与 OKX 服务器内部时间表示一致
 
 ---
