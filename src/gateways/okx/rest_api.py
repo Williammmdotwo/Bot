@@ -19,6 +19,7 @@ OKX REST API 网关 (Unified Gateway)
 
 import json
 import logging
+import time
 from typing import Dict, Any, Optional, List
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, ClientError
@@ -395,24 +396,29 @@ class OkxRestGateway(RestGateway):
             if order_type in ['limit', 'ioc'] and price:
                 body['px'] = str(price)
 
+            # 生成 Client Order ID (clOrdId) 用于标识策略来源
+            # clOrdId 限制：1-32 位字符，字母数字下划线
+            if 'clOrdId' not in body:
+                strategy_id = kwargs.get('strategy_id', 'manual')
+                # 取策略 ID 前缀（最多 4 位）
+                prefix = strategy_id[:4].lower()
+                # 加上时间戳后缀（确保唯一性）
+                ts_suffix = str(int(time.time() * 1000))[-8:]
+                body['clOrdId'] = f"{prefix}_{ts_suffix}"
+                logger.debug(f"🏷️  生成 clOrdId: {body['clOrdId']} (strategy_id={strategy_id})")
+
             # 添加额外参数，但只保留 OKX API 支持的字段
             # OKX V5 API 支持的下单字段白名单
             okx_order_fields = {
                 'instId', 'tdMode', 'side', 'ordType', 'sz', 'px',
-                'posSide', 'reduceOnly', 'tag', 'clOrdId', 'ccy'
+                'posSide', 'reduceOnly', 'clOrdId', 'ccy'
             }
 
             # 过滤：只保留 OKX API 支持的字段
+            # 注意：不包含 'tag' 和 'strategy_id'
             for key in list(kwargs.keys()):
                 if key in okx_order_fields:
                     body[key] = kwargs[key]
-                # 可选：将 strategy_id 映射到 tag 字段（交易所端可看到策略来源）
-                elif key == 'strategy_id' and isinstance(kwargs[key], str):
-                    # tag 只能是字母数字，长度限制 16 位
-                    tag_value = kwargs[key][:16].replace('-', '').replace('_', '')
-                    if tag_value:  # 非空才添加
-                        body['tag'] = tag_value
-                        logger.debug(f"🏷️  策略 ID {kwargs[key]} 映射到 tag: {tag_value}")
 
             logger.info(f"下单: {body}")
 
