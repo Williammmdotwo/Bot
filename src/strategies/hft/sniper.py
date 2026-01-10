@@ -16,7 +16,7 @@ HFT 狙击策略 (HFT Sniper Strategy)
 
 import logging
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
 from ...core.event_types import Event
@@ -65,7 +65,8 @@ class SniperStrategy(BaseStrategy):
         cooldown_seconds: float = 5.0,
         order_type: str = "market",
         min_big_order_usdt: float = 5000.0,
-        mode: str = "PRODUCTION"
+        mode: str = "PRODUCTION",
+        strategy_id: Optional[str] = None
     ):
         """
         初始化狙击策略
@@ -80,13 +81,15 @@ class SniperStrategy(BaseStrategy):
             order_type (str): 订单类型
             min_big_order_usdt (float): 大单阈值（USDT）
             mode (str): 策略模式
+            strategy_id (str): 策略 ID
         """
         super().__init__(
             event_bus=event_bus,
             order_manager=order_manager,
             capital_commander=capital_commander,
             symbol=symbol,
-            mode=mode
+            mode=mode,
+            strategy_id=strategy_id
         )
 
         # 策略配置

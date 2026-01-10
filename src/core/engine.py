@@ -204,6 +204,10 @@ class Engine:
             params = strategy_config.get('params', {})
 
             # 根据类型创建策略
+            # 显式传入 strategy_id，确保 ID 一致性
+            strategy_id = strategy_config.get('id', strategy_type)
+            params['strategy_id'] = strategy_id  # 将 strategy_id 添加到参数中
+
             if strategy_type == 'vulture':
                 from ..strategies.hft.vulture import VultureStrategy
                 strategy = VultureStrategy(
@@ -224,7 +228,6 @@ class Engine:
                 logger.error(f"未知的策略类型: {strategy_type}")
                 return None
 
-            strategy.strategy_id = strategy_config.get('id', strategy_type)
             logger.info(
                 f"策略已加载: {strategy.strategy_id} ({strategy_type})"
             )
@@ -266,13 +269,17 @@ class Engine:
     async def _allocate_strategy_capitals(self):
         """为策略分配资金"""
         for strategy in self._strategies:
-            strategy_config = self.config.get('strategies', [])
-            for config in strategy_config:
-                if config.get('type') == strategy.__class__.__name__:
+            strategy_config_list = self.config.get('strategies', [])
+            for config in strategy_config_list:
+                # 使用 strategy_id 匹配，而不是 class name
+                if config.get('id') == strategy.strategy_id:
                     capital = config.get('capital', 1000.0)
                     self._capital_commander.allocate_strategy(
                         strategy.strategy_id,
                         capital
+                    )
+                    logger.info(
+                        f"✅ 策略 {strategy.strategy_id} 已分配资金: {capital:.2f} USDT"
                     )
                     break
 

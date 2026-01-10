@@ -62,7 +62,8 @@ class BaseStrategy(ABC):
         order_manager: Optional[OrderManager] = None,
         capital_commander: Optional[CapitalCommander] = None,
         symbol: str = "BTC-USDT-SWAP",
-        mode: str = "PRODUCTION"
+        mode: str = "PRODUCTION",
+        strategy_id: Optional[str] = None
     ):
         """
         初始化策略
@@ -73,8 +74,12 @@ class BaseStrategy(ABC):
             capital_commander (CapitalCommander): 资金指挥官
             symbol (str): 交易对
             mode (str): 策略模式（PRODUCTION/DEV）
+            strategy_id (str): 策略 ID（可选，默认为类名小写）
         """
-        self.strategy_id = self.__class__.__name__.lower()
+        # 使用显式传入的 strategy_id，如果没有则使用类名小写
+        self.strategy_id = (
+            strategy_id if strategy_id else self.__class__.__name__.lower()
+        )
         self.symbol = symbol
         self.mode = mode.upper()
         self._enabled = True
