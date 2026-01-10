@@ -2,6 +2,7 @@
 Athena OS 主入口 (Main Entry)
 
 系统启动入口，负责：
+- 配置日志
 - 加载环境变量
 - 配置系统
 - 初始化引擎
@@ -12,10 +13,7 @@ Athena OS 主入口 (Main Entry)
 import asyncio
 import sys
 import os
-import signal
-import logging
 from pathlib import Path
-from typing import Optional
 
 # 添加项目路径
 PROJECT_ROOT = Path(__file__).parent.absolute()
@@ -27,32 +25,11 @@ except ImportError:
     print("警告: python-dotenv 未安装，跳过环境变量加载")
     load_dotenv = lambda: None
 
+from src.utils.logger import setup_logging, get_logger
 from src.core.engine import Engine, create_default_config
 from src.core.event_types import EventType
 
-logger = logging.getLogger(__name__)
-
-
-def setup_logging(level: str = "INFO"):
-    """
-    配置日志
-
-    Args:
-        level (str): 日志级别（DEBUG/INFO/WARNING/ERROR）
-    """
-    log_format = (
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    logging.basicConfig(
-        level=getattr(logging, level.upper()),
-        format=log_format,
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    # 降低第三方库的日志级别
-    logging.getLogger('aiohttp').setLevel(logging.WARNING)
-    logging.getLogger('websockets').setLevel(logging.WARNING)
+logger = get_logger(__name__)
 
 
 def load_config_from_env() -> dict:
@@ -187,25 +164,27 @@ async def main():
     """
     主函数
 
-    1. 加载环境变量
-    2. 配置日志
+    1. 配置日志
+    2. 加载环境变量
     3. 加载配置
     4. 初始化引擎
     5. 启动系统
     """
-    # 1. 加载环境变量
+    # 1. 配置日志（必须最先执行）
+    log_level = os.getenv('LOG_LEVEL', 'INFO')
+    setup_logging(log_level)
+
+    # 存活确认（在日志系统初始化之前）
+    print("🔥 系统正在启动...")
+    logger.info("🚀 Athena OS v3.0 启动中...")
+
+    # 2. 加载环境变量
     env_file = PROJECT_ROOT / '.env'
     if env_file.exists():
         load_dotenv(env_file)
         logger.info(f"已加载环境变量: {env_file}")
     else:
         logger.warning(f"未找到 .env 文件: {env_file}，使用默认配置")
-
-    # 2. 配置日志
-    log_level = os.getenv('LOG_LEVEL', 'INFO')
-    setup_logging(log_level)
-
-    logger.info("🚀 Athena OS v3.0 启动中...")
 
     # 3. 加载配置
     config = load_config_from_env()
