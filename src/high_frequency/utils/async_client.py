@@ -36,7 +36,7 @@ class RestClient:
     Example:
         >>> async with RestClient(
         ...     api_key="your_api_key",
-        ...     secret_key="your_secret_key",
+        ...     secret_key="your_secret",
         ...     passphrase="your_passphrase",
         ...     use_demo=True
         ... ) as client:
@@ -201,13 +201,11 @@ class RestClient:
         # [修复] 2. 生成 Header (使用无空格的字符串 body)
         headers = self._get_headers("POST", endpoint, json_body)
 
-        # [修复] 3. 构造完整的 URL
-        url = f"{self.base_url}{endpoint}"
-
         # 发送请求
         try:
+            # [修复] 使用相对路径（因为 ClientSession 设置了 base_url）
             async with session.post(
-                url,  # [修复] 使用完整 URL 而不是相对路径
+                endpoint,  # 相对路径，aiohttp 会自动拼接 base_url
                 data=json_body,  # [修复] 传入字符串而不是字典
                 headers=headers,
                 timeout=self.timeout
@@ -224,7 +222,7 @@ class RestClient:
 
                 # 记录请求日志
                 logger.debug(
-                    f"POST {url} - Status: {response.status}, "
+                    f"POST {self.base_url}{endpoint} - Status: {response.status}, "
                     f"Code: {response_data.get('code', 'N/A')}"
                 )
 
@@ -251,7 +249,7 @@ class RestClient:
                         f"  错误码: {error_code}\n"
                         f"  错误消息: {error_msg}\n"
                         f"  完整响应: {response_text}\n"
-                        f"  URL: {url}\n"
+                        f"  URL: {self.base_url}{endpoint}\n"
                         f"  模拟盘模式: {self.use_demo}\n"
                         f"  请求头: {headers}"
                     )
@@ -310,12 +308,9 @@ class RestClient:
         # GET 请求的 body 为空字符串
         headers = self._get_headers("GET", request_path, "")
 
-        # 3. 拼接完整 URL
-        url = f"{self.base_url}{request_path}"
-
-        # 4. 发送请求 (params 设为 None，因为参数已经拼在 url 里了)
+        # 3. 发送请求 (使用相对路径，aiohttp 会自动拼接 base_url)
         try:
-            async with session.get(url, headers=headers, timeout=self.timeout) as response:
+            async with session.get(request_path, headers=headers, timeout=self.timeout) as response:
                 # 读取响应文本（用于错误诊断）
                 response_text = await response.text()
 
@@ -328,7 +323,7 @@ class RestClient:
 
                 # 记录请求日志
                 logger.debug(
-                    f"GET {url} - Status: {response.status}, "
+                    f"GET {self.base_url}{request_path} - Status: {response.status}, "
                     f"Code: {response_data.get('code', 'N/A')}"
                 )
 
@@ -355,7 +350,7 @@ class RestClient:
                         f"  错误码: {error_code}\n"
                         f"  错误消息: {error_msg}\n"
                         f"  完整响应: {response_text}\n"
-                        f"  URL: {url}\n"
+                        f"  URL: {self.base_url}{request_path}\n"
                         f"  模拟盘模式: {self.use_demo}\n"
                         f"  请求头: {headers}"
                     )
