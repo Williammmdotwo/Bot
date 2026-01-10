@@ -242,10 +242,20 @@ class RestClient:
 
                 # 检查 API 错误码
                 if response_data.get('code') != '0':
-                    error_msg = response_data.get('msg', 'Unknown error')
-                    # 🚨 修复：打印完整的 API 响应
-                    logger.error(f"API 错误 {response_data['code']}: {response_text}")
-                    raise ValueError(f"API 错误: {response_data['code']} - {error_msg}")
+                    # 🔍 详细诊断：打印完整的错误信息
+                    error_code = response_data.get('code')
+                    error_msg = response_data.get('msg') or response_data.get('sMsg') or 'Unknown error'
+
+                    logger.error(
+                        f"❌ API 错误详情:\n"
+                        f"  错误码: {error_code}\n"
+                        f"  错误消息: {error_msg}\n"
+                        f"  完整响应: {response_text}\n"
+                        f"  URL: {url}\n"
+                        f"  模拟盘模式: {self.use_demo}\n"
+                        f"  请求头: {headers}"
+                    )
+                    raise ValueError(f"API 错误: {error_code} - {error_msg}")
 
                 return response_data
 
@@ -336,10 +346,20 @@ class RestClient:
 
                 # 检查 API 错误码
                 if response_data.get('code') != '0':
-                    error_msg = response_data.get('msg', 'Unknown error')
-                    # 打印完整的 API 响应
-                    logger.error(f"API 错误 {response_data['code']}: {response_text}")
-                    raise ValueError(f"API 错误: {response_data['code']} - {error_msg}")
+                    # 🔍 详细诊断：打印完整的错误信息
+                    error_code = response_data.get('code')
+                    error_msg = response_data.get('msg') or response_data.get('sMsg') or 'Unknown error'
+
+                    logger.error(
+                        f"❌ API 错误详情:\n"
+                        f"  错误码: {error_code}\n"
+                        f"  错误消息: {error_msg}\n"
+                        f"  完整响应: {response_text}\n"
+                        f"  URL: {url}\n"
+                        f"  模拟盘模式: {self.use_demo}\n"
+                        f"  请求头: {headers}"
+                    )
+                    raise ValueError(f"API 错误: {error_code} - {error_msg}")
 
                 return response_data
 

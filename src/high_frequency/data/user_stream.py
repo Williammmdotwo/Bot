@@ -381,15 +381,13 @@ class UserStream:
                         self._is_logged_in = False
 
                 elif data["event"] == "subscribe":
+                    # [v2.0.3 修复] OKX 订阅成功包不包含 code 字段
+                    # event: 'subscribe' 本身就是成功信号，不需要检查 code
                     channel = data.get("arg", {}).get("channel")
-                    code = data.get("code")
-                    if code == "0":
-                        logger.info(f"✅ 订阅成功: {channel}")
-                    else:
-                        logger.error(f"❌ 订阅失败: {data}")
+                    logger.info(f"✅ 频道订阅成功: {channel} | {data}")
 
                 elif data["event"] == "error":
-                    logger.error(f"❌ OKX API 错误: {data}")
+                    logger.error(f"❌ WebSocket 错误: {data}")
 
             # 处理持仓推送
             if "data" in data and "arg" in data:
