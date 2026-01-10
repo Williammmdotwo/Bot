@@ -372,7 +372,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
                                 },
                                 source="okx_ws_private"
                             )
-                            self.publish_event(event)
+                            await self.publish_event(event)
 
                 elif channel == "orders":
                     orders = data.get("data", [])
@@ -403,7 +403,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
                                 },
                                 source="okx_ws_private"
                             )
-                            self.publish_event(event)
+                            await self.publish_event(event)
 
         except Exception as e:
             logger.error(f"数据处理异常: {e}, 原始数据: {data}")
@@ -486,7 +486,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
                 },
                 source="okx_ws_private"
             )
-            self.publish_event(event)
+            await self.publish_event(event)
 
     async def on_close(self):
         """连接关闭回调"""
