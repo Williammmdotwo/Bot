@@ -29,6 +29,7 @@ class EventType(Enum):
     ORDER_UPDATE = "order_update"       # 订单状态更新
     ORDER_FILLED = "order_filled"       # 订单成交
     ORDER_CANCELLED = "order_cancelled"   # 订单取消
+    ORDER_SUBMITTED = "order_submitted"   # 订单提交
 
     # 策略事件
     SIGNAL_BUY = "signal_buy"         # 买入信号
