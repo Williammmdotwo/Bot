@@ -397,14 +397,15 @@ class OkxRestGateway(RestGateway):
                 body['px'] = str(price)
 
             # 生成 Client Order ID (clOrdId) 用于标识策略来源
-            # clOrdId 限制：1-32 位字符，字母数字下划线
+            # clOrdId 限制：1-32 位字符，必须是纯字母数字
             if 'clOrdId' not in body:
                 strategy_id = kwargs.get('strategy_id', 'manual')
                 # 取策略 ID 前缀（最多 4 位）
                 prefix = strategy_id[:4].lower()
                 # 加上时间戳后缀（确保唯一性）
                 ts_suffix = str(int(time.time() * 1000))[-8:]
-                body['clOrdId'] = f"{prefix}_{ts_suffix}"
+                # ✅ 去掉下划线，确保是纯字母数字
+                body['clOrdId'] = f"{prefix}{ts_suffix}"
                 logger.debug(f"🏷️  生成 clOrdId: {body['clOrdId']} (strategy_id={strategy_id})")
 
             # 添加额外参数，但只保留 OKX API 支持的字段
