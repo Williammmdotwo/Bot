@@ -386,6 +386,7 @@ class OkxRestGateway(RestGateway):
 
             body = {
                 'instId': symbol,
+                'tdMode': 'cross',  # ✅ 必须有
                 'side': side,
                 'ordType': ord_type_lower,
                 'sz': str(size_int)
@@ -407,9 +408,10 @@ class OkxRestGateway(RestGateway):
                 logger.debug(f"🏷️  生成 clOrdId: {body['clOrdId']} (strategy_id={strategy_id})")
 
             # 添加额外参数，但只保留 OKX API 支持的字段
-            # OKX V5 API 支持的下单字段白名单（不包含 posSide 和 tdMode）
+            # OKX V5 API 支持的下单字段白名单
+            # ✅ 必须包含 tdMode，❌ 绝对不要包含 posSide
             okx_order_fields = {
-                'instId', 'side', 'ordType', 'sz', 'px',
+                'instId', 'tdMode', 'side', 'ordType', 'sz', 'px',
                 'reduceOnly', 'clOrdId', 'ccy'
             }
 
@@ -418,6 +420,9 @@ class OkxRestGateway(RestGateway):
             for key in list(kwargs.keys()):
                 if key in okx_order_fields:
                     body[key] = kwargs[key]
+
+            # ❌ 确保没有 posSide
+            body.pop('posSide', None)
 
             logger.info(f"下单: {body}")
 
