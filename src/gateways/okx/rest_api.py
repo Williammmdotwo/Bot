@@ -389,7 +389,8 @@ class OkxRestGateway(RestGateway):
                 'tdMode': 'cross',
                 'side': side,
                 'ordType': ord_type_upper,
-                'sz': str(size_int)
+                'sz': str(size_int),
+                'posSide': 'net'  # 单向持仓模式必须显式指定
             }
 
             # limit/ioc 订单需要价格
