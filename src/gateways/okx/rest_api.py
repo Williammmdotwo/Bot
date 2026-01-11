@@ -479,7 +479,7 @@ class OkxRestGateway(RestGateway):
                         },
                         source="okx_rest"
                     )
-                    self.publish_event(event)
+                    await self.publish_event(event)  # ✅ 添加 await
 
                 return order_data
 
@@ -525,7 +525,7 @@ class OkxRestGateway(RestGateway):
                         },
                         source="okx_rest"
                     )
-                    self.publish_event(event)
+                    await self.publish_event(event)  # ✅ 添加 await
 
                 return data_list[0]
 
