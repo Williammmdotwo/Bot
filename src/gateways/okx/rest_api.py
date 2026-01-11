@@ -398,13 +398,21 @@ class OkxRestGateway(RestGateway):
                 body['slTriggerType'] = 'last'  # 使用最新价触发
                 body['slOrdPx'] = str(price)  # 止损触发价格
 
+                # ✅ 条件单必须指定 posSide（持仓方向）
+                # side='sell' + 止损 → 多头止损 → posSide='long'
+                # side='buy' + 止损 → 空头止损 → posSide='short'
+                if side == 'sell':
+                    body['posSide'] = 'long'  # 多头止损（卖出平仓）
+                else:
+                    body['posSide'] = 'short'  # 空头止损（买入平仓）
+
                 if order_type == 'stop_limit':
                     # 止损限价单：设置限价价格
                     tp_price = kwargs.get('tp_price')
                     if tp_price:
                         body['tpOrdPx'] = str(tp_price)
 
-                logger.info(f"🛡️  止损单: slOrdPx={price}, ordType=conditional")
+                logger.info(f"🛡️  止损单: slOrdPx={price}, posSide={body['posSide']}, ordType=conditional")
             else:
                 # 普通订单（market/limit/ioc）
                 body['ordType'] = ord_type_lower
@@ -427,7 +435,6 @@ class OkxRestGateway(RestGateway):
 
             # 添加额外参数，但只保留 OKX API 支持的字段
             # OKX V5 API 支持的下单字段白名单
-            # ✅ 必须包含 tdMode，❌ 绝对不要包含 posSide
             okx_order_fields = {
                 'instId', 'tdMode', 'side', 'ordType', 'sz', 'px',
                 'reduceOnly', 'clOrdId', 'ccy'
@@ -439,8 +446,10 @@ class OkxRestGateway(RestGateway):
                 if key in okx_order_fields:
                     body[key] = kwargs[key]
 
-            # ❌ 确保没有 posSide
-            body.pop('posSide', None)
+            # ✅ 只对普通订单移除 posSide
+            # 条件单必须有 posSide（在上面已经设置）
+            if order_type not in ['stop_market', 'stop_limit']:
+                body.pop('posSide', None)
 
             logger.info(f"下单: {body}")
 
