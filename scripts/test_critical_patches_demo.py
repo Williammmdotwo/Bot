@@ -163,6 +163,7 @@ async def test_patch_1_stop_loss_retry(gateway: OkxRestGateway, event_bus: Event
                     side=close_side,
                     order_type='market',
                     size=abs(position_size),  # 平仓数量 = 持仓数量的绝对值
+                    reduce_only=True,  # ⚠️ 关键：设置为只减仓，防止变成开仓单
                     strategy_id="cleanup"
                 )
             except Exception as e:
@@ -290,6 +291,7 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
             side=close_side,
             order_type="market",
             size=abs(position_size),  # 平仓数量 = 持仓数量的绝对值
+            reduce_only=True,  # ⚠️ 关键：设置为只减仓，防止变成开仓单
             strategy_id="close_position"
         )
 
@@ -338,22 +340,39 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         logger.info("等待幽灵单防护触发...")
         await asyncio.sleep(3)  # 给事件处理和撤销订单时间
 
-        # 同步方法，不需要 await
-        all_orders = order_manager.get_all_orders()
-        pending_orders_after = [
-            o for o in all_orders.values()
-            if o.status in ['pending', 'live'] and o.symbol == symbol
-        ]
+        # 直接从 API 查询订单状态（不依赖 OrderManager 本地状态）
+        # 获取所有订单 ID
+        order_ids = list({o.order_id for o in pending_orders_before})
+        logger.info(f"检查订单状态: {len(order_ids)} 个订单")
 
-        logger.info(f"平仓后挂单数量: {len(pending_orders_after)}")
+        # 查询每个订单的状态
+        active_orders_after = 0
+        for order_id in order_ids:
+            try:
+                order_status = await gateway.get_order_status(order_id, symbol)
+                if order_status:
+                    state = order_status.get('state', '')
+                    # 只有未成交的订单才算"挂着"
+                    if state in ['live', 'partially_filled', 'mmp']:
+                        active_orders_after += 1
+                        logger.info(f"  - 订单 {order_id}: {state}")
+                    else:
+                        logger.info(f"  - 订单 {order_id}: {state} (已{state})")
+                else:
+                    logger.warning(f"  - 订单 {order_id}: 查询失败")
+            except Exception as e:
+                logger.error(f"  - 订单 {order_id} 查询异常: {e}")
 
-        if len(pending_orders_after) < len(pending_orders_before):
-            logger.info(f"✅ 幽灵单防护已触发: 撤销了 {len(pending_orders_before) - len(pending_orders_after)} 个挂单")
+        logger.info(f"平仓后活跃订单数量: {active_orders_after}")
+
+        # 对比前后活跃订单数量
+        if active_orders_after < len(pending_orders_before):
+            logger.info(f"✅ 幽灵单防护已触发: 撤销了 {len(pending_orders_before) - active_orders_after} 个挂单")
             return True
         else:
-            logger.warning(f"⚠️  挂单未被撤销: {len(pending_orders_after)} 个挂单仍然存在")
+            logger.warning(f"⚠️  挂单未被撤销: {active_orders_after} 个挂单仍然存在")
             # 手动撤销挂单
-            for order in pending_orders_after:
+            for order in pending_orders_before:
                 logger.info(f"手动撤销挂单: {order.order_id}")
                 try:
                     await order_manager.cancel_order(order.order_id, symbol)
@@ -486,6 +505,7 @@ async def cleanup_all(gateway: OkxRestGateway, order_manager: OrderManager, symb
                         side=close_side,
                         order_type='market',
                         size=abs(position_size),  # 平仓数量 = 持仓数量的绝对值
+                        reduce_only=True,  # ⚠️ 关键：设置为只减仓，防止变成开仓单
                         strategy_id="cleanup"
                     )
                 except Exception as e:
