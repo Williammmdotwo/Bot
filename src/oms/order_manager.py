@@ -506,10 +506,9 @@ class OrderManager:
                     response = await self._rest_gateway.place_order(
                         symbol=open_order.symbol,
                         side=stop_side,
-                        order_type='market',  # 触发后市价成交
+                        order_type='stop_market',  # 标记为止损订单
                         size=open_order.filled_size,  # 使用实际成交数量
                         price=stop_price,  # 触发价格
-                        order_type='stop_market',  # 标记为止损订单
                         strategy_id=open_order.strategy_id,
                         reduce_only=True  # 只减仓
                     )
@@ -619,7 +618,6 @@ class OrderManager:
                 order_type='market',  # 市价成交
                 size=open_order.filled_size,
                 price=0.0,  # 市价单不指定价格
-                order_type='market',
                 strategy_id=open_order.strategy_id,
                 reduce_only=True,  # 只减仓
                 is_emergency_close=True  # 标记为紧急平仓
