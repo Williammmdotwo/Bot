@@ -388,13 +388,30 @@ class OkxRestGateway(RestGateway):
                 'instId': symbol,
                 'tdMode': 'cross',  # ✅ 必须有
                 'side': side,
-                'ordType': ord_type_lower,
                 'sz': str(size_int)
             }
 
-            # limit/ioc 订单需要价格
-            if order_type in ['limit', 'ioc'] and price:
-                body['px'] = str(price)
+            # ✅ 处理止损单（stop_market / stop_limit）
+            if order_type in ['stop_market', 'stop_limit']:
+                # OKX V5 使用 conditional 订单类型实现止损
+                body['ordType'] = 'conditional'
+                body['slTriggerType'] = 'last'  # 使用最新价触发
+                body['slOrdPx'] = str(price)  # 止损触发价格
+
+                if order_type == 'stop_limit':
+                    # 止损限价单：设置限价价格
+                    tp_price = kwargs.get('tp_price')
+                    if tp_price:
+                        body['tpOrdPx'] = str(tp_price)
+
+                logger.info(f"🛡️  止损单: slOrdPx={price}, ordType=conditional")
+            else:
+                # 普通订单（market/limit/ioc）
+                body['ordType'] = ord_type_lower
+
+                # limit/ioc 订单需要价格
+                if order_type in ['limit', 'ioc'] and price:
+                    body['px'] = str(price)
 
             # 生成 Client Order ID (clOrdId) 用于标识策略来源
             # clOrdId 限制：1-32 位字符，必须是纯字母数字
