@@ -12,6 +12,7 @@ HFT 狙击策略 (HFT Sniper Strategy)
 风险控制：
 - 冷却机制：5 秒内不重复触发
 - 资金检查：确保资金充足
+- 强制止损：基于波动率计算止损价（机构级风控）
 """
 
 import logging
@@ -23,6 +24,7 @@ from ...core.event_types import Event
 from ...core.event_bus import EventBus
 from ...oms.order_manager import OrderManager
 from ...oms.capital_commander import CapitalCommander
+from ...utils.math import VolatilityEstimator
 from ..base_strategy import BaseStrategy
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ class SniperConfig:
     cooldown_seconds: float = 5.0   # 冷却时间（秒）
     order_type: str = "market"      # 订单类型
     min_big_order_usdt: float = 5000.0  # 大单阈值（USDT）
+    atr_multiplier: float = 2.0     # ATR 倍数（用于止损）
+    use_fixed_position: bool = False  # 是否使用固定仓位（False=基于风险计算）
 
 
 class SniperStrategy(BaseStrategy):
@@ -98,18 +102,26 @@ class SniperStrategy(BaseStrategy):
             position_size=position_size,
             cooldown_seconds=cooldown_seconds,
             order_type=order_type,
-            min_big_order_usdt=min_big_order_usdt
+            min_big_order_usdt=min_big_order_usdt,
+            atr_multiplier=2.0,
+            use_fixed_position=False
         )
 
         # 策略状态
         self._big_orders_detected = 0
         self._big_order_amount_total = 0.0
+        self._previous_price = 0.0
+
+        # 波动率估算器（用于动态止损）
+        self._volatility_estimator = VolatilityEstimator(alpha=0.2)
 
         logger.info(
             f"狙击策略配置: symbol={symbol}, "
             f"position_size={position_size}, "
             f"cooldown={cooldown_seconds}s, "
-            f"min_big_order={min_big_order_usdt} USDT"
+            f"min_big_order={min_big_order_usdt} USDT, "
+            f"atr_multiplier={self.config.atr_multiplier}, "
+            f"use_fixed_position={self.config.use_fixed_position}"
         )
 
     async def on_tick(self, event: Event):
@@ -154,7 +166,15 @@ class SniperStrategy(BaseStrategy):
             # 5. 增加 Tick 计数
             self._increment_ticks()
 
-            # 6. 检测大单
+            # 6. 更新波动率估算器
+            if self._previous_price > 0:
+                self._volatility_estimator.update_volatility(
+                    current_price=price,
+                    previous_close=self._previous_price
+                )
+            self._previous_price = price
+
+            # 7. 检测大单
             if self._is_big_order(usdt_value):
                 self._big_orders_detected += 1
                 self._big_order_amount_total += usdt_value
@@ -164,35 +184,50 @@ class SniperStrategy(BaseStrategy):
                     f"{size:.4f} @ {price:.2f} = {usdt_value:.2f} USDT"
                 )
 
-                # 7. 跟随交易
-                # 强制取整：OKX SWAP 合约的 sz 必须是整数
-                position_size_int = int(self.config.position_size)
-                if position_size_int < 1:
-                    logger.warning(
-                        f"⚠️  position_size {self.config.position_size} 小于 1，"
-                        f"强制设为 1"
-                    )
-                    position_size_int = 1
+                # 8. 计算止损价格（基于波动率）
+                stop_loss_price = self._calculate_stop_loss(price)
+
+                logger.info(
+                    f"🛡️  计算止损价: entry={price:.2f}, stop={stop_loss_price:.2f}, "
+                    f"distance={abs(price - stop_loss_price):.2f}"
+                )
+
+                # 9. 跟随交易
+                # 如果使用固定仓位，则强制取整
+                position_size = None
+                if self.config.use_fixed_position:
+                    position_size_int = int(self.config.position_size)
+                    if position_size_int < 1:
+                        logger.warning(
+                            f"⚠️  position_size {self.config.position_size} 小于 1，"
+                            f"强制设为 1"
+                        )
+                        position_size_int = 1
+                    position_size = position_size_int
 
                 if side == 'buy':
                     # 大单买入 → 我们也买入
-                    await self.buy(
+                    success = await self.buy(
                         symbol=self.symbol,
-                        size=position_size_int,
+                        entry_price=price,
+                        stop_loss_price=stop_loss_price,
                         order_type=self.config.order_type,
-                        price=price  # 传入价格，用于资金检查
+                        size=position_size  # None=基于风险计算
                     )
-                    self._increment_signals()
+                    if success:
+                        self._increment_signals()
 
                 elif side == 'sell':
                     # 大单卖出 → 我们也卖出
-                    await self.sell(
+                    success = await self.sell(
                         symbol=self.symbol,
-                        size=position_size_int,
+                        entry_price=price,
+                        stop_loss_price=stop_loss_price,
                         order_type=self.config.order_type,
-                        price=price  # 传入价格，用于资金检查
+                        size=position_size  # None=基于风险计算
                     )
-                    self._increment_signals()
+                    if success:
+                        self._increment_signals()
 
         except Exception as e:
             logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
@@ -205,6 +240,23 @@ class SniperStrategy(BaseStrategy):
             signal (dict): 策略信号
         """
         pass
+
+    def _calculate_stop_loss(self, entry_price: float) -> float:
+        """
+        计算止损价格（基于波动率）
+
+        Args:
+            entry_price (float): 入场价格
+
+        Returns:
+            float: 止损价格
+        """
+        # 使用波动率估算器计算止损
+        stop_loss = self._volatility_estimator.calculate_atr_based_stop(
+            entry_price=entry_price,
+            atr_multiplier=self.config.atr_multiplier
+        )
+        return stop_loss
 
     def _is_big_order(self, usdt_value: float) -> bool:
         """
@@ -263,11 +315,17 @@ class SniperStrategy(BaseStrategy):
                 self._big_order_amount_total / self._big_orders_detected
                 if self._big_orders_detected > 0 else 0.0
             ),
+            'volatility': {
+                'current': self._volatility_estimator.get_volatility() * 100,
+                'samples': self._volatility_estimator.samples_count
+            },
             'config': {
                 'position_size': self.config.position_size,
                 'cooldown_seconds': self.config.cooldown_seconds,
                 'order_type': self.config.order_type,
-                'min_big_order_usdt': self.config.min_big_order_usdt
+                'min_big_order_usdt': self.config.min_big_order_usdt,
+                'atr_multiplier': self.config.atr_multiplier,
+                'use_fixed_position': self.config.use_fixed_position
             }
         })
 

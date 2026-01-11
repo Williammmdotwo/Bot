@@ -7,6 +7,7 @@
 - 策略只负责交易逻辑，不关心数据源
 - 通过事件总线接收市场数据
 - 纯粹的策略实现，不包含网络通信
+- 强制止损机制（机构级风控）
 """
 
 import logging
@@ -19,6 +20,7 @@ from ..core.event_bus import EventBus
 from ..core.event_types import Event, EventType
 from ..oms.order_manager import OrderManager
 from ..oms.capital_commander import CapitalCommander
+from ..config.risk_config import DEFAULT_RISK_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -138,18 +140,23 @@ class BaseStrategy(ABC):
     async def buy(
         self,
         symbol: str,
-        size: float,
+        entry_price: float,
+        stop_loss_price: float,
         order_type: str = "market",
-        price: Optional[float] = None
+        size: Optional[float] = None
     ) -> bool:
         """
-        买入（便捷方法）
+        买入（便捷方法，强制要求止损价）
+
+        新的买入方法强制要求止损价，用于机构级风控。
+        如果没有明确止损价，策略应使用波动率计算默认止损。
 
         Args:
             symbol (str): 交易对
-            size (float): 数量
+            entry_price (float): 入场价格（必需）
+            stop_loss_price (float): 止损价格（必需）
             order_type (str): 订单类型（market/limit/ioc）
-            price (float): 价格（限价单必需）
+            size (float): 数量（可选，如果不提供则基于风险计算）
 
         Returns:
             bool: 下单是否成功
@@ -157,26 +164,32 @@ class BaseStrategy(ABC):
         return await self._submit_order(
             symbol=symbol,
             side="buy",
-            size=size,
+            entry_price=entry_price,
+            stop_loss_price=stop_loss_price,
             order_type=order_type,
-            price=price
+            size=size
         )
 
     async def sell(
         self,
         symbol: str,
-        size: float,
+        entry_price: float,
+        stop_loss_price: float,
         order_type: str = "market",
-        price: Optional[float] = None
+        size: Optional[float] = None
     ) -> bool:
         """
-        卖出（便捷方法）
+        卖出（便捷方法，强制要求止损价）
+
+        新的卖出方法强制要求止损价，用于机构级风控。
+        如果没有明确止损价，策略应使用波动率计算默认止损。
 
         Args:
             symbol (str): 交易对
-            size (float): 数量
+            entry_price (float): 入场价格（必需）
+            stop_loss_price (float): 止损价格（必需）
             order_type (str): 订单类型（market/limit/ioc）
-            price (float): 价格（限价单必需）
+            size (float): 数量（可选，如果不提供则基于风险计算）
 
         Returns:
             bool: 下单是否成功
@@ -184,33 +197,48 @@ class BaseStrategy(ABC):
         return await self._submit_order(
             symbol=symbol,
             side="sell",
-            size=size,
+            entry_price=entry_price,
+            stop_loss_price=stop_loss_price,
             order_type=order_type,
-            price=price
+            size=size
         )
 
     async def _submit_order(
         self,
         symbol: str,
         side: str,
-        size: float,
+        entry_price: float,
+        stop_loss_price: float,
         order_type: str = "market",
-        price: Optional[float] = None
+        size: Optional[float] = None
     ) -> bool:
         """
-        提交订单（内部方法）
+        提交订单（内部方法，机构级风控核心）
+
+        1% Rule 实现：
+        - 如果没有提供 size，则基于风险计算安全仓位
+        - 如果提供了 size，则进行敞口检查
 
         Args:
             symbol (str): 交易对
             side (str): 方向
-            size (float): 数量
+            entry_price (float): 入场价格（必需）
+            stop_loss_price (float): 止损价格（必需）
             order_type (str): 订单类型
-            price (float): 价格
+            size (float): 数量（可选，如果不提供则基于风险计算）
 
         Returns:
             bool: 下单是否成功
         """
         try:
+            # 0. 参数验证
+            if entry_price <= 0 or stop_loss_price <= 0:
+                logger.error(
+                    f"策略 {self.strategy_id} 价格参数无效: "
+                    f"entry={entry_price}, stop={stop_loss_price}"
+                )
+                return False
+
             # 1. 冷却检查
             current_time = time.time()
             if current_time - self._last_trade_time < 5.0:
@@ -225,33 +253,58 @@ class BaseStrategy(ABC):
                 logger.error(f"OrderManager 未注入，无法下单")
                 return False
 
-            # 3. 检查 CapitalCommander 是否注入
-            if self._capital_commander:
-                # 计算订单金额
-                amount_usdt = price * size if price else 0
-                # 简化处理：实际应该从 tick 获取当前价
-                if amount_usdt == 0:
-                    logger.warning(
-                        f"无法计算订单金额，跳过资金检查"
+            # 3. 计算安全仓位（如果未提供）
+            final_size = size
+
+            if size is None or size <= 0:
+                # 使用 CapitalCommander 计算基于风险的安全仓位
+                if self._capital_commander:
+                    safe_quantity = self._capital_commander.calculate_safe_quantity(
+                        symbol=symbol,
+                        entry_price=entry_price,
+                        stop_loss_price=stop_loss_price,
+                        strategy_id=self.strategy_id
                     )
-                else:
-                    # 检查购买力
-                    if not self._capital_commander.check_buying_power(
-                        self.strategy_id,
-                        amount_usdt
-                    ):
-                        logger.error(
-                            f"策略 {self.strategy_id} 资金不足，无法下单"
+
+                    if safe_quantity <= 0:
+                        logger.warning(
+                            f"策略 {self.strategy_id} 安全仓位计算为 0，跳过下单"
                         )
                         return False
 
-            # 4. 提交订单
+                    final_size = safe_quantity
+                    logger.info(
+                        f"策略 {self.strategy_id} 使用风险计算仓位: {final_size:.4f}"
+                    )
+                else:
+                    logger.error(f"CapitalCommander 未注入，无法计算安全仓位")
+                    return False
+            else:
+                # 使用策略提供的仓位，但记录警告
+                logger.info(
+                    f"策略 {self.strategy_id} 使用固定仓位: {final_size:.4f} "
+                    f"(跳过风险计算)"
+                )
+
+            # 4. 检查购买力（如果使用风险计算的仓位）
+            if self._capital_commander:
+                amount_usdt = entry_price * final_size
+                if not self._capital_commander.check_buying_power(
+                    self.strategy_id,
+                    amount_usdt
+                ):
+                    logger.error(
+                        f"策略 {self.strategy_id} 资金不足，无法下单"
+                    )
+                    return False
+
+            # 5. 提交订单
             order = await self._order_manager.submit_order(
                 symbol=symbol,
                 side=side,
                 order_type=order_type,
-                size=size,
-                price=price,
+                size=final_size,
+                price=entry_price,
                 strategy_id=self.strategy_id
             )
 
@@ -260,7 +313,8 @@ class BaseStrategy(ABC):
                 self._orders_submitted += 1
                 logger.info(
                     f"策略 {self.strategy_id} 下单成功: "
-                    f"{symbol} {side} {size:.4f}"
+                    f"{symbol} {side} {final_size:.4f} @ {entry_price:.2f}, "
+                    f"stop={stop_loss_price:.2f}"
                 )
                 return True
             else:

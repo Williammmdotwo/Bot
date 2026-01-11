@@ -8,17 +8,23 @@
 - 分配策略资金
 - 追踪策略盈亏
 - 实时更新资金状态
+- 基于风险的仓位计算（机构级风控）
 
 设计原则：
 - 集中管理，避免资金冲突
 - 监听订单成交事件，自动更新
 - 提供资金检查接口
+- 实现 1% Rule：每笔交易风险不超过总资金的1%
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 from ..core.event_types import Event, EventType
+from ..config.risk_config import RiskConfig, DEFAULT_RISK_CONFIG
+
+if TYPE_CHECKING:
+    from ..oms.position_manager import PositionManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,21 @@ class StrategyCapital:
     used: float       # 已使用资金
     profit: float     # 累计盈亏
     available: float  # 可用资金 (allocated - used + profit)
+
+    # 风控指标
+    peak_profit: float = 0.0  # 历史最高盈利
+    max_drawdown_pct: float = 0.0  # 最大回撤百分比
+
+    def update_drawdown(self):
+        """更新最大回撤"""
+        if self.profit > self.peak_profit:
+            self.peak_profit = self.profit
+            self.max_drawdown_pct = 0.0
+        else:
+            # 计算从峰值到当前值的回撤
+            if self.peak_profit > 0:
+                drawdown = (self.peak_profit - self.profit) / self.allocated
+                self.max_drawdown_pct = max(self.max_drawdown_pct, drawdown)
 
 
 class CapitalCommander:
@@ -56,7 +77,8 @@ class CapitalCommander:
     def __init__(
         self,
         total_capital: float = 10000.0,
-        event_bus=None
+        event_bus=None,
+        risk_config: Optional[RiskConfig] = None
     ):
         """
         初始化资金指挥官
@@ -64,9 +86,11 @@ class CapitalCommander:
         Args:
             total_capital (float): 总资金（USDT）
             event_bus: 事件总线实例
+            risk_config (RiskConfig): 风控配置
         """
         self.total_capital = total_capital
         self._event_bus = event_bus
+        self._risk_config = risk_config or DEFAULT_RISK_CONFIG
 
         # 策略资金池 {strategy_id: StrategyCapital}
         self._strategies: Dict[str, StrategyCapital] = {}
@@ -74,8 +98,12 @@ class CapitalCommander:
         # 全局未分配资金
         self._unallocated = total_capital
 
+        # PositionManager 引用（用于全局敞口检查）
+        self._position_manager: Optional['PositionManager'] = None
+
         logger.info(
-            f"CapitalCommander 初始化: total_capital={total_capital:.2f} USDT"
+            f"CapitalCommander 初始化: total_capital={total_capital:.2f} USDT, "
+            f"risk_per_trade={self._risk_config.RISK_PER_TRADE_PCT * 100:.1f}%"
         )
 
     def allocate_strategy(
@@ -155,6 +183,188 @@ class CapitalCommander:
             )
 
         return has_power
+
+    def set_position_manager(self, position_manager: 'PositionManager'):
+        """
+        设置 PositionManager 引用（用于全局敞口检查）
+
+        Args:
+            position_manager (PositionManager): 持仓管理器实例
+        """
+        self._position_manager = position_manager
+        logger.debug("PositionManager 引用已设置")
+
+    def get_total_equity(self) -> float:
+        """
+        获取账户总权益
+
+        Returns:
+            float: 总权益 = 总资金 + 总盈亏
+        """
+        total_profit = sum(c.profit for c in self._strategies.values())
+        return self.total_capital + total_profit
+
+    def calculate_safe_quantity(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_loss_price: float,
+        strategy_id: str
+    ) -> float:
+        """
+        基于风险计算安全仓位大小（机构级风控核心）
+
+        计算逻辑：
+        1. 计算单笔愿意承担的最大亏损额 (Risk Capital)
+           risk_amount = account_equity * RISK_PER_TRADE_PCT
+
+        2. 计算止损价差 (Distance to Stop)
+           price_distance = abs(entry_price - stop_loss_price)
+
+        3. 计算基础仓位
+           quantity = risk_amount / price_distance
+
+        4. 双重熔断检查：
+           a. 名义价值检查：防止真实杠杆超过上限
+           b. 回撤检查：策略回撤超过阈值则禁止开仓
+
+        Args:
+            symbol (str): 交易对
+            entry_price (float): 入场价格
+            stop_loss_price (float): 止损价格
+            strategy_id (str): 策略 ID
+
+        Returns:
+            float: 安全仓位数量（如果触发风控则返回 0）
+        """
+        try:
+            # 0. 基本验证
+            if entry_price <= 0 or stop_loss_price <= 0:
+                logger.error(f"价格参数无效: entry={entry_price}, stop={stop_loss_price}")
+                return 0.0
+
+            # 1. 检查1：回撤熔断检查
+            if strategy_id in self._strategies:
+                capital = self._strategies[strategy_id]
+                capital.update_drawdown()
+
+                if capital.max_drawdown_pct > self._risk_config.MAX_DRAWDOWN_LIMIT:
+                    logger.warning(
+                        f"🛑 策略 {strategy_id} 回撤熔断触发: "
+                        f"drawdown={capital.max_drawdown_pct * 100:.2f}% > "
+                        f"limit={self._risk_config.MAX_DRAWDOWN_LIMIT * 100:.1f}%, "
+                        f"禁止开仓"
+                    )
+                    return 0.0
+
+            # 2. 计算账户权益
+            account_equity = self.get_total_equity()
+            logger.debug(f"账户权益: {account_equity:.2f} USDT")
+
+            # 3. 计算最大风险金额（1% Rule）
+            max_risk_amount = account_equity * self._risk_config.RISK_PER_TRADE_PCT
+            logger.debug(f"最大风险金额: {max_risk_amount:.2f} USDT (1% Rule)")
+
+            # 4. 计算止损价差
+            price_distance = abs(entry_price - stop_loss_price)
+
+            # 最小价差保护（防止除以零）
+            min_distance = entry_price * self._risk_config.MIN_STOP_DISTANCE_PCT
+            if price_distance < min_distance:
+                logger.warning(
+                    f"止损价差过小: {price_distance:.2f} < {min_distance:.2f}, "
+                    f"使用最小价差保护"
+                )
+                price_distance = min_distance
+
+            logger.debug(
+                f"止损价差: {price_distance:.2f} "
+                f"({entry_price} -> {stop_loss_price})"
+            )
+
+            # 5. 计算基础仓位
+            base_quantity = max_risk_amount / price_distance
+            logger.debug(f"基础仓位: {base_quantity:.4f}")
+
+            # 6. 检查2：名义价值检查（杠杆限制）
+            nominal_value = base_quantity * entry_price
+            current_exposure = 0.0
+
+            # 获取当前总持仓价值
+            if self._position_manager:
+                current_exposure = self._position_manager.get_total_exposure()
+
+            total_exposure = current_exposure + nominal_value
+            real_leverage = total_exposure / account_equity if account_equity > 0 else 0
+
+            logger.debug(
+                f"杠杆检查: current_exposure={current_exposure:.2f}, "
+                f"new_exposure={nominal_value:.2f}, "
+                f"total={total_exposure:.2f}, "
+                f"leverage={real_leverage:.2f}x"
+            )
+
+            # 如果超过杠杆上限，缩减仓位
+            if real_leverage > self._risk_config.MAX_GLOBAL_LEVERAGE:
+                # 计算允许的最大持仓价值
+                max_exposure = account_equity * self._risk_config.MAX_GLOBAL_LEVERAGE
+                max_new_exposure = max_exposure - current_exposure
+
+                if max_new_exposure > 0:
+                    adjusted_quantity = max_new_exposure / entry_price
+                    logger.warning(
+                        f"⚠️  杠杆限制触发: 削减仓位 "
+                        f"from {base_quantity:.4f} to {adjusted_quantity:.4f} "
+                        f"(杠杆从 {real_leverage:.2f}x 降至 "
+                        f"{self._risk_config.MAX_GLOBAL_LEVERAGE}x)"
+                    )
+                    base_quantity = adjusted_quantity
+                else:
+                    logger.warning(
+                        f"🛑 杠杆已达上限: {real_leverage:.2f}x > "
+                        f"{self._risk_config.MAX_GLOBAL_LEVERAGE}x, "
+                        f"禁止开仓"
+                    )
+                    return 0.0
+
+            # 警告级别（仅记录日志）
+            elif real_leverage > self._risk_config.WARNING_LEVERAGE_THRESHOLD:
+                logger.warning(
+                    f"⚠️  杠杆接近上限: {real_leverage:.2f}x "
+                    f"(警告阈值: {self._risk_config.WARNING_LEVERAGE_THRESHOLD}x)"
+                )
+
+            # 7. 检查3：单一币种敞口限制
+            symbol_exposure = 0.0
+            if self._position_manager:
+                symbol_exposure = self._position_manager.get_symbol_exposure(symbol)
+
+            total_symbol_exposure = symbol_exposure + nominal_value
+            symbol_exposure_ratio = total_symbol_exposure / account_equity
+
+            if symbol_exposure_ratio > self._risk_config.MAX_SINGLE_SYMBOL_EXPOSURE:
+                logger.warning(
+                    f"🛑 单一币种敞口超限: {symbol} "
+                    f"ratio={symbol_exposure_ratio * 100:.1f}% > "
+                    f"limit={self._risk_config.MAX_SINGLE_SYMBOL_EXPOSURE * 100:.1f}%, "
+                    f"禁止开仓"
+                )
+                return 0.0
+
+            logger.info(
+                f"✅ 安全仓位计算完成: {symbol} quantity={base_quantity:.4f}, "
+                f"nominal_value={base_quantity * entry_price:.2f} USDT, "
+                f"leverage={real_leverage:.2f}x"
+            )
+
+            return base_quantity
+
+        except ZeroDivisionError as e:
+            logger.error(f"仓位计算除零错误: {e}")
+            return 0.0
+        except Exception as e:
+            logger.error(f"仓位计算异常: {e}", exc_info=True)
+            return 0.0
 
     def reserve_capital(
         self,
@@ -313,6 +523,10 @@ class CapitalCommander:
                 # 可以在 PositionManager 中计算，然后调用 record_profit
                 pass
 
+            # 更新回撤指标
+            if strategy_id in self._strategies:
+                self._strategies[strategy_id].update_drawdown()
+
         except Exception as e:
             logger.error(f"处理订单成交事件失败: {e}")
 
@@ -321,3 +535,21 @@ class CapitalCommander:
         self._strategies.clear()
         self._unallocated = self.total_capital
         logger.info("资金指挥官已重置")
+
+    def is_strategy_circuit_breaker_triggered(self, strategy_id: str) -> bool:
+        """
+        检查策略是否触发回撤熔断
+
+        Args:
+            strategy_id (str): 策略 ID
+
+        Returns:
+            bool: 是否触发熔断
+        """
+        if strategy_id not in self._strategies:
+            return False
+
+        capital = self._strategies[strategy_id]
+        capital.update_drawdown()
+
+        return capital.max_drawdown_pct > self._risk_config.MAX_DRAWDOWN_LIMIT

@@ -412,6 +412,72 @@ class PositionManager:
             'short_count': short_count
         }
 
+    def get_total_exposure(self) -> float:
+        """
+        获取所有持仓的总敞口价值
+
+        敞口 = sum(abs(持仓数量 * 当前价格))
+        用于计算真实杠杆
+
+        Returns:
+            float: 总敞口价值（USDT）
+        """
+        total_exposure = 0.0
+
+        for position in self._positions.values():
+            # 假设 raw 中有当前价格，如果没有则使用开仓价
+            current_price = position.entry_price
+            if position.raw and 'current_price' in position.raw:
+                current_price = float(position.raw['current_price'])
+
+            exposure = abs(position.size * current_price)
+            total_exposure += exposure
+
+        return total_exposure
+
+    def get_symbol_exposure(self, symbol: str) -> float:
+        """
+        获取指定币种的敞口价值
+
+        Args:
+            symbol (str): 交易对
+
+        Returns:
+            float: 该币种的敞口价值（USDT）
+        """
+        position = self._positions.get(symbol)
+        if not position:
+            return 0.0
+
+        # 假设 raw 中有当前价格，如果没有则使用开仓价
+        current_price = position.entry_price
+        if position.raw and 'current_price' in position.raw:
+            current_price = float(position.raw['current_price'])
+
+        return abs(position.size * current_price)
+
+    def update_current_price(self, symbol: str, current_price: float):
+        """
+        更新持仓的当前价格（用于实时计算敞口）
+
+        Args:
+            symbol (str): 交易对
+            current_price (float): 当前价格
+        """
+        position = self._positions.get(symbol)
+        if position:
+            if not position.raw:
+                position.raw = {}
+            position.raw['current_price'] = current_price
+
+            # 重新计算未实现盈亏
+            position.unrealized_pnl = self._calculate_pnl(position, current_price)
+
+            logger.debug(
+                f"更新持仓价格: {symbol} {current_price:.2f}, "
+                f"未实现盈亏: {position.unrealized_pnl:+.2f}"
+            )
+
     def reset(self):
         """重置所有持仓状态"""
         self._positions.clear()
