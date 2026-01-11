@@ -62,8 +62,10 @@ async def test_patch_1_stop_loss_retry():
     mock_emergency_gateway = AsyncMock()
 
     async def place_order_emergency_mock(*args, **kwargs):
-        logger.info("✅ 紧急平仓单已发送！")
-        return {'ordId': 'emergency_close_123'}
+        # 紧急平仓也失败，触发最终异常
+        raise Exception("紧急平仓也失败了！")
+        # logger.info("✅ 紧急平仓单已发送！")
+        # return {'ordId': 'emergency_close_123'}
 
     mock_emergency_gateway.place_order = place_order_emergency_mock
 
@@ -161,8 +163,8 @@ async def test_patch_2_ghost_order_protection():
     # 创建模拟 OrderManager
     mock_order_manager = AsyncMock()
 
-    # 改为普通函数（不需要 async，因为测试中只是模拟调用）
-    def cancel_all_stop_loss_orders_mock(symbol: str) -> int:
+    # 改为 async 函数，因为 OrderManager.cancel_all_stop_loss_orders() 是 async
+    async def cancel_all_stop_loss_orders_mock(symbol: str) -> int:
         logger.info(f"✅ 调用 cancel_all_stop_loss_orders: {symbol}")
         logger.info("✅ 成功撤销 1 个止损单")
         return 1
@@ -195,15 +197,23 @@ async def test_patch_2_ghost_order_protection():
     logger.info(f"模拟持仓归零：BTC-USDT-SWAP size=0.0")
 
     # 执行测试
-    await position_manager.update_from_event(event)
+    position_manager.update_from_event(event)
 
-    # 等待异步任务完成
+    # 等待异步任务完成（asyncio.create_task 创建的异步任务）
     await asyncio.sleep(0.5)
+
+    # 验证是否调用了 mock 函数
+    if mock_order_manager.cancel_all_stop_loss_orders.called:
+        logger.info("✅ 成功验证：cancel_all_stop_loss_orders 已被调用")
+        result = True
+    else:
+        logger.error("❌ 验证失败：cancel_all_stop_loss_orders 未被调用")
+        result = False
 
     await event_bus.stop()
 
     logger.info("✅ 补丁二测试完成\n")
-    return True
+    return result
 
 
 async def test_patch_3_dynamic_instrument_loading():
