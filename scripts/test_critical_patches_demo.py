@@ -124,8 +124,8 @@ async def test_patch_1_stop_loss_retry(gateway: OkxRestGateway, event_bus: Event
         else:
             logger.info("无持仓")
 
-        # 查询止损单
-        all_orders = await order_manager.get_all_orders()
+        # 查询止损单（同步方法，不需要 await）
+        all_orders = order_manager.get_all_orders()
         stop_loss_orders = [
             o for o in all_orders.values()
             if o.order_type == 'stop_market'
@@ -236,11 +236,12 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
 
         logger.info(f"挂止损单: {symbol} stop @ {stop_price:.2f}")
 
+        # 注意：OKX SWAP 合约强制 size >= 1，所以会自动调整
         stop_loss_order = await order_manager.submit_order(
             symbol=symbol,
             side="sell",
             order_type="stop_market",  # 服务器端止损单
-            size=order_size,
+            size=1,  # 强制使用最小数量 1（OKX 要求）
             price=stop_price,
             strategy_id="test_stop_loss",
             reduce_only=True
@@ -254,8 +255,8 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         # 6. 等待一下
         await asyncio.sleep(2)
 
-        # 查询所有止损单
-        all_orders = await order_manager.get_all_orders()
+        # 查询所有止损单（同步方法，不需要 await）
+        all_orders = order_manager.get_all_orders()
         stop_loss_orders_before = [
             o for o in all_orders.values()
             if o.order_type == 'stop_market' and o.symbol == symbol
@@ -263,14 +264,19 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         logger.info(f"平仓前止损单数量: {len(stop_loss_orders_before)}")
 
         # 7. 平仓
-        close_side = 'sell' if position.get('side') == 'long' else 'buy'
-        logger.info(f"平仓: {symbol} {close_side} {position_size}")
+        # OKX 持仓 side 是 'net'，根据 size 判断方向
+        if position_size > 0:
+            close_side = 'sell'
+        else:
+            close_side = 'buy'
+
+        logger.info(f"平仓: {symbol} {close_side} {abs(position_size)}")
 
         close_order = await order_manager.submit_order(
             symbol=symbol,
             side=close_side,
             order_type="market",
-            size=position_size,
+            size=abs(position_size),  # 平仓数量 = 持仓数量的绝对值
             strategy_id="close_position"
         )
 
@@ -299,7 +305,8 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         # 9. 验证止损单是否被撤销
         await asyncio.sleep(3)  # 给幽灵单防护时间触发
 
-        all_orders = await order_manager.get_all_orders()
+        # 同步方法，不需要 await
+        all_orders = order_manager.get_all_orders()
         stop_loss_orders_after = [
             o for o in all_orders.values()
             if o.order_type == 'stop_market' and o.symbol == symbol
@@ -432,7 +439,12 @@ async def cleanup_all(gateway: OkxRestGateway, order_manager: OrderManager, symb
             position = positions[0]
             position_size = position.get('size', 0)
             if abs(position_size) > 0.001:  # 如果有持仓
-                close_side = 'sell' if position.get('side') == 'long' else 'buy'
+                # OKX 持仓 side 是 'net'，根据 size 判断方向
+                if position_size > 0:
+                    close_side = 'sell'
+                else:
+                    close_side = 'buy'
+
                 logger.info(f"平仓: {symbol} {close_side} {abs(position_size)}")
 
                 try:
@@ -440,7 +452,7 @@ async def cleanup_all(gateway: OkxRestGateway, order_manager: OrderManager, symb
                         symbol=symbol,
                         side=close_side,
                         order_type='market',
-                        size=abs(position_size),
+                        size=abs(position_size),  # 平仓数量 = 持仓数量的绝对值
                         strategy_id="cleanup"
                     )
                 except Exception as e:

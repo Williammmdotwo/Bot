@@ -618,6 +618,15 @@ class CapitalCommander:
         self._unallocated = self.total_capital
         logger.info("资金指挥官已重置")
 
+    def get_all_instruments(self) -> Dict[str, ExchangeInstrument]:
+        """
+        获取所有注册的交易对
+
+        Returns:
+            dict: {symbol: ExchangeInstrument}
+        """
+        return self._instruments.copy()
+
     def is_strategy_circuit_breaker_triggered(self, strategy_id: str) -> bool:
         """
         检查策略是否触发回撤熔断
