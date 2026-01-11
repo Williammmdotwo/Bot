@@ -596,6 +596,64 @@ class OkxRestGateway(RestGateway):
             logger.error(f"获取 K线失败: {e}")
             return []
 
+    async def get_instruments(
+        self,
+        inst_type: Optional[str] = "SWAP"
+    ) -> List[Dict[str, Any]]:
+        """
+        获取交易对信息（动态加载交易对配置）
+
+        Args:
+            inst_type (str): 合约类型（默认 "SWAP" 永续合约）
+
+        Returns:
+            list: 交易对信息列表，每个元素包含：
+                - instId: 交易对 ID（如 "BTC-USDT-SWAP"）
+                - lotSz: 数量精度
+                - minSz: 最小下单数量
+                - tickSz: 价格精度
+                - state: 交易状态（live, suspend, etc.）
+        """
+        try:
+            # 构造请求参数
+            params = {'instType': inst_type}
+
+            response = await self._request(
+                "GET",
+                "/api/v5/public/instruments",
+                params=params
+            )
+
+            raw_instruments = response.get('data', [])
+            parsed_instruments = []
+
+            for raw in raw_instruments:
+                # 只返回交易状态正常的交易对
+                state = raw.get('state', '')
+                if state != 'live':
+                    continue
+
+                instrument = {
+                    'instId': raw.get('instId'),
+                    'lotSz': float(raw.get('lotSz', 0)) if raw.get('lotSz') else 0.0,
+                    'minSz': float(raw.get('minSz', 0)) if raw.get('minSz') else 0.0,
+                    'tickSz': float(raw.get('tickSz', 0)) if raw.get('tickSz') else 0.0,
+                    'state': state,
+                    'raw': raw
+                }
+                parsed_instruments.append(instrument)
+
+            logger.info(
+                f"获取交易对信息成功: {len(parsed_instruments)} 个交易对 "
+                f"(instType={inst_type})"
+            )
+
+            return parsed_instruments
+
+        except Exception as e:
+            logger.error(f"获取交易对信息失败: {e}", exc_info=True)
+            return []
+
     async def set_leverage(
         self,
         symbol: str,

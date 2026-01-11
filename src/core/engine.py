@@ -107,8 +107,10 @@ class Engine:
         )
         logger.info(f"✅ CapitalCommander 已初始化: {total_capital:.2f} USDT")
 
+        # 注意：OrderManager 还未创建，需要在后面设置
         self._position_manager = PositionManager(
             event_bus=self._event_bus,
+            order_manager=None,  # 暂时设为 None，后面设置
             sync_threshold_pct=self.config.get('sync_threshold_pct', 0.10),
             cooldown_seconds=self.config.get('sync_cooldown_seconds', 60)
         )
@@ -171,6 +173,10 @@ class Engine:
         )
         logger.info("✅ OrderManager 已初始化（已集成风控）")
 
+        # 将 OrderManager 设置到 PositionManager（用于幽灵单防护）
+        self._position_manager._order_manager = self._order_manager
+        logger.debug("✅ PositionManager 已关联 OrderManager（幽灵单防护已启用）")
+
         # 6. 加载 Strategies
         strategies_config = self.config.get('strategies', [])
         for strategy_config in strategies_config:
@@ -183,7 +189,11 @@ class Engine:
         await self._register_event_handlers()
         logger.info("✅ 事件处理器已注册")
 
-        # 8. 分配策略资金
+        # 8. 动态加载交易对信息（补丁三）
+        await self._load_instruments()
+        logger.info("✅ 交易对信息已加载")
+
+        # 9. 分配策略资金
         await self._allocate_strategy_capitals()
         logger.info("✅ 策略资金已分配")
 
@@ -265,6 +275,64 @@ class Engine:
             EventType.ORDER_CANCELLED,
             self._order_manager.on_order_cancelled
         )
+
+    async def _load_instruments(self):
+        """
+        动态加载交易对信息（补丁三）
+
+        从交易所拉取所有交易对配置，自动注册到 CapitalCommander。
+        避免手动维护交易对配置，支持交易所动态调整。
+        """
+        try:
+            logger.info("动态加载交易对信息...")
+
+            # 从 Gateway 拉取所有 SWAP（永续合约）交易对
+            instruments = await self._rest_gateway.get_instruments(inst_type="SWAP")
+
+            if not instruments:
+                logger.warning("未获取到交易对信息，跳过注册")
+                return
+
+            # 获取策略使用的交易对列表
+            strategy_symbols = set()
+            for strategy in self._strategies:
+                if hasattr(strategy, 'symbol'):
+                    strategy_symbols.add(strategy.symbol)
+
+            # 只注册策略使用的交易对（避免注册几千个无用的）
+            registered_count = 0
+            for inst in instruments:
+                symbol = inst.get('instId', '')
+
+                # 只注册策略使用的交易对
+                if symbol in strategy_symbols:
+                    lot_size = inst.get('lotSz', 0)
+                    min_order_size = inst.get('minSz', 0)
+                    # min_notional 通常是 10 USDT（OKX 默认）
+                    min_notional = 10.0
+
+                    self._capital_commander.register_instrument(
+                        symbol=symbol,
+                        lot_size=lot_size,
+                        min_order_size=min_order_size,
+                        min_notional=min_notional
+                    )
+                    registered_count += 1
+
+                    logger.info(
+                        f"✅ 交易对已注册: {symbol} "
+                        f"lot_size={lot_size}, min_order_size={min_order_size}, "
+                        f"min_notional={min_notional:.2f} USDT"
+                    )
+
+            logger.info(
+                f"✅ 交易对信息加载完成: 共注册 {registered_count} 个交易对"
+            )
+
+        except Exception as e:
+            logger.error(f"加载交易对信息失败: {e}", exc_info=True)
+            # 不阻塞系统启动，继续运行
+            logger.warning("交易对信息加载失败，继续运行...")
 
     async def _allocate_strategy_capitals(self):
         """为策略分配资金"""

@@ -331,6 +331,53 @@ class OrderManager:
             logger.error(f"撤销所有订单异常: {e}")
             return 0
 
+    async def cancel_all_stop_loss_orders(self, symbol: str) -> int:
+        """
+        撤销指定交易对的所有止损单（幽灵单防护）
+
+        Args:
+            symbol (str): 交易对
+
+        Returns:
+            int: 成功撤销的止损单数量
+
+        注意：
+            用于持仓归零时，撤销所有挂着的 reduce_only 止损单，
+            防止止损单变成反向开仓单（幽灵单风险）。
+        """
+        try:
+            logger.info(f"撤销所有止损单: symbol={symbol}")
+
+            # 获取该交易对的所有订单
+            orders = self._symbol_to_orders.get(symbol, {})
+            if not orders:
+                return 0
+
+            # 筛选出所有止损单（order_type='stop_market'）
+            stop_loss_orders_to_cancel = []
+            for order in orders.values():
+                if (order.status in ['pending', 'live'] and
+                    order.order_type == 'stop_market'):
+                    stop_loss_orders_to_cancel.append(order)
+
+            # 撤销止损单
+            success_count = 0
+            for order in stop_loss_orders_to_cancel:
+                success = await self.cancel_order(order.order_id, order.symbol)
+                if success:
+                    success_count += 1
+
+            if success_count > 0:
+                logger.info(
+                    f"✅ 幽灵单防护: 撤销 {success_count} 个止损单 - {symbol}"
+                )
+
+            return success_count
+
+        except Exception as e:
+            logger.error(f"撤销止损单异常: {e}", exc_info=True)
+            return 0
+
     async def on_order_update(self, event: Event):
         """
         监听订单更新事件
@@ -418,14 +465,17 @@ class OrderManager:
         except Exception as e:
             logger.error(f"处理订单成交事件失败: {e}", exc_info=True)
 
-    async def _place_stop_loss_order(self, open_order: Order, fill_data: dict):
+    async def _place_stop_loss_order(self, open_order: Order, fill_data: dict, retry_count: int = 3):
         """
-        放置止损订单（硬止损核心）
+        放置止损订单（硬止损核心 + 重试机制 + 紧急平仓）
 
         Args:
             open_order (Order): 已成交的开仓订单
             fill_data (dict): 成交数据，包含 stop_loss_price
+            retry_count (int): 重试次数（默认3次）
         """
+        import asyncio
+
         try:
             # 检查是否提供了止损价格
             stop_loss_price = fill_data.get('stop_loss_price')
@@ -448,83 +498,164 @@ class OrderManager:
             else:
                 stop_price = stop_loss_price
 
-            # 调用 Gateway 下止损订单（服务器端 Stop Market）
-            response = await self._rest_gateway.place_order(
-                symbol=open_order.symbol,
-                side=stop_side,
-                order_type='market',  # 触发后市价成交
-                size=open_order.filled_size,  # 使用实际成交数量
-                price=stop_price,  # 触发价格
-                order_type='stop_market',  # 标记为止损订单
-                strategy_id=open_order.strategy_id,
-                reduce_only=True  # 只减仓
+            # 重试机制：尝试多次发送止损单
+            last_exception = None
+            for attempt in range(1, retry_count + 1):
+                try:
+                    # 调用 Gateway 下止损订单（服务器端 Stop Market）
+                    response = await self._rest_gateway.place_order(
+                        symbol=open_order.symbol,
+                        side=stop_side,
+                        order_type='market',  # 触发后市价成交
+                        size=open_order.filled_size,  # 使用实际成交数量
+                        price=stop_price,  # 触发价格
+                        order_type='stop_market',  # 标记为止损订单
+                        strategy_id=open_order.strategy_id,
+                        reduce_only=True  # 只减仓
+                    )
+
+                    if response:
+                        # 成功！提取止损订单 ID
+                        stop_loss_order_id = response.get('ordId')
+                        if stop_loss_order_id:
+                            # 记录止损订单映射
+                            self._stop_loss_orders[open_order.order_id] = stop_loss_order_id
+
+                            # 在原订单上标记止损订单 ID
+                            open_order.stop_loss_order_id = stop_loss_order_id
+
+                            # 创建止损订单对象
+                            stop_loss_order = Order(
+                                order_id=stop_loss_order_id,
+                                symbol=open_order.symbol,
+                                side=stop_side,
+                                order_type='stop_market',
+                                size=open_order.filled_size,
+                                price=stop_price,
+                                filled_size=0.0,
+                                status='live',
+                                strategy_id=open_order.strategy_id,
+                                raw=response
+                            )
+
+                            # 保存止损订单
+                            self._orders[stop_loss_order_id] = stop_loss_order
+
+                            if stop_loss_order.symbol not in self._symbol_to_orders:
+                                self._symbol_to_orders[stop_loss_order.symbol] = {}
+                            self._symbol_to_orders[stop_loss_order.symbol][stop_loss_order_id] = stop_loss_order
+
+                            logger.info(
+                                f"✅ 硬止损已激活: {stop_loss_order_id} - "
+                                f"{stop_loss_order.symbol} {stop_side} {stop_loss_order.size:.4f} @ {stop_price:.2f} "
+                                f"(关联开仓单: {open_order.order_id}, 尝试次数: {attempt})"
+                            )
+
+                            # 推送止损订单事件
+                            if self._event_bus:
+                                event = Event(
+                                    type=EventType.ORDER_SUBMITTED,
+                                    data={
+                                        'order_id': stop_loss_order_id,
+                                        'symbol': stop_loss_order.symbol,
+                                        'side': stop_side,
+                                        'order_type': 'stop_market',
+                                        'size': stop_loss_order.size,
+                                        'price': stop_price,
+                                        'strategy_id': open_order.strategy_id,
+                                        'linked_order_id': open_order.order_id,
+                                        'is_stop_loss': True,
+                                        'raw': response
+                                    },
+                                    source="order_manager"
+                                )
+                                self._event_bus.put_nowait(event)
+                            return  # 成功则退出
+
+                except Exception as e:
+                    last_exception = e
+                    logger.warning(
+                        f"止损订单提交失败（尝试 {attempt}/{retry_count}）: {e}"
+                    )
+
+                    # 如果不是最后一次尝试，等待后重试
+                    if attempt < retry_count:
+                        await asyncio.sleep(0.5)  # 间隔 0.5 秒
+
+            # 所有重试都失败了，触发紧急平仓
+            logger.error(
+                f"🚨 所有重试失败！触发紧急平仓机制: {open_order.order_id} - "
+                f"{open_order.symbol} {open_order.side} {open_order.filled_size:.4f}, "
+                f"原因: {last_exception}"
             )
 
-            if not response:
-                logger.error(f"止损订单提交失败: {open_order.symbol}")
-                return
-
-            # 提取止损订单 ID
-            stop_loss_order_id = response.get('ordId')
-            if not stop_loss_order_id:
-                logger.error(f"止损订单响应缺少 ordId: {response}")
-                return
-
-            # 记录止损订单映射
-            self._stop_loss_orders[open_order.order_id] = stop_loss_order_id
-
-            # 在原订单上标记止损订单 ID
-            open_order.stop_loss_order_id = stop_loss_order_id
-
-            # 创建止损订单对象
-            stop_loss_order = Order(
-                order_id=stop_loss_order_id,
-                symbol=open_order.symbol,
-                side=stop_side,
-                order_type='stop_market',
-                size=open_order.filled_size,
-                price=stop_price,
-                filled_size=0.0,
-                status='live',
-                strategy_id=open_order.strategy_id,
-                raw=response
-            )
-
-            # 保存止损订单
-            self._orders[stop_loss_order_id] = stop_loss_order
-
-            if stop_loss_order.symbol not in self._symbol_to_orders:
-                self._symbol_to_orders[stop_loss_order.symbol] = {}
-            self._symbol_to_orders[stop_loss_order.symbol][stop_loss_order_id] = stop_loss_order
-
-            logger.info(
-                f"✅ 硬止损已激活: {stop_loss_order_id} - "
-                f"{stop_loss_order.symbol} {stop_side} {stop_loss_order.size:.4f} @ {stop_price:.2f} "
-                f"(关联开仓单: {open_order.order_id})"
-            )
-
-            # 推送止损订单事件
-            if self._event_bus:
-                event = Event(
-                    type=EventType.ORDER_SUBMITTED,
-                    data={
-                        'order_id': stop_loss_order_id,
-                        'symbol': stop_loss_order.symbol,
-                        'side': stop_side,
-                        'order_type': 'stop_market',
-                        'size': stop_loss_order.size,
-                        'price': stop_price,
-                        'strategy_id': open_order.strategy_id,
-                        'linked_order_id': open_order.order_id,
-                        'is_stop_loss': True,
-                        'raw': response
-                    },
-                    source="order_manager"
-                )
-                self._event_bus.put_nowait(event)
+            # 立即发送市价平仓单
+            await self._emergency_close_position(open_order)
 
         except Exception as e:
             logger.error(f"放置止损订单异常: {e}", exc_info=True)
+            # 紧急平仓作为最后手段
+            await self._emergency_close_position(open_order)
+
+    async def _emergency_close_position(self, open_order: Order):
+        """
+        紧急平仓（止损单失败后的最后手段）
+
+        Args:
+            open_order (Order): 已成交的开仓订单
+        """
+        try:
+            # 计算平仓方向
+            close_side = 'sell' if open_order.side == 'buy' else 'buy'
+
+            logger.warning(
+                f"⚠️  执行紧急平仓: {open_order.symbol} {close_side} {open_order.filled_size:.4f} @ market"
+            )
+
+            # 发送市价平仓单
+            response = await self._rest_gateway.place_order(
+                symbol=open_order.symbol,
+                side=close_side,
+                order_type='market',  # 市价成交
+                size=open_order.filled_size,
+                price=0.0,  # 市价单不指定价格
+                order_type='market',
+                strategy_id=open_order.strategy_id,
+                reduce_only=True,  # 只减仓
+                is_emergency_close=True  # 标记为紧急平仓
+            )
+
+            if response:
+                order_id = response.get('ordId')
+                logger.info(
+                    f"✅ 紧急平仓单已提交: {order_id} - "
+                    f"{open_order.symbol} {close_side} {open_order.filled_size:.4f}"
+                )
+
+                # 推送紧急平仓事件
+                if self._event_bus:
+                    event = Event(
+                        type=EventType.ORDER_SUBMITTED,
+                        data={
+                            'order_id': order_id,
+                            'symbol': open_order.symbol,
+                            'side': close_side,
+                            'order_type': 'market',
+                            'size': open_order.filled_size,
+                            'price': 0.0,
+                            'strategy_id': open_order.strategy_id,
+                            'linked_order_id': open_order.order_id,
+                            'is_emergency_close': True,
+                            'raw': response
+                        },
+                        source="order_manager"
+                    )
+                    self._event_bus.put_nowait(event)
+            else:
+                logger.error(f"🚨 紧急平仓失败！仓位裸奔风险！: {open_order.symbol}")
+
+        except Exception as e:
+            logger.error(f"🚨 紧急平仓异常！仓位裸奔风险！: {e}", exc_info=True)
 
     async def on_order_cancelled(self, event: Event):
         """

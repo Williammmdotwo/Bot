@@ -192,6 +192,27 @@ class RestGateway(BaseGateway):
         """
         pass
 
+    @abstractmethod
+    async def get_instruments(
+        self,
+        inst_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        获取交易对信息（动态加载交易对配置）
+
+        Args:
+            inst_type (str): 合约类型（如 "SWAP" 永续合约，None 表示全部）
+
+        Returns:
+            list: 交易对信息列表，每个元素包含：
+                - instId: 交易对 ID（如 "BTC-USDT-SWAP"）
+                - lotSz: 数量精度
+                - minSz: 最小下单数量
+                - tickSz: 价格精度
+                - state: 交易状态（live, suspend, etc.）
+        """
+        pass
+
 
 class WebSocketGateway(BaseGateway):
     """

@@ -7,6 +7,7 @@
 - 实时维护本地持仓状态
 - 计算持仓盈亏
 - 处理期望持仓与实际持仓的同步 (Shadow Ledger 逻辑)
+- 幽灵单风险防护：持仓归零时自动撤销止损单
 
 设计原则：
 - 监听 POSITION_UPDATE 和 ORDER_FILLED 事件
@@ -15,6 +16,7 @@
 """
 
 import time
+import asyncio
 import logging
 from typing import Dict, Optional
 from dataclasses import dataclass
@@ -45,6 +47,7 @@ class PositionManager:
     持仓管理器
 
     实时维护持仓状态，计算盈亏，并处理期望持仓与实际持仓的同步。
+    集成幽灵单风险防护：持仓归零时自动撤销止损单。
 
     Example:
         >>> pm = PositionManager(event_bus)
@@ -64,6 +67,7 @@ class PositionManager:
     def __init__(
         self,
         event_bus=None,
+        order_manager=None,
         sync_threshold_pct: float = 0.10,
         cooldown_seconds: int = 60
     ):
@@ -72,10 +76,12 @@ class PositionManager:
 
         Args:
             event_bus: 事件总线实例
+            order_manager: 订单管理器实例（用于幽灵单防护）
             sync_threshold_pct: 触发同步的差异阈值（默认 10%）
             cooldown_seconds: 同步操作的冷却时间（秒）
         """
         self._event_bus = event_bus
+        self._order_manager = order_manager
 
         # 本地持仓 {symbol: Position}
         self._positions: Dict[str, Position] = {}
@@ -139,6 +145,14 @@ class PositionManager:
             if symbol in self._positions:
                 logger.info(f"持仓已平仓: {symbol}")
                 del self._positions[symbol]
+
+                # 幽灵单防护：撤销所有止损单
+                # 当持仓归零时，如果还有挂着的止损单，可能会变成反向开仓单
+                if self._order_manager:
+                    asyncio.create_task(
+                        self._cancel_stop_loss_orders(symbol)
+                    )
+
             return
 
         # 更新持仓
@@ -477,6 +491,34 @@ class PositionManager:
                 f"更新持仓价格: {symbol} {current_price:.2f}, "
                 f"未实现盈亏: {position.unrealized_pnl:+.2f}"
             )
+
+    async def _cancel_stop_loss_orders(self, symbol: str):
+        """
+        幽灵单防护：撤销指定交易对的所有止损单
+
+        当持仓归零时，如果还有挂着的止损单，可能会变成反向开仓单（幽灵单）。
+        此方法会异步撤销所有止损单，防止这种风险。
+
+        Args:
+            symbol (str): 交易对
+        """
+        try:
+            if not self._order_manager:
+                return
+
+            # 调用 OrderManager 撤销所有止损单
+            cancelled_count = await self._order_manager.cancel_all_stop_loss_orders(symbol)
+
+            if cancelled_count > 0:
+                logger.info(
+                    f"✅ 幽灵单防护已触发: 撤销 {cancelled_count} 个止损单 - {symbol}"
+                )
+                # TODO: 推送 GHOST_ORDER_CLEANUP 事件
+            else:
+                logger.debug(f"无止损单需要撤销: {symbol}")
+
+        except Exception as e:
+            logger.error(f"幽灵单防护失败: {e}", exc_info=True)
 
     def reset(self):
         """重置所有持仓状态"""
