@@ -241,23 +241,25 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
 
         # 5. 挂普通限价单（模拟止损单）
         # ⚠️ OKX 模拟盘不支持条件单，使用深埋限价单模拟
+        # ⚠️ OKX 有价格偏离限制，不能挂太远的价格（会被拒绝）
         logger.info("⚠️  模拟盘限制：使用深埋限价单代替止损单进行测试...")
 
-        # 获取当前价格，设置深埋价格
+        # 获取当前价格，设置安全价格
         current_price = position.get('entry_price', 0)
-        # 设置深埋价格：高于当前价 50%（保证不会成交）
-        deep_price = current_price * 1.5
+        # ✅ 设置安全价格：高于当前价 7%（在 OKX 价格偏离限制内）
+        # 140 * 1.07 ≈ 150，不会成交，但不会触发价格限制
+        safe_limit_price = current_price * 1.07
 
-        logger.info(f"挂模拟止损单（limit）: {symbol} limit @ {deep_price:.2f}（深埋，不会成交）")
+        logger.info(f"挂模拟止损单（limit）: {symbol} limit @ {safe_limit_price:.2f}（+7%，安全范围）")
 
-        # 使用普通限价单模拟止损单（深度埋单，不会成交）
+        # 使用普通限价单模拟止损单（价格合理，不会成交）
         # OKX SWAP 合约强制 size >= 1
         stop_loss_order = await gateway.place_order(
             symbol=symbol,
             side="sell",  # 做多的平仓方向是 sell
             order_type="limit",
             size=1,  # 强制使用最小数量 1（OKX 要求）
-            price=deep_price,  # 深埋价格（高于市场价 50%）
+            price=safe_limit_price,  # ✅ 安全价格（高于市场价 7%，在 OKX 限制内）
             reduce_only=True,  # ✅ 关键：只减仓属性
             clOrdId=f"test_ghost_{int(time.time())}",
             strategy_id="test_limit_stop"
