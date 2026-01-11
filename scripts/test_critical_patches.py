@@ -91,6 +91,7 @@ async def test_patch_1_stop_loss_retry():
         filled_size: float = 0.0
         status: str = "pending"
         raw: dict = None
+        strategy_id: str = "default"  # 添加 strategy_id 属性
 
     # 创建模拟订单
     mock_order = MockOrder(
@@ -101,7 +102,8 @@ async def test_patch_1_stop_loss_retry():
         size=1.0,
         price=50000.0,
         filled_size=1.0,
-        status="filled"
+        status="filled",
+        strategy_id="test_strategy"  # 提供 strategy_id
     )
 
     # 注入到 OrderManager
@@ -159,7 +161,8 @@ async def test_patch_2_ghost_order_protection():
     # 创建模拟 OrderManager
     mock_order_manager = AsyncMock()
 
-    async def cancel_all_stop_loss_orders_mock(symbol: str) -> int:
+    # 改为普通函数（不需要 async，因为测试中只是模拟调用）
+    def cancel_all_stop_loss_orders_mock(symbol: str) -> int:
         logger.info(f"✅ 调用 cancel_all_stop_loss_orders: {symbol}")
         logger.info("✅ 成功撤销 1 个止损单")
         return 1
