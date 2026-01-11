@@ -429,22 +429,25 @@ class VolatilityEstimator:
     适用于 HFT 策略，只需上一根 K 线的 close 价格即可更新。
     """
 
-    def __init__(self, alpha: float = 0.2, initial_price: float = 0.0):
+    def __init__(self, alpha: float = 0.2, initial_price: float = 0.0, min_volatility_floor: float = 0.005):
         """
         初始化波动率估算器
 
         Args:
             alpha (float): EMA 平滑因子，默认 0.2（相当于 5 周期 EMA）
             initial_price (float): 初始价格（可选）
+            min_volatility_floor (float): 波动率下限（默认 0.5%），防止在横盘市场中计算过大的杠杆
         """
         self.alpha = alpha
         self.previous_close = initial_price
         self.ema_volatility = 0.0
         self.samples_count = 0
+        self.min_volatility_floor = min_volatility_floor
 
         logger.debug(
             f"VolatilityEstimator 初始化: alpha={alpha}, "
-            f"initial_price={initial_price}"
+            f"initial_price={initial_price}, "
+            f"min_volatility_floor={min_volatility_floor*100:.2f}%"
         )
 
     def update_volatility(self, current_price: float, previous_close: float = None) -> float:
@@ -487,6 +490,14 @@ class VolatilityEstimator:
                 self.alpha * volatility +
                 (1 - self.alpha) * self.ema_volatility
             )
+
+        # 波动率下限保护：防止在横盘市场中波动率过小
+        if self.ema_volatility < self.min_volatility_floor:
+            logger.debug(
+                f"波动率低于下限: {self.ema_volatility*100:.3f}% < "
+                f"{self.min_volatility_floor*100:.2f}%, 使用下限值"
+            )
+            self.ema_volatility = self.min_volatility_floor
 
         # 更新内部状态
         self.previous_close = current_price

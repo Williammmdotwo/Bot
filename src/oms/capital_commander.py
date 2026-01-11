@@ -9,6 +9,7 @@
 - 追踪策略盈亏
 - 实时更新资金状态
 - 基于风险的仓位计算（机构级风控）
+- 交易所精度控制（lot_size, min_order_size, min_notional）
 
 设计原则：
 - 集中管理，避免资金冲突
@@ -18,6 +19,7 @@
 """
 
 import logging
+import math
 from typing import Dict, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 from ..core.event_types import Event, EventType
@@ -27,6 +29,15 @@ if TYPE_CHECKING:
     from ..oms.position_manager import PositionManager
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExchangeInstrument:
+    """交易所交易对配置"""
+    symbol: str
+    lot_size: float        # 数量精度（例如 0.01）
+    min_order_size: float  # 最小下单数量
+    min_notional: float   # 最小下单金额（USDT）
 
 
 @dataclass
@@ -101,9 +112,40 @@ class CapitalCommander:
         # PositionManager 引用（用于全局敞口检查）
         self._position_manager: Optional['PositionManager'] = None
 
+        # 交易所交易对配置（精度控制）
+        self._instruments: Dict[str, ExchangeInstrument] = {}
+
         logger.info(
             f"CapitalCommander 初始化: total_capital={total_capital:.2f} USDT, "
             f"risk_per_trade={self._risk_config.RISK_PER_TRADE_PCT * 100:.1f}%"
+        )
+
+    def register_instrument(
+        self,
+        symbol: str,
+        lot_size: float,
+        min_order_size: float,
+        min_notional: float
+    ):
+        """
+        注册交易所交易对配置
+
+        Args:
+            symbol (str): 交易对
+            lot_size (float): 数量精度
+            min_order_size (float): 最小下单数量
+            min_notional (float): 最小下单金额（USDT）
+        """
+        self._instruments[symbol] = ExchangeInstrument(
+            symbol=symbol,
+            lot_size=lot_size,
+            min_order_size=min_order_size,
+            min_notional=min_notional
+        )
+        logger.info(
+            f"注册交易对配置: {symbol} lot_size={lot_size}, "
+            f"min_order_size={min_order_size}, "
+            f"min_notional={min_notional:.2f} USDT"
         )
 
     def allocate_strategy(
@@ -228,6 +270,10 @@ class CapitalCommander:
            a. 名义价值检查：防止真实杠杆超过上限
            b. 回撤检查：策略回撤超过阈值则禁止开仓
 
+        5. 交易所精度控制：
+           a. 根据 lot_size 向下取整
+           b. 检查 min_order_size 和 min_notional
+
         Args:
             symbol (str): 交易对
             entry_price (float): 入场价格
@@ -350,6 +396,42 @@ class CapitalCommander:
                     f"禁止开仓"
                 )
                 return 0.0
+
+            # 8. 交易所精度控制
+            instrument = self._instruments.get(symbol)
+            if instrument:
+                # 8a. 根据 lot_size 向下取整
+                lot_size = instrument.lot_size
+                if lot_size > 0:
+                    rounded_quantity = math.floor(base_quantity / lot_size) * lot_size
+                    logger.debug(
+                        f"精度调整: {base_quantity:.4f} -> {rounded_quantity:.4f} "
+                        f"(lot_size={lot_size})"
+                    )
+                    base_quantity = rounded_quantity
+                else:
+                    logger.warning(f"交易对 {symbol} lot_size 无效: {lot_size}")
+
+                # 8b. 检查 min_order_size（最小数量）
+                if base_quantity < instrument.min_order_size:
+                    logger.warning(
+                        f"🛑 仓位数量过小: {base_quantity:.4f} < "
+                        f"min_order_size={instrument.min_order_size:.4f}, "
+                        f"Skipped: Size too small"
+                    )
+                    return 0.0
+
+                # 8c. 检查 min_notional（最小金额）
+                final_notional = base_quantity * entry_price
+                if final_notional < instrument.min_notional:
+                    logger.warning(
+                        f"🛑 订单金额过小: {final_notional:.2f} USDT < "
+                        f"min_notional={instrument.min_notional:.2f} USDT, "
+                        f"Skipped: Size too small"
+                    )
+                    return 0.0
+            else:
+                logger.warning(f"未找到交易对 {symbol} 的精度配置，跳过精度控制")
 
             logger.info(
                 f"✅ 安全仓位计算完成: {symbol} quantity={base_quantity:.4f}, "

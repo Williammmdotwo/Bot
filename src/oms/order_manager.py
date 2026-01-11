@@ -9,11 +9,13 @@
 - 调用 Gateway 发单
 - 追踪订单状态
 - 自动撤单
+- 硬止损执行（Hard Stop）
 
 设计原则：
 - 监听网关的订单推送
 - 维护本地订单状态
 - 提供统一的订单接口
+- 订单成交后立即发送止损订单到交易所
 """
 
 import logging
@@ -40,6 +42,7 @@ class Order:
     status: str = "pending"  # pending, live, filled, cancelled, rejected
     strategy_id: str = "default"
     raw: dict = None
+    stop_loss_order_id: str = None  # 关联的止损订单 ID
 
 
 class OrderManager:
@@ -47,6 +50,7 @@ class OrderManager:
     订单管理器
 
     负责订单生命周期的管理，包括下单、撤单和状态跟踪。
+    硬止损策略：订单成交后立即发送止损订单到交易所。
 
     Example:
         >>> om = OrderManager(
@@ -91,6 +95,9 @@ class OrderManager:
         # Symbol -> OrderId 映射（用于快速查找）
         self._symbol_to_orders: Dict[str, Dict[str, Order]] = {}
 
+        # 止损订单映射 {open_order_id: stop_loss_order_id}
+        self._stop_loss_orders: Dict[str, str] = {}
+
         logger.info("OrderManager 初始化")
 
     async def submit_order(
@@ -101,6 +108,7 @@ class OrderManager:
         size: float,
         price: Optional[float] = None,
         strategy_id: str = "default",
+        stop_loss_price: Optional[float] = None,
         **kwargs
     ) -> Optional[Order]:
         """
@@ -113,6 +121,7 @@ class OrderManager:
             size (float): 数量
             price (float): 价格（限价单必需）
             strategy_id (str): 策略 ID
+            stop_loss_price (float): 止损价格（用于硬止损）
             **kwargs: 其他参数
 
         Returns:
@@ -153,6 +162,7 @@ class OrderManager:
                 size=size,
                 price=price,
                 strategy_id=strategy_id,
+                stop_loss_price=stop_loss_price,
                 **kwargs
             )
 
@@ -321,7 +331,7 @@ class OrderManager:
             logger.error(f"撤销所有订单异常: {e}")
             return 0
 
-    def on_order_update(self, event: Event):
+    async def on_order_update(self, event: Event):
         """
         监听订单更新事件
 
@@ -372,9 +382,9 @@ class OrderManager:
         except Exception as e:
             logger.error(f"处理订单更新事件失败: {e}")
 
-    def on_order_filled(self, event: Event):
+    async def on_order_filled(self, event: Event):
         """
-        监听订单成交事件
+        监听订单成交事件（硬止损执行核心）
 
         Args:
             event (Event): ORDER_FILLED 事件
@@ -397,13 +407,126 @@ class OrderManager:
                     f"{order.symbol} {order.side} {order.filled_size:.4f}"
                 )
 
+                # 硬止损执行：立即发送止损订单
+                # 只有开仓订单（买入/卖出）才需要止损
+                if order.order_id not in self._stop_loss_orders:
+                    await self._place_stop_loss_order(order, data)
+
                 # 清理已完成订单
                 self._cleanup_order(order_id)
 
         except Exception as e:
-            logger.error(f"处理订单成交事件失败: {e}")
+            logger.error(f"处理订单成交事件失败: {e}", exc_info=True)
 
-    def on_order_cancelled(self, event: Event):
+    async def _place_stop_loss_order(self, open_order: Order, fill_data: dict):
+        """
+        放置止损订单（硬止损核心）
+
+        Args:
+            open_order (Order): 已成交的开仓订单
+            fill_data (dict): 成交数据，包含 stop_loss_price
+        """
+        try:
+            # 检查是否提供了止损价格
+            stop_loss_price = fill_data.get('stop_loss_price')
+            if not stop_loss_price or stop_loss_price <= 0:
+                logger.warning(
+                    f"订单 {open_order.order_id} 未提供止损价格，跳过止损"
+                )
+                return
+
+            # 计算止损方向
+            # 买入开仓 → 止损卖出
+            # 卖出开仓 → 止损买入
+            stop_side = 'sell' if open_order.side == 'buy' else 'buy'
+
+            # 计算止损价格
+            # 对于做多：止损价格 < 开仓价
+            # 对于做空：止损价格 > 开仓价
+            if open_order.side == 'buy':
+                stop_price = stop_loss_price
+            else:
+                stop_price = stop_loss_price
+
+            # 调用 Gateway 下止损订单（服务器端 Stop Market）
+            response = await self._rest_gateway.place_order(
+                symbol=open_order.symbol,
+                side=stop_side,
+                order_type='market',  # 触发后市价成交
+                size=open_order.filled_size,  # 使用实际成交数量
+                price=stop_price,  # 触发价格
+                order_type='stop_market',  # 标记为止损订单
+                strategy_id=open_order.strategy_id,
+                reduce_only=True  # 只减仓
+            )
+
+            if not response:
+                logger.error(f"止损订单提交失败: {open_order.symbol}")
+                return
+
+            # 提取止损订单 ID
+            stop_loss_order_id = response.get('ordId')
+            if not stop_loss_order_id:
+                logger.error(f"止损订单响应缺少 ordId: {response}")
+                return
+
+            # 记录止损订单映射
+            self._stop_loss_orders[open_order.order_id] = stop_loss_order_id
+
+            # 在原订单上标记止损订单 ID
+            open_order.stop_loss_order_id = stop_loss_order_id
+
+            # 创建止损订单对象
+            stop_loss_order = Order(
+                order_id=stop_loss_order_id,
+                symbol=open_order.symbol,
+                side=stop_side,
+                order_type='stop_market',
+                size=open_order.filled_size,
+                price=stop_price,
+                filled_size=0.0,
+                status='live',
+                strategy_id=open_order.strategy_id,
+                raw=response
+            )
+
+            # 保存止损订单
+            self._orders[stop_loss_order_id] = stop_loss_order
+
+            if stop_loss_order.symbol not in self._symbol_to_orders:
+                self._symbol_to_orders[stop_loss_order.symbol] = {}
+            self._symbol_to_orders[stop_loss_order.symbol][stop_loss_order_id] = stop_loss_order
+
+            logger.info(
+                f"✅ 硬止损已激活: {stop_loss_order_id} - "
+                f"{stop_loss_order.symbol} {stop_side} {stop_loss_order.size:.4f} @ {stop_price:.2f} "
+                f"(关联开仓单: {open_order.order_id})"
+            )
+
+            # 推送止损订单事件
+            if self._event_bus:
+                event = Event(
+                    type=EventType.ORDER_SUBMITTED,
+                    data={
+                        'order_id': stop_loss_order_id,
+                        'symbol': stop_loss_order.symbol,
+                        'side': stop_side,
+                        'order_type': 'stop_market',
+                        'size': stop_loss_order.size,
+                        'price': stop_price,
+                        'strategy_id': open_order.strategy_id,
+                        'linked_order_id': open_order.order_id,
+                        'is_stop_loss': True,
+                        'raw': response
+                    },
+                    source="order_manager"
+                )
+                self._event_bus.put_nowait(event)
+
+        except Exception as e:
+            logger.error(f"放置止损订单异常: {e}", exc_info=True)
+
+    async def on_order_cancelled(self, event: Event):
         """
         监听订单取消事件
 
@@ -448,6 +571,12 @@ class OrderManager:
             # 如果没有订单了，清理 symbol
             if not symbol_orders:
                 del self._symbol_to_orders[order.symbol]
+
+        # 清理止损订单映射（如果订单有关联的止损）
+        if order_id in self._stop_loss_orders:
+            stop_loss_order_id = self._stop_loss_orders[order_id]
+            del self._stop_loss_orders[order_id]
+            logger.debug(f"清理止损订单映射: {order_id} -> {stop_loss_order_id}")
 
     def get_order(self, order_id: str) -> Optional[Order]:
         """
@@ -518,4 +647,5 @@ class OrderManager:
         """重置所有订单状态"""
         self._orders.clear()
         self._symbol_to_orders.clear()
+        self._stop_loss_orders.clear()
         logger.info("订单管理器已重置")
