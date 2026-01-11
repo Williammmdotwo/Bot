@@ -238,44 +238,53 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         position_size = position.get('size', 0)
         logger.info(f"✅ 当前持仓: {position_size} SOL")
 
-        # 5. 手动挂限价单（模拟止损单场景）
-        # 获取当前价格，设置限价单价格（模拟止损价）
+        # 5. 挂真正的止损单（stop_market）
+        # 获取当前价格，设置止损价格
         current_price = position.get('entry_price', 0)
-        # 设置一个低于当前价的限价单（模拟止损单）
-        limit_price = current_price * 0.98  # 限价 2% 低于开仓价
+        # 设置止损价格：低于当前价 2%
+        stop_loss_price = current_price * 0.98
 
-        logger.info(f"挂限价单（模拟止损单）: {symbol} limit @ {limit_price:.2f}")
+        logger.info(f"挂止损单（stop_market）: {symbol} stop @ {stop_loss_price:.2f}")
 
-        # 使用普通限价单代替止损单
-        # 注意：OKX SWAP 合约强制 size >= 1
-        limit_order = await order_manager.submit_order(
+        # 使用真正的止损单（stop_market）
+        # OKX SWAP 合约强制 size >= 1
+        stop_loss_order = await gateway.place_order(
             symbol=symbol,
-            side="sell",
-            order_type="limit",  # 使用普通限价单
+            side="sell",  # 做多的止损方向是 sell
+            order_type="stop_market",
             size=1,  # 强制使用最小数量 1（OKX 要求）
-            price=limit_price,
-            strategy_id="test_limit_order",
-            reduce_only=True
+            price=stop_loss_price,  # 触发价格
+            reduce_only=True,
+            strategy_id="test_stop_loss"
         )
 
-        if limit_order:
-            logger.info(f"✅ 限价单已挂: {limit_order.order_id}")
+        if stop_loss_order:
+            stop_loss_order_id = stop_loss_order.get('ordId')
+            logger.info(f"✅ 止损单已挂: {stop_loss_order_id}")
         else:
-            logger.warning("⚠️  限价单挂单失败")
+            logger.warning("⚠️  止损单挂单失败")
+            stop_loss_order_id = None
 
-        # 6. 等待一下
+        # 6. 查询止损单状态
+        if not stop_loss_order_id:
+            logger.warning("⚠️  没有止损单，跳过测试")
+            return False
+
         await asyncio.sleep(2)
 
-        # 查询所有挂单（同步方法，不需要 await）
-        all_orders = order_manager.get_all_orders()
-        # 查找所有挂着的限价单
-        pending_orders_before = [
-            o for o in all_orders.values()
-            if o.status in ['pending', 'live'] and o.symbol == symbol
-        ]
+        # 查询止损单状态（从 API）
+        stop_loss_status = await gateway.get_order_status(stop_loss_order_id, symbol)
+        if stop_loss_status:
+            state = stop_loss_status.get('state', '')
+            logger.info(f"止损单状态: {state}")
+            if state in ['filled', 'cancelled']:
+                logger.warning(f"⚠️  止损单状态异常: {state}")
+                return False
+
+        # 记录平仓前的止损单
+        pending_orders_before = [stop_loss_order_id]
         logger.info(f"平仓前挂单数量: {len(pending_orders_before)}")
-        for order in pending_orders_before:
-            logger.info(f"  - {order.order_id}: {order.order_type} {order.side} {order.size} @ {order.price}")
+        logger.info(f"  - 止损单: {stop_loss_order_id}")
 
         # 7. 平仓
         # OKX 持仓 side 是 'net'，根据 size 判断方向
@@ -340,42 +349,42 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         logger.info("等待幽灵单防护触发...")
         await asyncio.sleep(3)  # 给事件处理和撤销订单时间
 
-        # 直接从 API 查询订单状态（不依赖 OrderManager 本地状态）
-        # 获取所有订单 ID
-        order_ids = list({o.order_id for o in pending_orders_before})
-        logger.info(f"检查订单状态: {len(order_ids)} 个订单")
+        # 直接从 API 查询止损单状态
+        logger.info(f"检查止损单状态: {stop_loss_order_id}")
 
-        # 查询每个订单的状态
         active_orders_after = 0
-        for order_id in order_ids:
-            try:
-                order_status = await gateway.get_order_status(order_id, symbol)
-                if order_status:
-                    state = order_status.get('state', '')
-                    # 只有未成交的订单才算"挂着"
-                    if state in ['live', 'partially_filled', 'mmp']:
-                        active_orders_after += 1
-                        logger.info(f"  - 订单 {order_id}: {state}")
-                    else:
-                        logger.info(f"  - 订单 {order_id}: {state} (已{state})")
-                else:
-                    logger.warning(f"  - 订单 {order_id}: 查询失败")
-            except Exception as e:
-                logger.error(f"  - 订单 {order_id} 查询异常: {e}")
+        try:
+            stop_loss_status_after = await gateway.get_order_status(stop_loss_order_id, symbol)
+            if stop_loss_status_after:
+                state = stop_loss_status_after.get('state', '')
+                logger.info(f"  - 止损单 {stop_loss_order_id}: {state}")
+
+                # 检查止损单是否被撤销
+                if state in ['live', 'partially_filled', 'mmp']:
+                    active_orders_after = 1
+                    logger.warning(f"  ⚠️  止损单仍然挂着（未被撤销）")
+                elif state == 'cancelled':
+                    logger.info(f"  ✅ 止损单已自动撤销")
+                elif state == 'filled':
+                    logger.warning(f"  ⚠️  止损单已成交（不应该发生）")
+            else:
+                logger.warning(f"  - 止损单 {stop_loss_order_id}: 查询失败")
+        except Exception as e:
+            logger.error(f"  - 止损单查询异常: {e}")
 
         logger.info(f"平仓后活跃订单数量: {active_orders_after}")
 
         # 对比前后活跃订单数量
         if active_orders_after < len(pending_orders_before):
-            logger.info(f"✅ 幽灵单防护已触发: 撤销了 {len(pending_orders_before) - active_orders_after} 个挂单")
+            logger.info(f"✅ 幽灵单防护已触发: 止损单已自动撤销")
             return True
         else:
-            logger.warning(f"⚠️  挂单未被撤销: {active_orders_after} 个挂单仍然存在")
-            # 手动撤销挂单
-            for order in pending_orders_before:
-                logger.info(f"手动撤销挂单: {order.order_id}")
+            logger.warning(f"⚠️  止损单未被撤销: 仍然挂着")
+            # 手动撤销止损单
+            if stop_loss_order_id:
+                logger.info(f"手动撤销止损单: {stop_loss_order_id}")
                 try:
-                    await order_manager.cancel_order(order.order_id, symbol)
+                    await gateway.cancel_order(stop_loss_order_id, symbol)
                 except Exception as e:
                     logger.error(f"撤销失败: {e}")
             return False
@@ -547,7 +556,7 @@ async def run_all_tests():
     # 读取配置
     api_key = os.getenv('OKX_API_KEY')
     secret_key = os.getenv('OKX_SECRET_KEY')
-    passphrase = os.getenv('OKX_PASSPHRASE')
+    passphrase = os.getenv('OKX_PASSPHRASE')  # ⚠️ 正确拼写
     use_demo = os.getenv('USE_DEMO', 'true').lower() == 'true'
 
     if not api_key or not secret_key or not passphrase:
