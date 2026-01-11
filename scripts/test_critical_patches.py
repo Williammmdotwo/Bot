@@ -193,6 +193,22 @@ async def test_patch_2_ghost_order_protection():
         source="test"
     )
 
+    # 先模拟有持仓的场景
+    event_with_position = Event(
+        type=EventType.POSITION_UPDATE,
+        data={
+            'symbol': 'BTC-USDT-SWAP',
+            'size': 1.0,  # 先有持仓
+            'entry_price': 50000.0,
+            'unrealized_pnl': 100.0,
+            'leverage': 10
+        },
+        source="test"
+    )
+    logger.info(f"模拟持仓：BTC-USDT-SWAP size=1.0")
+    position_manager.update_from_event(event_with_position)
+
+    # 再模拟持仓归零
     logger.info(f"模拟持仓归零：BTC-USDT-SWAP size=0.0")
 
     # 执行测试
