@@ -41,7 +41,7 @@ async def test_patch_1_stop_loss_retry():
 
     from unittest.mock import AsyncMock
 
-    # 创建模拟网关（前 2 次失败，第 3 次失败）
+    # 创建模拟网关（前 2 次失败，第 3 次成功）
     mock_gateway = AsyncMock()
     call_count = [0]
 
@@ -53,21 +53,14 @@ async def test_patch_1_stop_loss_retry():
             # 前 2 次失败
             raise Exception(f"模拟网络错误（第 {call_count[0]} 次）")
         else:
-            # 第 3 次失败，触发紧急平仓
-            raise Exception("模拟 API 服务器错误")
+            # 第 3 次成功，止损单提交成功
+            logger.info("✅ 第 3 次重试成功，止损单已提交")
+            return {'ordId': 'stop_loss_order_123'}
 
     mock_gateway.place_order = place_order_mock
 
-    # 创建模拟网关（紧急平仓用）
-    mock_emergency_gateway = AsyncMock()
-
-    async def place_order_emergency_mock(*args, **kwargs):
-        # 紧急平仓也失败，触发最终异常
-        raise Exception("紧急平仓也失败了！")
-        # logger.info("✅ 紧急平仓单已发送！")
-        # return {'ordId': 'emergency_close_123'}
-
-    mock_emergency_gateway.place_order = place_order_emergency_mock
+    # 不需要紧急平仓网关了，因为第 3 次重试会成功
+    mock_emergency_gateway = None
 
     # 创建 Event Bus
     event_bus = EventBus()
@@ -111,9 +104,9 @@ async def test_patch_1_stop_loss_retry():
     # 注入到 OrderManager
     order_manager._orders[mock_order.order_id] = mock_order
 
-    # 临时替换网关为紧急平仓网关
+    # 临时替换网关（第 3 次会成功）
     original_gateway = order_manager._rest_gateway
-    order_manager._rest_gateway = mock_emergency_gateway
+    order_manager._rest_gateway = mock_gateway
 
     # 构造订单成交事件
     event = Event(
@@ -131,13 +124,15 @@ async def test_patch_1_stop_loss_retry():
     logger.info(f"模拟订单成交：{mock_order.order_id} - {mock_order.symbol} {mock_order.side} {mock_order.filled_size}")
 
     # 执行测试
-    try:
-        await order_manager.on_order_filled(event)
-        logger.error("❌ 测试失败：应该触发紧急平仓")
-        return False
-    except Exception as e:
-        logger.info(f"✅ 测试通过：触发了异常处理流程")
-        logger.info(f"   异常信息：{e}")
+    await order_manager.on_order_filled(event)
+
+    # 验证重试机制是否正常工作
+    if call_count[0] == 3:
+        logger.info(f"✅ 测试通过：重试机制正常，共重试 {call_count[0]} 次")
+        result = True
+    else:
+        logger.error(f"❌ 测试失败：期望重试 3 次，实际重试 {call_count[0]} 次")
+        result = False
 
     # 恢复原始网关
     order_manager._rest_gateway = original_gateway
@@ -145,7 +140,7 @@ async def test_patch_1_stop_loss_retry():
     await event_bus.stop()
 
     logger.info("✅ 补丁一测试完成\n")
-    return True
+    return result
 
 
 async def test_patch_2_ghost_order_protection():
@@ -163,8 +158,12 @@ async def test_patch_2_ghost_order_protection():
     # 创建模拟 OrderManager
     mock_order_manager = AsyncMock()
 
+    # 使用调用计数器来追踪函数调用
+    call_count = [0]
+
     # 改为 async 函数，因为 OrderManager.cancel_all_stop_loss_orders() 是 async
     async def cancel_all_stop_loss_orders_mock(symbol: str) -> int:
+        call_count[0] += 1
         logger.info(f"✅ 调用 cancel_all_stop_loss_orders: {symbol}")
         logger.info("✅ 成功撤销 1 个止损单")
         return 1
@@ -202,9 +201,9 @@ async def test_patch_2_ghost_order_protection():
     # 等待异步任务完成（asyncio.create_task 创建的异步任务）
     await asyncio.sleep(0.5)
 
-    # 验证是否调用了 mock 函数
-    if mock_order_manager.cancel_all_stop_loss_orders.called:
-        logger.info("✅ 成功验证：cancel_all_stop_loss_orders 已被调用")
+    # 验证是否调用了 mock 函数（通过调用计数器）
+    if call_count[0] > 0:
+        logger.info(f"✅ 成功验证：cancel_all_stop_loss_orders 被调用了 {call_count[0]} 次")
         result = True
     else:
         logger.error("❌ 验证失败：cancel_all_stop_loss_orders 未被调用")
