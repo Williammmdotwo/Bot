@@ -100,9 +100,9 @@ class OrderManager:
 
         # 订阅事件
         if self._event_bus:
-            self._event_bus.subscribe(EventType.ORDER_UPDATE, self.on_order_update)
-            self._event_bus.subscribe(EventType.ORDER_FILLED, self.on_order_filled)
-            self._event_bus.subscribe(EventType.ORDER_CANCELLED, self.on_order_cancelled)
+            self._event_bus.register(EventType.ORDER_UPDATE, self.on_order_update)
+            self._event_bus.register(EventType.ORDER_FILLED, self.on_order_filled)
+            self._event_bus.register(EventType.ORDER_CANCELLED, self.on_order_cancelled)
             logger.debug("OrderManager 已订阅订单事件")
 
         logger.info("OrderManager 初始化")
