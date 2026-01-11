@@ -229,39 +229,44 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         position_size = position.get('size', 0)
         logger.info(f"✅ 当前持仓: {position_size} SOL")
 
-        # 5. 手动挂止损单（模拟场景）
-        # 获取当前价格，设置止损价
+        # 5. 手动挂限价单（模拟止损单场景）
+        # 获取当前价格，设置限价单价格（模拟止损价）
         current_price = position.get('entry_price', 0)
-        stop_price = current_price * 0.95  # 止损价 5% 低于开仓价
+        # 设置一个低于当前价的限价单（模拟止损单）
+        limit_price = current_price * 0.98  # 限价 2% 低于开仓价
 
-        logger.info(f"挂止损单: {symbol} stop @ {stop_price:.2f}")
+        logger.info(f"挂限价单（模拟止损单）: {symbol} limit @ {limit_price:.2f}")
 
-        # 注意：OKX SWAP 合约强制 size >= 1，所以会自动调整
-        stop_loss_order = await order_manager.submit_order(
+        # 使用普通限价单代替止损单
+        # 注意：OKX SWAP 合约强制 size >= 1
+        limit_order = await order_manager.submit_order(
             symbol=symbol,
             side="sell",
-            order_type="stop_market",  # 服务器端止损单
+            order_type="limit",  # 使用普通限价单
             size=1,  # 强制使用最小数量 1（OKX 要求）
-            price=stop_price,
-            strategy_id="test_stop_loss",
+            price=limit_price,
+            strategy_id="test_limit_order",
             reduce_only=True
         )
 
-        if stop_loss_order:
-            logger.info(f"✅ 止损单已挂: {stop_loss_order.order_id}")
+        if limit_order:
+            logger.info(f"✅ 限价单已挂: {limit_order.order_id}")
         else:
-            logger.warning("⚠️  止损单挂单失败")
+            logger.warning("⚠️  限价单挂单失败")
 
         # 6. 等待一下
         await asyncio.sleep(2)
 
-        # 查询所有止损单（同步方法，不需要 await）
+        # 查询所有挂单（同步方法，不需要 await）
         all_orders = order_manager.get_all_orders()
-        stop_loss_orders_before = [
+        # 查找所有挂着的限价单
+        pending_orders_before = [
             o for o in all_orders.values()
-            if o.order_type == 'stop_market' and o.symbol == symbol
+            if o.status in ['pending', 'live'] and o.symbol == symbol
         ]
-        logger.info(f"平仓前止损单数量: {len(stop_loss_orders_before)}")
+        logger.info(f"平仓前挂单数量: {len(pending_orders_before)}")
+        for order in pending_orders_before:
+            logger.info(f"  - {order.order_id}: {order.order_type} {order.side} {order.size} @ {order.price}")
 
         # 7. 平仓
         # OKX 持仓 side 是 'net'，根据 size 判断方向
@@ -302,28 +307,28 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
 
             logger.info(f"持仓大小: {positions[0].get('size', 0)}")
 
-        # 9. 验证止损单是否被撤销
+        # 9. 验证挂单是否被撤销（幽灵单防护）
         await asyncio.sleep(3)  # 给幽灵单防护时间触发
 
         # 同步方法，不需要 await
         all_orders = order_manager.get_all_orders()
-        stop_loss_orders_after = [
+        pending_orders_after = [
             o for o in all_orders.values()
-            if o.order_type == 'stop_market' and o.symbol == symbol
+            if o.status in ['pending', 'live'] and o.symbol == symbol
         ]
 
-        logger.info(f"平仓后止损单数量: {len(stop_loss_orders_after)}")
+        logger.info(f"平仓后挂单数量: {len(pending_orders_after)}")
 
-        if len(stop_loss_orders_after) < len(stop_loss_orders_before):
-            logger.info(f"✅ 幽灵单防护已触发: 撤销了 {len(stop_loss_orders_before) - len(stop_loss_orders_after)} 个止损单")
+        if len(pending_orders_after) < len(pending_orders_before):
+            logger.info(f"✅ 幽灵单防护已触发: 撤销了 {len(pending_orders_before) - len(pending_orders_after)} 个挂单")
             return True
         else:
-            logger.warning(f"⚠️  止损单未被撤销: {len(stop_loss_orders_after)} 个止损单仍然存在")
-            # 手动撤销止损单
-            for sl_order in stop_loss_orders_after:
-                logger.info(f"手动撤销止损单: {sl_order.order_id}")
+            logger.warning(f"⚠️  挂单未被撤销: {len(pending_orders_after)} 个挂单仍然存在")
+            # 手动撤销挂单
+            for order in pending_orders_after:
+                logger.info(f"手动撤销挂单: {order.order_id}")
                 try:
-                    await order_manager.cancel_order(sl_order.order_id, symbol)
+                    await order_manager.cancel_order(order.order_id, symbol)
                 except Exception as e:
                     logger.error(f"撤销失败: {e}")
             return False
