@@ -144,21 +144,29 @@ async def test_patch_1_stop_loss_retry(gateway: OkxRestGateway, event_bus: Event
 
         # 平仓
         if positions:
-            position_size = positions[0].get('size', 0)
-            if position_size > 0:
-                close_side = 'sell' if positions[0].get('side') == 'long' else 'buy'
-                logger.info(f"平仓: {symbol} {close_side} {position_size}")
+            position = positions[0]
+            position_size = position.get('size', 0)
 
-                try:
-                    await order_manager.submit_order(
-                        symbol=symbol,
-                        side=close_side,
-                        order_type='market',
-                        size=position_size,
-                        strategy_id="cleanup"
-                    )
-                except Exception as e:
-                    logger.error(f"平仓失败: {e}")
+            # OKX SWAP 的 side 是 'net'，根据 size 正负值判断方向
+            # size > 0: 做多，平仓用 sell
+            # size < 0: 做空，平仓用 buy
+            if position_size > 0:
+                close_side = 'sell'
+            else:
+                close_side = 'buy'
+
+            logger.info(f"平仓: {symbol} {close_side} {abs(position_size)}")
+
+            try:
+                await order_manager.submit_order(
+                    symbol=symbol,
+                    side=close_side,
+                    order_type='market',
+                    size=abs(position_size),  # 平仓数量 = 持仓数量的绝对值
+                    strategy_id="cleanup"
+                )
+            except Exception as e:
+                logger.error(f"平仓失败: {e}")
 
         logger.info("✅ 补丁一测试完成")
         return True
@@ -295,6 +303,7 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
         max_wait = 20
         wait_interval = 2
         total_waited = 0
+        last_position_size = None
 
         while total_waited < max_wait:
             await asyncio.sleep(wait_interval)
@@ -305,10 +314,29 @@ async def test_patch_2_ghost_order_protection(gateway: OkxRestGateway, event_bus
                 logger.info("✅ 持仓已归零")
                 break
 
-            logger.info(f"持仓大小: {positions[0].get('size', 0)}")
+            current_size = positions[0].get('size', 0)
+            logger.info(f"持仓大小: {current_size}")
 
-        # 9. 验证挂单是否被撤销（幽灵单防护）
-        await asyncio.sleep(3)  # 给幽灵单防护时间触发
+            # 手动触发 POSITION_UPDATE 事件（模拟 WebSocket 推送）
+            # 这样 PositionManager 才能检测到持仓归零并触发幽灵单防护
+            if event_bus:
+                position_update_event = Event(
+                    type=EventType.POSITION_UPDATE,
+                    data=positions[0],
+                    source="okx_rest_gateway"
+                )
+                event_bus.put_nowait(position_update_event)
+                logger.debug(f"已触发 POSITION_UPDATE 事件: size={current_size}")
+
+            # 检测持仓归零
+            if last_position_size is not None and abs(current_size) < 0.001:
+                logger.info("✅ 持仓已归零")
+                break
+            last_position_size = current_size
+
+        # 9. 等待幽灵单防护触发
+        logger.info("等待幽灵单防护触发...")
+        await asyncio.sleep(3)  # 给事件处理和撤销订单时间
 
         # 同步方法，不需要 await
         all_orders = order_manager.get_all_orders()

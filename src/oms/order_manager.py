@@ -98,6 +98,13 @@ class OrderManager:
         # 止损订单映射 {open_order_id: stop_loss_order_id}
         self._stop_loss_orders: Dict[str, str] = {}
 
+        # 订阅事件
+        if self._event_bus:
+            self._event_bus.subscribe(EventType.ORDER_UPDATE, self.on_order_update)
+            self._event_bus.subscribe(EventType.ORDER_FILLED, self.on_order_filled)
+            self._event_bus.subscribe(EventType.ORDER_CANCELLED, self.on_order_cancelled)
+            logger.debug("OrderManager 已订阅订单事件")
+
         logger.info("OrderManager 初始化")
 
     async def submit_order(
