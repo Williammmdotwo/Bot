@@ -645,7 +645,7 @@ class CapitalCommander:
             f"stop_loss_type={profile.stop_loss_type.value}"
         )
 
-    def get_strategy_profile(self, strategy_id: str) -> Optional[RiskProfile]:
+    def get_strategy_profile(self, strategy_id: str) -> RiskProfile:
         """
         获取策略风控配置
 
@@ -653,9 +653,17 @@ class CapitalCommander:
             strategy_id (str): 策略 ID
 
         Returns:
-            RiskProfile: 风控配置，如果未注册返回 None
+            RiskProfile: 风控配置，如果未注册返回默认保守配置
         """
-        return self._strategy_profiles.get(strategy_id)
+        profile = self._strategy_profiles.get(strategy_id)
+
+        if profile is None:
+            logger.warning(
+                f"未找到策略 {strategy_id} 的风控配置，使用默认保守配置"
+            )
+            return DEFAULT_CONSERVATIVE_PROFILE
+
+        return profile
 
     def check_policy_compliance(
         self,
