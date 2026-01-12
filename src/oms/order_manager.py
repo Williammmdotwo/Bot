@@ -119,120 +119,118 @@ class OrderManager:
         **kwargs
     ) -> Optional[Order]:
         """
-        提交订单
-
-        Args:
-            symbol (str): 交易对
-            side (str): 方向（buy/sell）
-            order_type (str): 订单类型（market/limit/ioc）
-            size (float): 数量
-            price (float): 价格（限价单必需）
-            strategy_id (str): 策略 ID
-            stop_loss_price (float): 止损价格（用于硬止损）
-            **kwargs: 其他参数
-
-        Returns:
-            Order: 订单对象，失败返回 None
+        提交订单（已修复市价单日志崩溃问题）
         """
-        try:
-            # 🔧 修复 price=None 格式化错误：处理市价单
-            price_str = f"{price:.5f}" if price is not None else "MARKET"
-            logger.info(
-                f"收到下单请求: {symbol} {side} {order_type} "
-                f"{size:.4f} @ {price_str}"
-            )
+        # --- [修复开始：安全的参数格式化] ---
+        # 1. 价格显示处理
+        if price is not None:
+            try:
+                price_str = f"{float(price):.5f}"
+            except:
+                price_str = str(price)
+        else:
+            price_str = "MARKET"
 
-            # 1. 风控检查
-            amount_usdt = price * size if price else 0
-            if amount_usdt > 0:
-                risk_passed, risk_reason = self._pre_trade_check.check({
+        # 2. 止损价格显示处理
+        if stop_loss_price is not None:
+            try:
+                stop_str = f"{float(stop_loss_price):.5f}"
+            except:
+                stop_str = str(stop_loss_price)
+        else:
+            stop_str = "NONE"
+
+        # 3. 安全记录日志
+        logger.info(f"收到下单请求: {symbol} {side} {order_type} {size} @ {price_str} (Stop: {stop_str})")
+        # --- [修复结束] ---
+
+        # 1. 风控检查
+        amount_usdt = price * size if price else 0
+        if amount_usdt > 0:
+            risk_passed, risk_reason = self._pre_trade_check.check({
+                'symbol': symbol,
+                'side': side,
+                'size': size,
+                'price': price if price else 0,
+                'amount_usdt': amount_usdt,
+                'order_id': f"{symbol}_{time.time()}"
+            })
+
+            if not risk_passed:
+                logger.error(f"风控拒绝下单: {risk_reason}")
+                return None
+
+        # 2. 其他风控检查（待实现）
+        # - 检查策略资金是否充足
+        # - 检查持仓限制
+        # - 检查风险参数
+
+        # 调用 Gateway 下单
+        response = await self._rest_gateway.place_order(
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            size=size,
+            price=price,
+            strategy_id=strategy_id,
+            stop_loss_price=stop_loss_price,
+            **kwargs
+        )
+
+        if not response:
+            logger.error(f"下单失败: {symbol} {side} {size:.4f}")
+            return None
+
+        # 提取订单 ID
+        order_id = response.get('ordId')
+        if not order_id:
+            logger.error(f"订单响应缺少 ordId: {response}")
+            return None
+
+        # 创建本地订单对象
+        order = Order(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            size=size,
+            price=price if price else 0.0,
+            filled_size=float(response.get('fillSz', 0)),
+            status='live',
+            strategy_id=strategy_id,
+            raw=response
+        )
+
+        # 保存订单
+        self._orders[order_id] = order
+
+        if symbol not in self._symbol_to_orders:
+            self._symbol_to_orders[symbol] = {}
+        self._symbol_to_orders[symbol][order_id] = order
+
+        logger.info(
+            f"订单提交成功: {order_id} - {symbol} {side} {size:.4f}"
+        )
+
+        # 推送订单事件
+        if self._event_bus:
+            event = Event(
+                type=EventType.ORDER_SUBMITTED,
+                data={
+                    'order_id': order_id,
                     'symbol': symbol,
                     'side': side,
+                    'order_type': order_type,
                     'size': size,
-                    'price': price if price else 0,
-                    'amount_usdt': amount_usdt,
-                    'order_id': f"{symbol}_{time.time()}"
-                })
-
-                if not risk_passed:
-                    logger.error(f"风控拒绝下单: {risk_reason}")
-                    return None
-
-            # 2. 其他风控检查（待实现）
-            # - 检查策略资金是否充足
-            # - 检查持仓限制
-            # - 检查风险参数
-
-            # 调用 Gateway 下单
-            response = await self._rest_gateway.place_order(
-                symbol=symbol,
-                side=side,
-                order_type=order_type,
-                size=size,
-                price=price,
-                strategy_id=strategy_id,
-                stop_loss_price=stop_loss_price,
-                **kwargs
+                    'price': price if price else 0.0,
+                    'strategy_id': strategy_id,
+                    'raw': response
+                },
+                source="order_manager"
             )
+            self._event_bus.put_nowait(event)
 
-            if not response:
-                logger.error(f"下单失败: {symbol} {side} {size:.4f}")
-                return None
-
-            # 提取订单 ID
-            order_id = response.get('ordId')
-            if not order_id:
-                logger.error(f"订单响应缺少 ordId: {response}")
-                return None
-
-            # 创建本地订单对象
-            order = Order(
-                order_id=order_id,
-                symbol=symbol,
-                side=side,
-                order_type=order_type,
-                size=size,
-                price=price if price else 0.0,
-                filled_size=float(response.get('fillSz', 0)),
-                status='live',
-                strategy_id=strategy_id,
-                raw=response
-            )
-
-            # 保存订单
-            self._orders[order_id] = order
-
-            if symbol not in self._symbol_to_orders:
-                self._symbol_to_orders[symbol] = {}
-            self._symbol_to_orders[symbol][order_id] = order
-
-            logger.info(
-                f"订单提交成功: {order_id} - {symbol} {side} {size:.4f}"
-            )
-
-            # 推送订单事件
-            if self._event_bus:
-                event = Event(
-                    type=EventType.ORDER_SUBMITTED,
-                    data={
-                        'order_id': order_id,
-                        'symbol': symbol,
-                        'side': side,
-                        'order_type': order_type,
-                        'size': size,
-                        'price': price if price else 0.0,
-                        'strategy_id': strategy_id,
-                        'raw': response
-                    },
-                    source="order_manager"
-                )
-                self._event_bus.put_nowait(event)
-
-            return order
-
-        except Exception as e:
-            logger.error(f"下单异常: {e}")
-            return None
+        return order
 
     async def cancel_order(
         self,
