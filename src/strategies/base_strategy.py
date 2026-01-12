@@ -240,10 +240,19 @@ class BaseStrategy(ABC):
         """
         try:
             # 0. 参数验证
-            if entry_price <= 0 or stop_loss_price <= 0:
+            # 🔧 修复市价平仓死循环：市价单允许 stop_loss_price=0
+            if entry_price <= 0:
                 logger.error(
-                    f"策略 {self.strategy_id} 价格参数无效: "
-                    f"entry={entry_price}, stop={stop_loss_price}"
+                    f"策略 {self.strategy_id} 入场价格无效: "
+                    f"entry={entry_price}"
+                )
+                return False
+
+            # 对于市价单，允许止损价为 0（如时间止损平仓时）
+            if stop_loss_price <= 0 and order_type != 'market':
+                logger.error(
+                    f"策略 {self.strategy_id} 止损价格无效: "
+                    f"stop={stop_loss_price} (非市价单必须提供止损价)"
                 )
                 return False
 
