@@ -558,20 +558,7 @@ def create_default_config() -> dict:
             'max_frequency': 5,
             'frequency_window': 1.0
         },
-        'strategies': [
-            {
-                'id': 'sniper',
-                'type': 'sniper',
-                'capital': 2000.0,
-                'params': {
-                    'symbol': 'BTC-USDT-SWAP',
-                    'position_size': 0.1,
-                    'cooldown_seconds': 5.0,
-                    'order_type': 'market',
-                    'min_big_order_usdt': 5000.0
-                }
-            }
-        ]
+        'strategies': []  # 空列表，由 main.py 根据环境变量动态加载
     }
 
 
