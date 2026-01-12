@@ -103,9 +103,22 @@ def load_config_from_env() -> dict:
     # 风控配置
     risk_config = config.get('risk', {})
 
-    max_order_amount = os.getenv('MAX_ORDER_AMOUNT')
-    if max_order_amount:
-        risk_config['max_order_amount'] = float(max_order_amount)
+    # 获取总资金（用于自适应计算）
+    total_capital = config.get('total_capital', 10000.0)
+
+    # 自适应计算 MAX_ORDER_AMOUNT
+    env_max_amount = os.getenv("MAX_ORDER_AMOUNT")
+
+    if env_max_amount:
+        max_order_amount = float(env_max_amount)
+        logger.info(f"🛡️ 使用环境变量风控限制: {max_order_amount} USDT")
+    else:
+        # 自适应计算：允许最大单笔下单为总资金的 500% (对应 5x 杠杆)
+        # 这样 10000 U 本金会自动拥有 50000 U 的单笔限额，既安全又灵活
+        max_order_amount = total_capital * 5.0
+        logger.info(f"🛡️ 自动计算风控限制 (自适应): {max_order_amount} USDT (基于资金 5x)")
+
+    risk_config['max_order_amount'] = max_order_amount
 
     max_frequency = os.getenv('MAX_FREQUENCY')
     if max_frequency:
@@ -153,6 +166,11 @@ def load_config_from_env() -> dict:
         enable_scalper = os.getenv('ENABLE_SCALPER_V1', 'true').lower() == 'true'
 
         if enable_scalper:
+            # 🔧 修复仓位传递逻辑：只在显式设置时才传递固定仓位
+            # 未设置时为 None，让策略自动基于风险计算
+            position_size_env = os.getenv('SCALPER_POSITION_SIZE')
+            position_size_value = float(position_size_env) if position_size_env else None
+
             scalper_config = {
                 'id': 'scalper_v1',
                 'type': 'scalper_v1',
@@ -164,7 +182,7 @@ def load_config_from_env() -> dict:
                     'take_profit_pct': float(os.getenv('SCALPER_TAKE_PROFIT_PCT', 0.002)),
                     'stop_loss_pct': float(os.getenv('SCALPER_STOP_LOSS_PCT', 0.01)),
                     'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 5)),
-                    'position_size': float(os.getenv('SCALPER_POSITION_SIZE', 0.1)) if os.getenv('SCALPER_POSITION_SIZE') else None
+                    'position_size': position_size_value  # 只在显式设置时才传值
                 }
             }
 
