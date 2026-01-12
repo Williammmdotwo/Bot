@@ -1,6 +1,5 @@
 # Core Dependencies
 ccxt==4.2.25
-pandas==2.2.3
 numpy==1.23.5
 
 # Technical Analysis
