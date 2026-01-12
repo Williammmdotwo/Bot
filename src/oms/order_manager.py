@@ -553,9 +553,11 @@ class OrderManager:
                                 self._symbol_to_orders[stop_loss_order.symbol] = {}
                             self._symbol_to_orders[stop_loss_order.symbol][stop_loss_order_id] = stop_loss_order
 
+                            # 🔧 修复 price=None 格式化错误：处理止损订单价格
+                            stop_price_str = f"{stop_price:.2f}" if stop_price is not None else "0.00"
                             logger.info(
                                 f"✅ 硬止损已激活: {stop_loss_order_id} - "
-                                f"{stop_loss_order.symbol} {stop_side} {stop_loss_order.size:.4f} @ {stop_price:.2f} "
+                                f"{stop_loss_order.symbol} {stop_side} {stop_loss_order.size:.4f} @ {stop_price_str} "
                                 f"(关联开仓单: {open_order.order_id}, 尝试次数: {attempt})"
                             )
 
