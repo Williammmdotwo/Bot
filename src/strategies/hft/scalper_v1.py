@@ -259,8 +259,10 @@ class ScalperV1(BaseStrategy):
         # 初始化变量，防止 UnboundLocalError
         imbalance = 0.0
 
-        # 1. 检查是否有足够的买入量
-        if self.buy_vol < self.config.min_flow_usdt:
+        # 1. 检查当前窗口（1秒）内的总活跃度
+        # 使用总成交量（买入+卖出）来判断市场活跃度，而不是只检查买入量
+        total_vol = self.buy_vol + self.sell_vol
+        if total_vol < self.config.min_flow_usdt:
             return
 
         # 2. 检查买卖失衡
