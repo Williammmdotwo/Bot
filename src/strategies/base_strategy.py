@@ -270,65 +270,49 @@ class BaseStrategy(ABC):
                 logger.error(f"OrderManager 未注入，无法下单")
                 return False
 
-            # 3. 计算安全仓位（如果未提供）
-            final_size = size
+            # 3. 资金/风控检查
+            # 初始化 safe_size，默认为传入的 size
+            safe_size = size
 
-            if size is None or size <= 0:
-                # 🔧 修复市价平仓死循环：市价单跳过 CapitalCommander 风控计算
-                if order_type == 'market':
-                    # 市价单（通常用于紧急平仓或 HFT）：跳过复杂风控计算
-                    # 关键修复：市价单必须保留原始下单数量，绝不能设为 None
+            if self._capital_commander:
+                if order_type == "market":
+                    # 如果是市价单，显式跳过风控计算，但必须保留原始 size！
                     logger.warning(
                         f"策略 {self.strategy_id} 市价单跳过风控计算: "
                         f"信任策略判断（用于紧急平仓）"
                     )
-                    # 关键修复：直接使用传入的 size，绝不能设为 None
-                    # 如果 size 为 None 或 <= 0，则使用 size 本身的值（可能为 None）
-                    # 这样可以避免 OrderManager 收到空数量导致计算崩溃
-                    final_size = size
-
-                    # 🔧 修复：如果 size 仍为 None 或无效，则拒绝下单
-                    # OrderManager 无法处理 None size，会导致计算崩溃
-                    if final_size is None or final_size <= 0:
-                        logger.error(
-                            f"策略 {self.strategy_id} 市价单 size 无效: "
-                            f"size={final_size}, 必须提供有效的数量"
-                        )
-                        return False
+                    safe_size = size  # <--- 关键修复：直接使用传入数量
                 else:
-                    # 限价单：使用 CapitalCommander 计算基于风险的安全仓位
-                    if self._capital_commander:
-                        safe_quantity = self._capital_commander.calculate_safe_quantity(
-                            symbol=symbol,
-                            entry_price=entry_price,
-                            stop_loss_price=stop_loss_price,
-                            strategy_id=self.strategy_id
-                        )
+                    # 限价单：执行严格的风控计算
+                    safe_quantity = self._capital_commander.calculate_safe_quantity(
+                        symbol=symbol,
+                        entry_price=entry_price,
+                        stop_loss_price=stop_loss_price,
+                        strategy_id=self.strategy_id
+                    )
 
-                        if safe_quantity <= 0:
-                            logger.warning(
-                                f"策略 {self.strategy_id} 安全仓位计算为 0，跳过下单"
-                            )
-                            return False
-
-                        final_size = safe_quantity
-                        logger.info(
-                            f"策略 {self.strategy_id} 使用风险计算仓位: {final_size:.4f}"
+                    if safe_quantity <= 0:
+                        logger.warning(
+                            f"策略 {self.strategy_id} 安全仓位计算为 0，跳过下单"
                         )
-                    else:
-                        logger.error(f"CapitalCommander 未注入，无法计算安全仓位")
                         return False
-            else:
-                # 使用策略提供的仓位，但记录警告
+
+                    safe_size = safe_quantity
+                    logger.info(
+                        f"策略 {self.strategy_id} 使用风险计算仓位: {safe_size:.4f}"
+                    )
+
+            # 使用策略提供的固定仓位，记录日志
+            if size is not None and size > 0:
                 logger.info(
-                    f"策略 {self.strategy_id} 使用固定仓位: {final_size:.4f} "
+                    f"策略 {self.strategy_id} 使用固定仓位: {safe_size:.4f} "
                     f"(跳过风险计算)"
                 )
 
             # 4. 检查购买力（如果使用风险计算的仓位）
-            # 市价单（如果 final_size 有效）进行购买力检查
-            if self._capital_commander and final_size is not None:
-                amount_usdt = entry_price * final_size
+            # 市价单（如果 safe_size 有效）进行购买力检查
+            if self._capital_commander and safe_size is not None:
+                amount_usdt = entry_price * safe_size
                 if not self._capital_commander.check_buying_power(
                     self.strategy_id,
                     amount_usdt
@@ -338,20 +322,20 @@ class BaseStrategy(ABC):
                     )
                     return False
 
-            # 🔧 修复：确保 final_size 有效，防止 OrderManager 收到 None
-            if final_size is None or final_size <= 0:
+            # 5. 最终检查：确保 safe_size 有效，防止 OrderManager 收到 None
+            if safe_size is None or safe_size <= 0:
                 logger.error(
                     f"策略 {self.strategy_id} 最终下单数量无效: "
-                    f"final_size={final_size}, 必须提供有效的数量"
+                    f"safe_size={safe_size}, 必须提供有效的数量"
                 )
                 return False
 
-            # 5. 提交订单
+            # 6. 提交订单
             order = await self._order_manager.submit_order(
                 symbol=symbol,
                 side=side,
                 order_type=order_type,
-                size=final_size,
+                size=safe_size,
                 price=entry_price,
                 strategy_id=self.strategy_id
             )
@@ -361,8 +345,8 @@ class BaseStrategy(ABC):
                 self._orders_submitted +=1
                 # 🔧 修复 stop_loss_price=0 格式化错误：处理市价单
                 stop_str = f"{stop_loss_price:.2f}" if stop_loss_price > 0 else "0.00 (市价)"
-                # 🔧 修复：确保 final_size 在格式化前有效
-                size_str = f"{final_size:.4f}" if final_size is not None else "None"
+                # 🔧 修复：确保 safe_size 在格式化前有效
+                size_str = f"{safe_size:.4f}" if safe_size is not None else "None"
                 logger.info(
                     f"策略 {self.strategy_id} 下单成功: "
                     f"{symbol} {side} {size_str} @ {entry_price:.2f}, "
