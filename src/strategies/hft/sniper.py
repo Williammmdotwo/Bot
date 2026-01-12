@@ -24,7 +24,7 @@ from ...core.event_types import Event
 from ...core.event_bus import EventBus
 from ...oms.order_manager import OrderManager
 from ...oms.capital_commander import CapitalCommander
-from ...utils.math import VolatilityEstimator
+from ...utils.volatility import VolatilityEstimator
 from ...config.risk_profile import RiskProfile, StopLossType
 from ..base_strategy import BaseStrategy
 
