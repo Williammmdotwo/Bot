@@ -384,11 +384,14 @@ class OkxRestGateway(RestGateway):
                 logger.warning(f"⚠️  size {size} 小于 1，强制设为 1")
                 size_int = 1
 
+            # 确保所有数值参数都是字符串（OKX API 要求）
+            size_str = str(size_int)
+
             body = {
                 'instId': symbol,
                 'tdMode': 'cross',  # ✅ 必须有
                 'side': side,
-                'sz': str(size_int)
+                'sz': size_str  # ✅ 必须是字符串
             }
 
             # ✅ 处理止损单（stop_market / stop_limit）
@@ -396,7 +399,7 @@ class OkxRestGateway(RestGateway):
                 # OKX V5 使用 conditional 订单类型实现止损
                 body['ordType'] = 'conditional'
                 body['slTriggerType'] = 'last'  # 使用最新价触发
-                body['slOrdPx'] = str(price)  # 止损触发价格
+                body['slOrdPx'] = str(price) if price else ''  # ✅ 必须是字符串
 
                 # ✅ 条件单必须指定 posSide（持仓方向）
                 # side='sell' + 止损 → 多头止损 → posSide='long'
@@ -410,7 +413,7 @@ class OkxRestGateway(RestGateway):
                     # 止损限价单：设置限价价格
                     tp_price = kwargs.get('tp_price')
                     if tp_price:
-                        body['tpOrdPx'] = str(tp_price)
+                        body['tpOrdPx'] = str(tp_price)  # ✅ 必须是字符串
 
                 logger.info(f"🛡️  止损单: slOrdPx={price}, posSide={body['posSide']}, ordType=conditional")
             else:
@@ -419,7 +422,17 @@ class OkxRestGateway(RestGateway):
 
                 # limit/ioc 订单需要价格
                 if order_type in ['limit', 'ioc'] and price:
-                    body['px'] = str(price)
+                    # ✅ 价格格式化：去掉多余的小数位
+                    if price:
+                        # 方法1：使用 f-string 限制小数位
+                        # 对于 SOL，保留 2 位小数通常足够
+                        price_str = f"{price:.4f}"
+                        # 去掉末尾的 0 和小数点
+                        price_str = price_str.rstrip('0').rstrip('.')
+                        if not price_str:
+                            price_str = '0'
+                        body['px'] = price_str
+                        logger.debug(f"价格格式化: {price} -> {price_str}")
 
             # 生成 Client Order ID (clOrdId) 用于标识策略来源
             # clOrdId 限制：1-32 位字符，必须是纯字母数字
