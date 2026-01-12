@@ -277,14 +277,24 @@ class BaseStrategy(ABC):
                 # 🔧 修复市价平仓死循环：市价单跳过 CapitalCommander 风控计算
                 if order_type == 'market':
                     # 市价单（通常用于紧急平仓或 HFT）：跳过复杂风控计算
-                    # 直接使用足够大的数量，防止因 stop_loss_price=0 被拒绝
-                    # 实际提交数量由 OrderManager 和交易所处理
+                    # 关键修复：市价单必须保留原始下单数量，绝不能设为 None
                     logger.warning(
                         f"策略 {self.strategy_id} 市价单跳过风控计算: "
                         f"信任策略判断（用于紧急平仓）"
                     )
-                    # 保持 size=None，让 OrderManager 处理
-                    final_size = None
+                    # 关键修复：直接使用传入的 size，绝不能设为 None
+                    # 如果 size 为 None 或 <= 0，则使用 size 本身的值（可能为 None）
+                    # 这样可以避免 OrderManager 收到空数量导致计算崩溃
+                    final_size = size
+
+                    # 🔧 修复：如果 size 仍为 None 或无效，则拒绝下单
+                    # OrderManager 无法处理 None size，会导致计算崩溃
+                    if final_size is None or final_size <= 0:
+                        logger.error(
+                            f"策略 {self.strategy_id} 市价单 size 无效: "
+                            f"size={final_size}, 必须提供有效的数量"
+                        )
+                        return False
                 else:
                     # 限价单：使用 CapitalCommander 计算基于风险的安全仓位
                     if self._capital_commander:
@@ -316,7 +326,7 @@ class BaseStrategy(ABC):
                 )
 
             # 4. 检查购买力（如果使用风险计算的仓位）
-            # 市价单（final_size=None）跳过购买力检查，信任策略判断
+            # 市价单（如果 final_size 有效）进行购买力检查
             if self._capital_commander and final_size is not None:
                 amount_usdt = entry_price * final_size
                 if not self._capital_commander.check_buying_power(
@@ -327,6 +337,14 @@ class BaseStrategy(ABC):
                         f"策略 {self.strategy_id} 资金不足，无法下单"
                     )
                     return False
+
+            # 🔧 修复：确保 final_size 有效，防止 OrderManager 收到 None
+            if final_size is None or final_size <= 0:
+                logger.error(
+                    f"策略 {self.strategy_id} 最终下单数量无效: "
+                    f"final_size={final_size}, 必须提供有效的数量"
+                )
+                return False
 
             # 5. 提交订单
             order = await self._order_manager.submit_order(
@@ -343,9 +361,11 @@ class BaseStrategy(ABC):
                 self._orders_submitted +=1
                 # 🔧 修复 stop_loss_price=0 格式化错误：处理市价单
                 stop_str = f"{stop_loss_price:.2f}" if stop_loss_price > 0 else "0.00 (市价)"
+                # 🔧 修复：确保 final_size 在格式化前有效
+                size_str = f"{final_size:.4f}" if final_size is not None else "None"
                 logger.info(
                     f"策略 {self.strategy_id} 下单成功: "
-                    f"{symbol} {side} {final_size:.4f} @ {entry_price:.2f}, "
+                    f"{symbol} {side} {size_str} @ {entry_price:.2f}, "
                     f"stop={stop_str}"
                 )
                 return True
