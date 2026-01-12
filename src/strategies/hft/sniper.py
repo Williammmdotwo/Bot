@@ -25,6 +25,7 @@ from ...core.event_bus import EventBus
 from ...oms.order_manager import OrderManager
 from ...oms.capital_commander import CapitalCommander
 from ...utils.math import VolatilityEstimator
+from ...config.risk_profile import RiskProfile, StopLossType
 from ..base_strategy import BaseStrategy
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,15 @@ class SniperStrategy(BaseStrategy):
 
         # 波动率估算器（用于动态止损）
         self._volatility_estimator = VolatilityEstimator(alpha=0.2)
+
+        # 配置激进的风控参数（HFT 策略特点）
+        self.set_risk_profile(RiskProfile(
+            strategy_id=self.strategy_id,
+            max_leverage=5.0,  # 允许 5 倍杠杆
+            stop_loss_type=StopLossType.TIME_BASED,
+            time_limit_seconds=10,  # 10 秒强制平仓
+            max_order_size_usdt=500.0  # HFT 快进快出，单笔金额较小
+        ))
 
         logger.info(
             f"狙击策略配置: symbol={symbol}, "

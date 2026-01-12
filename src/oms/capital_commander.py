@@ -24,6 +24,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 from ..core.event_types import Event, EventType
 from ..config.risk_config import RiskConfig, DEFAULT_RISK_CONFIG
+from ..config.risk_profile import RiskProfile, DEFAULT_CONSERVATIVE_PROFILE
 
 if TYPE_CHECKING:
     from ..oms.position_manager import PositionManager
@@ -114,6 +115,9 @@ class CapitalCommander:
 
         # 交易所交易对配置（精度控制）
         self._instruments: Dict[str, ExchangeInstrument] = {}
+
+        # 策略风控配置文件 {strategy_id: RiskProfile}
+        self._strategy_profiles: Dict[str, RiskProfile] = {}
 
         logger.info(
             f"CapitalCommander 初始化: total_capital={total_capital:.2f} USDT, "
@@ -626,6 +630,81 @@ class CapitalCommander:
             dict: {symbol: ExchangeInstrument}
         """
         return self._instruments.copy()
+
+    def register_risk_profile(self, profile: RiskProfile):
+        """
+        注册策略风控配置
+
+        Args:
+            profile (RiskProfile): 风控配置
+        """
+        self._strategy_profiles[profile.strategy_id] = profile
+        logger.info(
+            f"注册风控配置: {profile.strategy_id}, "
+            f"max_leverage={profile.max_leverage}x, "
+            f"stop_loss_type={profile.stop_loss_type.value}"
+        )
+
+    def get_strategy_profile(self, strategy_id: str) -> Optional[RiskProfile]:
+        """
+        获取策略风控配置
+
+        Args:
+            strategy_id (str): 策略 ID
+
+        Returns:
+            RiskProfile: 风控配置，如果未注册返回 None
+        """
+        return self._strategy_profiles.get(strategy_id)
+
+    def check_policy_compliance(
+        self,
+        strategy_id: str,
+        amount_usdt: float,
+        entry_price: float
+    ) -> tuple[bool, str]:
+        """
+        检查策略风控合规性
+
+        检查维度：
+        1. 策略最大杠杆限制
+        2. 单笔订单金额限制
+
+        Args:
+            strategy_id (str): 策略 ID
+            amount_usdt (float): 订单金额（USDT）
+            entry_price (float): 入场价格
+
+        Returns:
+            tuple: (是否合规, 原因说明)
+        """
+        # 获取策略风控配置，如果不存在则使用默认保守配置
+        profile = self._strategy_profiles.get(strategy_id, DEFAULT_CONSERVATIVE_PROFILE)
+
+        # 1. 检查单笔订单金额限制
+        if amount_usdt > profile.max_order_size_usdt:
+            return False, (
+                f"单笔订单金额超限: {amount_usdt:.2f} USDT > "
+                f"{profile.max_order_size_usdt:.2f} USDT"
+            )
+
+        # 2. 检查策略最大杠杆
+        if strategy_id in self._strategies:
+            current_exposure = 0.0
+            if self._position_manager:
+                current_exposure = self._position_manager.get_strategy_exposure(strategy_id)
+
+            allocated_capital = self._strategies[strategy_id].allocated
+            new_exposure = current_exposure + amount_usdt
+            new_leverage = new_exposure / allocated_capital if allocated_capital > 0 else 0
+
+            if new_leverage > profile.max_leverage:
+                return False, (
+                    f"策略杠杆超限: {new_leverage:.2f}x > "
+                    f"{profile.max_leverage}x (策略限制)"
+                )
+
+        return True, "OK"
 
     def is_strategy_circuit_breaker_triggered(self, strategy_id: str) -> bool:
         """

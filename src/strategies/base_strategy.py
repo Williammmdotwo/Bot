@@ -21,6 +21,7 @@ from ..core.event_types import Event, EventType
 from ..oms.order_manager import OrderManager
 from ..oms.capital_commander import CapitalCommander
 from ..config.risk_config import DEFAULT_RISK_CONFIG
+from ..config.risk_profile import RiskProfile, StopLossType, DEFAULT_CONSERVATIVE_PROFILE
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,13 @@ class BaseStrategy(ABC):
         self._event_bus = event_bus
         self._order_manager = order_manager
         self._capital_commander = capital_commander
+
+        # 策略风控配置（默认保守配置）
+        self.risk_profile = RiskProfile(
+            strategy_id=self.strategy_id,
+            max_leverage=1.0,
+            stop_loss_type=StopLossType.HARD_PRICE
+        )
 
         # 策略统计
         self._ticks_received = 0
@@ -329,11 +337,20 @@ class BaseStrategy(ABC):
         """
         启动策略
 
-        注册 TICK 事件处理器
+        注册 TICK 事件处理器和风控配置
         """
         if not self._event_bus:
             logger.error("EventBus 未注入，无法启动")
             return
+
+        # 注册风控配置到 CapitalCommander
+        if self._capital_commander and hasattr(self, 'risk_profile'):
+            self._capital_commander.register_risk_profile(self.risk_profile)
+            logger.info(
+                f"策略 {self.strategy_id} 风控配置已注册: "
+                f"max_leverage={self.risk_profile.max_leverage}x, "
+                f"stop_loss_type={self.risk_profile.stop_loss_type.value}"
+            )
 
         # 注册 TICK 事件处理器
         self._event_bus.register(EventType.TICK, self.on_tick)
@@ -398,3 +415,19 @@ class BaseStrategy(ABC):
     def _increment_signals(self):
         """增加信号计数"""
         self._signals_generated += 1
+
+    def set_risk_profile(self, profile: RiskProfile):
+        """
+        设置策略风控配置
+
+        子类可以在 __init__ 中调用此方法覆盖默认配置。
+
+        Args:
+            profile (RiskProfile): 风控配置
+        """
+        self.risk_profile = profile
+        logger.info(
+            f"策略 {self.strategy_id} 风控配置已更新: "
+            f"max_leverage={profile.max_leverage}x, "
+            f"stop_loss_type={profile.stop_loss_type.value}"
+        )

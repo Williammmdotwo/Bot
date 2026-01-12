@@ -56,6 +56,9 @@ ENV/
 backups/
 *.backup
 
+# Legacy code archive
+_legacy_trash/
+
 # Build artifacts
 build/
 dist/
