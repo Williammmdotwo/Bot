@@ -41,6 +41,16 @@ def load_config_from_env() -> dict:
     """
     config = create_default_config()
 
+    # 🔍 调试：打印关键环境变量
+    logger.info("=" * 60)
+    logger.info("🔍 环境变量检查")
+    logger.info("=" * 60)
+    logger.info(f"ACTIVE_STRATEGY: {os.getenv('ACTIVE_STRATEGY', 'NOT SET')}")
+    logger.info(f"SCALPER_SYMBOL: {os.getenv('SCALPER_SYMBOL', 'NOT SET')}")
+    logger.info(f"SCALPER_CAPITAL: {os.getenv('SCALPER_CAPITAL', 'NOT SET')}")
+    logger.info(f"TOTAL_CAPITAL: {os.getenv('TOTAL_CAPITAL', 'NOT SET')}")
+    logger.info("=" * 60)
+
     # 资金配置
     total_capital = os.getenv('TOTAL_CAPITAL')
     if total_capital:
@@ -137,9 +147,9 @@ def load_config_from_env() -> dict:
             scalper_config = {
                 'id': 'scalper_v1',
                 'type': 'scalper_v1',
-                'capital': float(os.getenv('SCALPER_CAPITAL', 100.0)),
+                'capital': float(os.getenv('SCALPER_CAPITAL', 10000.0)),
                 'params': {
-                    'symbol': os.getenv('SCALPER_SYMBOL', 'BTC-USDT-SWAP'),
+                    'symbol': os.getenv('SCALPER_SYMBOL', 'SOL-USDT-SWAP'),
                     'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 3.0)),
                     'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 1000.0)),
                     'take_profit_pct': float(os.getenv('SCALPER_TAKE_PROFIT_PCT', 0.002)),
