@@ -340,11 +340,13 @@ class BaseStrategy(ABC):
 
             if order:
                 self._last_trade_time = time.time()
-                self._orders_submitted += 1
+                self._orders_submitted +=1
+                # 🔧 修复 stop_loss_price=0 格式化错误：处理市价单
+                stop_str = f"{stop_loss_price:.2f}" if stop_loss_price > 0 else "0.00 (市价)"
                 logger.info(
                     f"策略 {self.strategy_id} 下单成功: "
                     f"{symbol} {side} {final_size:.4f} @ {entry_price:.2f}, "
-                    f"stop={stop_loss_price:.2f}"
+                    f"stop={stop_str}"
                 )
                 return True
             else:
