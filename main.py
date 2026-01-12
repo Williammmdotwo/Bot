@@ -80,9 +80,18 @@ def load_config_from_env() -> dict:
     # Public WebSocket 配置
     public_ws_config = config.get('public_ws', {})
 
-    symbol = os.getenv('TRADING_SYMBOL')
+    # 🔧 修复"精神分裂"问题：统一使用策略的交易对
+    # 优先使用 SCALPER_SYMBOL（策略配置），如果不存在则使用 TRADING_SYMBOL（网关配置）
+    # 确保网关和策略使用相同的交易对，避免配置不一致
+    symbol = os.getenv('SCALPER_SYMBOL') or os.getenv('TRADING_SYMBOL')
     if symbol:
         public_ws_config['symbol'] = symbol
+        logger.info(f"✅ 网关交易对已设置: {symbol} (来源: SCALPER_SYMBOL)")
+    else:
+        # 如果都没有设置，使用默认值
+        default_symbol = 'BTC-USDT-SWAP'
+        public_ws_config['symbol'] = default_symbol
+        logger.warning(f"⚠️  未设置交易对环境变量，使用默认值: {default_symbol}")
 
     config['public_ws'] = public_ws_config
 
