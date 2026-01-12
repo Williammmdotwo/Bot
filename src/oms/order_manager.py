@@ -135,9 +135,11 @@ class OrderManager:
             Order: 订单对象，失败返回 None
         """
         try:
+            # 🔧 修复 price=None 格式化错误：处理市价单
+            price_str = f"{price:.5f}" if price is not None else "MARKET"
             logger.info(
                 f"收到下单请求: {symbol} {side} {order_type} "
-                f"{size:.4f} @ {price if price else 'market'}"
+                f"{size:.4f} @ {price_str}"
             )
 
             # 1. 风控检查

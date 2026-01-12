@@ -255,8 +255,10 @@ class PositionManager:
                     unrealized_pnl=0.0
                 )
 
+        # 🔧 修复 price=None 格式化错误：处理市价单
+        price_str = f"{price:.2f}" if price is not None else "MARKET"
         logger.debug(
-            f"订单成交更新持仓: {symbol} {side} {filled_size:.4f} @ {price:.2f}"
+            f"订单成交更新持仓: {symbol} {side} {filled_size:.4f} @ {price_str}"
         )
 
     def _calculate_pnl(self, position: Position, current_price: float) -> float:
