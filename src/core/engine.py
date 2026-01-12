@@ -234,6 +234,14 @@ class Engine:
                     capital_commander=self._capital_commander,
                     **params
                 )
+            elif strategy_type == 'scalper_v1':
+                from ..strategies.hft.scalper_v1 import ScalperV1
+                strategy = ScalperV1(
+                    event_bus=self._event_bus,
+                    order_manager=self._order_manager,
+                    capital_commander=self._capital_commander,
+                    **params
+                )
             else:
                 logger.error(f"未知的策略类型: {strategy_type}")
                 return None

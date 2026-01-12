@@ -97,33 +97,67 @@ def load_config_from_env() -> dict:
     # 策略配置
     strategies_config = config.get('strategies', [])
 
-    # 检查是否启用狙击策略
-    enable_sniper = os.getenv('ENABLE_SNIPER', 'true').lower() == 'true'
+    # 检查激活的策略类型
+    active_strategy = os.getenv('ACTIVE_STRATEGY', 'sniper').lower()
 
-    if enable_sniper:
-        sniper_config = {
-            'id': 'sniper',
-            'type': 'sniper',
-            'capital': float(os.getenv('SNIPER_CAPITAL', 2000.0)),
-            'params': {
-                'symbol': os.getenv('TRADING_SYMBOL', 'BTC-USDT-SWAP'),
-                'position_size': float(os.getenv('SNIPER_POSITION_SIZE', 0.1)),
-                'cooldown_seconds': float(os.getenv('SNIPER_COOLDOWN', 5.0)),
-                'order_type': os.getenv('SNIPER_ORDER_TYPE', 'market'),
-                'min_big_order_usdt': float(os.getenv('SNIPER_MIN_BIG_ORDER', 5000.0))
+    # 根据激活的策略类型加载配置
+    if active_strategy == 'sniper':
+        enable_sniper = os.getenv('ENABLE_SNIPER', 'true').lower() == 'true'
+
+        if enable_sniper:
+            sniper_config = {
+                'id': 'sniper',
+                'type': 'sniper',
+                'capital': float(os.getenv('SNIPER_CAPITAL', 2000.0)),
+                'params': {
+                    'symbol': os.getenv('TRADING_SYMBOL', 'BTC-USDT-SWAP'),
+                    'position_size': float(os.getenv('SNIPER_POSITION_SIZE', 0.1)),
+                    'cooldown_seconds': float(os.getenv('SNIPER_COOLDOWN', 5.0)),
+                    'order_type': os.getenv('SNIPER_ORDER_TYPE', 'market'),
+                    'min_big_order_usdt': float(os.getenv('SNIPER_MIN_BIG_ORDER', 5000.0))
+                }
             }
-        }
 
-        # 更新或追加策略配置
-        existing = False
-        for i, s in enumerate(strategies_config):
-            if s.get('type') == 'sniper':
-                strategies_config[i] = sniper_config
-                existing = True
-                break
+            # 更新或追加策略配置
+            existing = False
+            for i, s in enumerate(strategies_config):
+                if s.get('type') == 'sniper':
+                    strategies_config[i] = sniper_config
+                    existing = True
+                    break
 
-        if not existing:
-            strategies_config.append(sniper_config)
+            if not existing:
+                strategies_config.append(sniper_config)
+
+    elif active_strategy == 'scalper_v1':
+        enable_scalper = os.getenv('ENABLE_SCALPER_V1', 'true').lower() == 'true'
+
+        if enable_scalper:
+            scalper_config = {
+                'id': 'scalper_v1',
+                'type': 'scalper_v1',
+                'capital': float(os.getenv('SCALPER_CAPITAL', 100.0)),
+                'params': {
+                    'symbol': os.getenv('SCALPER_SYMBOL', 'BTC-USDT-SWAP'),
+                    'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 3.0)),
+                    'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 1000.0)),
+                    'take_profit_pct': float(os.getenv('SCALPER_TAKE_PROFIT_PCT', 0.002)),
+                    'stop_loss_pct': float(os.getenv('SCALPER_STOP_LOSS_PCT', 0.01)),
+                    'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 5)),
+                    'position_size': float(os.getenv('SCALPER_POSITION_SIZE', 0.1)) if os.getenv('SCALPER_POSITION_SIZE') else None
+                }
+            }
+
+            # 更新或追加策略配置
+            existing = False
+            for i, s in enumerate(strategies_config):
+                if s.get('type') == 'scalper_v1':
+                    strategies_config[i] = scalper_config
+                    existing = True
+                    break
+
+            if not existing:
+                strategies_config.append(scalper_config)
 
     config['strategies'] = strategies_config
 
