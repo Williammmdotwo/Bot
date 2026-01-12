@@ -274,28 +274,40 @@ class BaseStrategy(ABC):
             final_size = size
 
             if size is None or size <= 0:
-                # 使用 CapitalCommander 计算基于风险的安全仓位
-                if self._capital_commander:
-                    safe_quantity = self._capital_commander.calculate_safe_quantity(
-                        symbol=symbol,
-                        entry_price=entry_price,
-                        stop_loss_price=stop_loss_price,
-                        strategy_id=self.strategy_id
+                # 🔧 修复市价平仓死循环：市价单跳过 CapitalCommander 风控计算
+                if order_type == 'market':
+                    # 市价单（通常用于紧急平仓或 HFT）：跳过复杂风控计算
+                    # 直接使用足够大的数量，防止因 stop_loss_price=0 被拒绝
+                    # 实际提交数量由 OrderManager 和交易所处理
+                    logger.warning(
+                        f"策略 {self.strategy_id} 市价单跳过风控计算: "
+                        f"信任策略判断（用于紧急平仓）"
                     )
-
-                    if safe_quantity <= 0:
-                        logger.warning(
-                            f"策略 {self.strategy_id} 安全仓位计算为 0，跳过下单"
-                        )
-                        return False
-
-                    final_size = safe_quantity
-                    logger.info(
-                        f"策略 {self.strategy_id} 使用风险计算仓位: {final_size:.4f}"
-                    )
+                    # 保持 size=None，让 OrderManager 处理
+                    final_size = None
                 else:
-                    logger.error(f"CapitalCommander 未注入，无法计算安全仓位")
-                    return False
+                    # 限价单：使用 CapitalCommander 计算基于风险的安全仓位
+                    if self._capital_commander:
+                        safe_quantity = self._capital_commander.calculate_safe_quantity(
+                            symbol=symbol,
+                            entry_price=entry_price,
+                            stop_loss_price=stop_loss_price,
+                            strategy_id=self.strategy_id
+                        )
+
+                        if safe_quantity <= 0:
+                            logger.warning(
+                                f"策略 {self.strategy_id} 安全仓位计算为 0，跳过下单"
+                            )
+                            return False
+
+                        final_size = safe_quantity
+                        logger.info(
+                            f"策略 {self.strategy_id} 使用风险计算仓位: {final_size:.4f}"
+                        )
+                    else:
+                        logger.error(f"CapitalCommander 未注入，无法计算安全仓位")
+                        return False
             else:
                 # 使用策略提供的仓位，但记录警告
                 logger.info(
@@ -304,7 +316,8 @@ class BaseStrategy(ABC):
                 )
 
             # 4. 检查购买力（如果使用风险计算的仓位）
-            if self._capital_commander:
+            # 市价单（final_size=None）跳过购买力检查，信任策略判断
+            if self._capital_commander and final_size is not None:
                 amount_usdt = entry_price * final_size
                 if not self._capital_commander.check_buying_power(
                     self.strategy_id,
