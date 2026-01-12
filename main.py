@@ -120,6 +120,14 @@ def load_config_from_env() -> dict:
 
     risk_config['max_order_amount'] = max_order_amount
 
+    # 🔧 支持配置单笔风险比例（Lower Risk %）
+    # 默认 1%，可通过环境变量 RISK_PER_TRADE_PCT 覆盖
+    risk_per_trade_pct = float(os.getenv("RISK_PER_TRADE_PCT", "0.01"))
+    logger.info(f"🛡️ 单笔风险比例: {risk_per_trade_pct*100:.2f}% (每笔交易风险不超过总资金)")
+
+    # 将风险比例添加到风控配置（后续传递给 RiskConfig）
+    risk_config['RISK_PER_TRADE_PCT'] = risk_per_trade_pct
+
     max_frequency = os.getenv('MAX_FREQUENCY')
     if max_frequency:
         risk_config['max_frequency'] = int(max_frequency)

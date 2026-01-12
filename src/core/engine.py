@@ -101,11 +101,28 @@ class Engine:
         # 2. 创建 OMS 组件
         total_capital = self.config.get('total_capital', 10000.0)
 
-        self._capital_commander = CapitalCommander(
-            total_capital=total_capital,
-            event_bus=self._event_bus
-        )
-        logger.info(f"✅ CapitalCommander 已初始化: {total_capital:.2f} USDT")
+        # 🔧 支持自定义风控配置
+        from ..config.risk_config import RiskConfig, DEFAULT_RISK_CONFIG
+        risk_config_dict = self.config.get('risk', {})
+
+        if risk_config_dict:
+            # 如果配置中有自定义参数，创建自定义 RiskConfig
+            custom_risk_config = RiskConfig(
+                RISK_PER_TRADE_PCT=risk_config_dict.get('RISK_PER_TRADE_PCT', DEFAULT_RISK_CONFIG.RISK_PER_TRADE_PCT)
+            )
+            self._capital_commander = CapitalCommander(
+                total_capital=total_capital,
+                event_bus=self._event_bus,
+                risk_config=custom_risk_config
+            )
+            logger.info(f"✅ CapitalCommander 已初始化: {total_capital:.2f} USDT (自定义风控)")
+        else:
+            # 使用默认风控配置
+            self._capital_commander = CapitalCommander(
+                total_capital=total_capital,
+                event_bus=self._event_bus
+            )
+            logger.info(f"✅ CapitalCommander 已初始化: {total_capital:.2f} USDT (默认风控)")
 
         # 注意：OrderManager 还未创建，需要在后面设置
         self._position_manager = PositionManager(
