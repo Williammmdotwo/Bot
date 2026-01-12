@@ -95,7 +95,8 @@ def load_config_from_env() -> dict:
     config['risk'] = risk_config
 
     # 策略配置
-    strategies_config = config.get('strategies', [])
+    # 清空默认策略列表，只根据 ACTIVE_STRATEGY 加载指定策略
+    strategies_config = []
 
     # 检查激活的策略类型
     active_strategy = os.getenv('ACTIVE_STRATEGY', 'sniper').lower()

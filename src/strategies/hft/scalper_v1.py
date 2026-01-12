@@ -256,6 +256,9 @@ class ScalperV1(BaseStrategy):
             price (float): 当前价格
             now (float): 当前时间戳
         """
+        # 初始化变量，防止 UnboundLocalError
+        imbalance = 0.0
+
         # 1. 检查是否有足够的买入量
         if self.buy_vol < self.config.min_flow_usdt:
             return
