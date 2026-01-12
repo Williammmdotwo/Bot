@@ -290,13 +290,39 @@ class ScalperV1(BaseStrategy):
                 f"距离={abs(price - stop_loss_price):.2f}"
             )
 
-            # 4. 立即开仓！
+            # 4. 计算激进入场价格（Taker 价格，确保能成交）
+            # 买入时溢价 0.1% 吃单，卖出时折价 0.1% 砸盘
+            slippage_pct = 0.001  # 0.1% 滑点
+            entry_price_adjusted = price * (1.0 + slippage_pct)  # 溢价买入
+
+            logger.debug(
+                f"🎯 [价格调整] 原价={price:.2f}, "
+                f"调整价={entry_price_adjusted:.2f}, "
+                f"滑点={slippage_pct*100:.2f}%"
+            )
+
+            # 5. 计算交易数量（强制整数，至少 1）
+            if self.config.position_size is not None:
+                # 使用固定仓位，但确保至少为 1
+                trade_size = max(1, int(self.config.position_size))
+                logger.debug(f"使用固定仓位: {trade_size}")
+            else:
+                # 基于风险计算仓位，但确保至少为 1
+                # 临时计算风险仓位，然后取整
+                risk_amount = (self._capital_commander.get_total_equity() *
+                             self._capital_commander._risk_config.RISK_PER_TRADE_PCT)
+                price_distance = abs(entry_price_adjusted - stop_loss_price)
+                base_quantity = risk_amount / price_distance
+                trade_size = max(1, int(base_quantity))
+                logger.debug(f"基于风险计算仓位: {trade_size} (base: {base_quantity:.4f})")
+
+            # 6. 立即开仓！
             success = await self.buy(
                 symbol=self.symbol,
-                entry_price=price,
+                entry_price=entry_price_adjusted,
                 stop_loss_price=stop_loss_price,
                 order_type='market',
-                size=self.config.position_size  # None=基于风险计算
+                size=trade_size
             )
 
             if success:
