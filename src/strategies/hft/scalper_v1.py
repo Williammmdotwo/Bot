@@ -139,6 +139,9 @@ class ScalperV1(BaseStrategy):
         self._entry_time = 0.0         # 入场时间戳
         self._position_opened = False   # 是否有持仓
 
+        # [新增] 本地强持仓记录（不依赖 PositionManager）
+        self.local_pos_size = 0.0
+
         # 波动率估算器（用于动态止损）
         self._volatility_estimator = VolatilityEstimator(
             alpha=0.2,
@@ -330,9 +333,13 @@ class ScalperV1(BaseStrategy):
                 self._entry_price = price
                 self._entry_time = now
                 self._position_opened = True
+
+                # [新增] 开仓成功后，立即在本地记录数量
+                self.local_pos_size = float(trade_size)
                 self._increment_signals()
                 logger.info(
                     f"✅ [开仓成功] {self.symbol} @ {price:.2f}, "
+                    f"数量={self.local_pos_size:.4f}, "
                     f"止损={stop_loss_price:.2f}"
                 )
 
@@ -413,13 +420,17 @@ class ScalperV1(BaseStrategy):
             entry_price=price,  # 平仓时的价格
             stop_loss_price=0,   # 无需止损
             order_type='market',
-            size=None  # 平仓全部
+            size=self.local_pos_size  # [关键修复] 显式传入本地记录的数量
         )
 
         if success:
             self._position_opened = False
             self._entry_price = 0.0
             self._entry_time = 0.0
+
+            # [新增] 平仓后重置本地记录
+            self.local_pos_size = 0.0
+
             logger.info(
                 f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
                 f"reason={reason}"
