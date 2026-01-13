@@ -90,6 +90,12 @@ class OkxPublicWsGateway(WebSocketGateway):
         self._max_reconnect_delay = 60.0
         self._max_reconnect_attempts = 10
 
+        # 订单簿深度数据（用于 Maker 策略）
+        self._order_book = {
+            'bids': [],  # 买单 [[price, size, ...], ...]
+            'asks': []   # 卖单 [[price, size, ...], ...]
+        }
+
         logger.info(
             f"OkxPublicWsGateway 初始化: symbol={symbol}, ws_url={self.ws_url}"
         )
@@ -120,8 +126,8 @@ class OkxPublicWsGateway(WebSocketGateway):
             # 标记为运行中（必须在创建消息循环之前）
             self._is_running = True
 
-            # 订阅 trades 频道
-            await self.subscribe(['trades'])
+            # 订阅 trades 和 order_book 频道
+            await self.subscribe(['trades', 'books'])
 
             # 启动消息循环
             asyncio.create_task(self._message_loop())
@@ -178,12 +184,22 @@ class OkxPublicWsGateway(WebSocketGateway):
             symbol (str): 交易对（可选）
         """
         try:
+            args = []
+            for channel in channels:
+                if channel == 'trades':
+                    args.append({
+                        "channel": "trades",
+                        "instId": self.symbol
+                    })
+                elif channel == 'books':
+                    args.append({
+                        "channel": "books",
+                        "instId": self.symbol
+                    })
+
             subscribe_msg = {
                 "op": "subscribe",
-                "args": [{
-                    "channel": "trades",
-                    "instId": self.symbol
-                }]
+                "args": args
             }
 
             json_str = json.dumps(subscribe_msg, separators=(',', ':'))
@@ -270,11 +286,17 @@ class OkxPublicWsGateway(WebSocketGateway):
                     logger.error(f"OKX API 错误: {data}")
                 return
 
-            # 处理交易数据
+            # 处理订单簿数据（books 频道）
             if "data" in data and isinstance(data["data"], list):
-                logger.debug(f"收到 {len(data['data'])} 笔交易数据")
-                for trade_item in data["data"]:
-                    await self._process_trade(trade_item)
+                channel = data.get("arg", {}).get("channel", "")
+
+                if channel == "books":
+                    logger.debug(f"收到订单簿数据")
+                    await self._process_orderbook(data["data"])
+                elif channel == "trades":
+                    logger.debug(f"收到 {len(data['data'])} 笔交易数据")
+                    for trade_item in data["data"]:
+                        await self._process_trade(trade_item)
 
         except Exception as e:
             logger.error(f"数据处理异常: {e}, 原始数据: {data}")
@@ -342,6 +364,62 @@ class OkxPublicWsGateway(WebSocketGateway):
 
         except Exception as e:
             logger.error(f"交易处理异常: {e}, 原始数据: {trade_item}", exc_info=True)
+
+    async def _process_orderbook(self, book_data):
+        """
+        处理订单簿数据，更新 Best Bid/Ask
+
+        Args:
+            book_data: 订单簿数据
+        """
+        try:
+            # 取最新的订单簿数据
+            if isinstance(book_data, list) and len(book_data) > 0:
+                book = book_data[0]  # OKX 返回的是数组，取第一个
+
+                # 更新买单和卖单
+                bids = book.get('bids', [])
+                asks = book.get('asks', [])
+
+                # 只保留前5档（足够用于 Maker 策略）
+                self._order_book['bids'] = bids[:5] if bids else []
+                self._order_book['asks'] = asks[:5] if asks else []
+
+                logger.debug(
+                    f"订单簿更新: Bid1={bids[0][0] if bids else 'N/A'}, "
+                    f"Ask1={asks[0][0] if asks else 'N/A'}"
+                )
+
+        except Exception as e:
+            logger.error(f"订单簿处理异常: {e}", exc_info=True)
+
+    def get_best_bid_ask(self) -> tuple:
+        """
+        获取最优买一价和卖一价
+
+        Returns:
+            tuple: (best_bid, best_ask) 如果没有数据返回 (0.0, 0.0)
+        """
+        try:
+            bids = self._order_book.get('bids', [])
+            asks = self._order_book.get('asks', [])
+
+            best_bid = 0.0
+            best_ask = 0.0
+
+            # 买一价（买单第一档的价格）
+            if bids and len(bids) > 0:
+                best_bid = float(bids[0][0])
+
+            # 卖一价（卖单第一档的价格）
+            if asks and len(asks) > 0:
+                best_ask = float(asks[0][0])
+
+            return (best_bid, best_ask)
+
+        except Exception as e:
+            logger.error(f"获取最佳买卖价失败: {e}", exc_info=True)
+            return (0.0, 0.0)
 
     async def _message_loop(self):
         """消息接收循环"""

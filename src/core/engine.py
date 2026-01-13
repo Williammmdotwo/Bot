@@ -266,6 +266,11 @@ class Engine:
             # [修复] 注入 PositionManager（支持自动全平）
             strategy.set_position_manager(self._position_manager)
 
+            # ✨ 新增：注入公共网关（支持 Maker 模式获取订单簿数据）
+            if hasattr(strategy, 'set_public_gateway'):
+                strategy.set_public_gateway(self._public_ws)
+                logger.debug(f"公共网关已注入到策略: {strategy.strategy_id}")
+
             logger.info(
                 f"策略已加载: {strategy.strategy_id} ({strategy_type})"
             )

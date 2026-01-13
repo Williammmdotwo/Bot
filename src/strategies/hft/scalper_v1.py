@@ -6,16 +6,17 @@ ScalperV1 极速剥头皮策略 (ScalperV1 - Micro-Imbalance Strategy)
 策略核心逻辑：
 1. 完全不看 K 线，只处理 on_tick (Trade Stream)
 2. 极速计算：使用原生 Python float 累加成交量
-3. 动量触发：当 1秒内买入量 > 卖出量 * 3 且买入量 > 阈值时，立即市价买入
+3. 动量触发：当 1秒内买入量 > 卖出量 * 3 且买入量 > 阈值时，立即限价挂单（Maker模式）
 4. 光速离场：
-   - 止盈：+0.2% 立即走人
-   - 止损：+5秒不涨立即走人 (Time Stop)
+   - 止盈：+0.2% 立即走人（市价单）
+   - 止损：+5秒不涨立即走人 (Time Stop，市价单）
 
 优化特点：
 - O(1) 时间复杂度：只维护累加器，不做任何列表操作
 - 零历史数据：不存储 Ticks，只维护当前秒的成交量
 - 极速计算：每秒重置窗口，比 deque 快得多
 - 轻量级依赖：严禁使用 pandas，只使用原生 Python
+- Maker 模式：开仓使用限价单，降低手续费，平仓使用市价单
 
 Example:
     >>> scalper = ScalperV1(
@@ -54,13 +55,14 @@ class ScalperV1Config:
     take_profit_pct: float = 0.002       # 止盈 0.2%
     stop_loss_pct: float = 0.01          # 硬止损 1%
     time_limit_seconds: int = 5          # 时间止损 5 秒
-    cooldown_seconds: int = 10          # [新增] 交易冷却（秒）
+    cooldown_seconds: int = 10          # 交易冷却（秒）
     position_size: Optional[float] = None  # 仓位大小（None=基于风险计算）
+    maker_timeout_seconds: float = 2.0    # [新增] Maker 挂单超时时间（秒）
 
 
 class ScalperV1(BaseStrategy):
     """
-    ScalperV1 极速剥头皮策略
+    ScalperV1 极速剥头皮策略（Maker 模式）
 
     基于微观结构失衡的超短线剥头皮策略。
 
@@ -68,12 +70,14 @@ class ScalperV1(BaseStrategy):
     1. 监听 Trade Stream（每笔成交）
     2. 累加 1 秒窗口内的买卖量
     3. 检测买卖失衡（买 >> 卖）
-    4. 立即开仓，光速离场
+    4. 开仓：使用限价单挂单（Maker 模式）
+    5. 平仓：使用市价单（确保快速退出）
 
     优化特点：
     - O(1) 时间复杂度
     - 零历史数据存储
     - 极速计算
+    - Maker 模式：降低手续费
     """
 
     def __init__(
@@ -125,7 +129,8 @@ class ScalperV1(BaseStrategy):
             take_profit_pct=take_profit_pct,
             stop_loss_pct=stop_loss_pct,
             time_limit_seconds=time_limit_seconds,
-            position_size=position_size
+            position_size=position_size,
+            maker_timeout_seconds=2.0  # 默认2秒超时
         )
 
         # ========== 极简状态变量（O(1) 访问）==========
@@ -145,6 +150,10 @@ class ScalperV1(BaseStrategy):
 
         # [新增] 冷却机制：防止平仓后立即重新开仓
         self._last_close_time = 0.0  # 上次平仓时间戳
+
+        # [新增] Maker 挂单管理
+        self._maker_order_id = None      # 当前挂单 ID
+        self._maker_order_time = 0.0    # 挂单时间戳
 
         # 波动率估算器（用于动态止损）
         self._volatility_estimator = VolatilityEstimator(
@@ -170,12 +179,23 @@ class ScalperV1(BaseStrategy):
         ))
 
         logger.info(
-            f"🚀 ScalperV1 初始化: symbol={symbol}, "
+            f"🚀 ScalperV1 初始化（Maker 模式）: symbol={symbol}, "
             f"imbalance_ratio={imbalance_ratio}, "
             f"min_flow={min_flow_usdt} USDT, "
             f"take_profit={take_profit_pct*100:.2f}%, "
-            f"time_stop={time_limit_seconds}s"
+            f"time_stop={time_limit_seconds}s, "
+            f"maker_timeout={2.0}s"
         )
+
+    def set_public_gateway(self, gateway):
+        """
+        注入公共网关（用于获取订单簿数据）
+
+        Args:
+            gateway: OkxPublicWsGateway 实例
+        """
+        self.public_gateway = gateway
+        logger.info(f"公共网关已注入到策略 {self.strategy_id}")
 
     async def on_tick(self, event: Event):
         """
@@ -199,20 +219,29 @@ class ScalperV1(BaseStrategy):
             if not self.is_enabled():
                 return
 
-            # [新增] 冷却检查：防止平仓后立即重新开仓
+            # 冷却检查：防止平仓后立即重新开仓
             now = time.time()
             if now - self._last_close_time < self.config.cooldown_seconds:
                 # 处于冷却期，跳过处理
                 return
 
-            # 1. 窗口重置（每秒重置一次，比 deque 快得多）
-            now = time.time()
+            # 1. 检查挂单超时（Maker 挂单管理）
+            if self._maker_order_id is not None:
+                if now - self._maker_order_time >= self.config.maker_timeout_seconds:
+                    # 超时，撤单
+                    logger.warning(
+                        f"⏰ [Maker 超时] {self.symbol} 挂单 {self._maker_order_id} "
+                        f"未成交，超时 {self.config.maker_timeout_seconds}s，撤单"
+                    )
+                    await self._cancel_maker_order()
+
+            # 2. 窗口重置（每秒重置一次，比 deque 快得多）
             if now - self.vol_window_start >= 1.0:
                 self.buy_vol = 0.0
                 self.sell_vol = 0.0
                 self.vol_window_start = now
 
-            # 2. 解析 Tick 数据（极速提取）
+            # 3. 解析 Tick 数据（极速提取）
             data = event.data
             symbol = data.get('symbol')
             price = float(data.get('price', 0))
@@ -220,20 +249,20 @@ class ScalperV1(BaseStrategy):
             side = data.get('side', '').lower()
             usdt_val = price * size
 
-            # 3. 检查交易对是否匹配
+            # 4. 检查交易对是否匹配
             if symbol != self.symbol:
                 return
 
-            # 4. 增加 Tick 计数
+            # 5. 增加 Tick 计数
             self._increment_ticks()
 
-            # 5. 累加成交量（只做加法，极快）
+            # 6. 累加成交量（只做加法，极快）
             if side == 'buy':
                 self.buy_vol += usdt_val
             elif side == 'sell':
                 self.sell_vol += usdt_val
 
-            # 6. 更新波动率估算器（用于动态止损）
+            # 7. 更新波动率估算器（用于动态止损）
             if self._previous_price > 0:
                 self._volatility_estimator.update_volatility(
                     current_price=price,
@@ -241,12 +270,12 @@ class ScalperV1(BaseStrategy):
                 )
             self._previous_price = price
 
-            # 7. 持仓管理（检查止盈/止损/时间止损）
+            # 8. 持仓管理（检查止盈/止损/时间止损）
             if self._position_opened:
                 await self._check_exit_conditions(price, now)
 
-            # 8. 触发逻辑（仅空仓时检查）
-            if not self._position_opened:
+            # 9. 触发逻辑（仅空仓且无挂单时检查）
+            if not self._position_opened and self._maker_order_id is None:
                 await self._check_entry_conditions(price, now)
 
         except Exception as e:
@@ -263,7 +292,7 @@ class ScalperV1(BaseStrategy):
 
     async def _check_entry_conditions(self, price: float, now: float):
         """
-        检查入场条件（买卖失衡触发）
+        检查入场条件（买卖失衡触发）- Maker 模式
 
         Args:
             price (float): 当前价格
@@ -294,7 +323,26 @@ class ScalperV1(BaseStrategy):
                 f"价格={price:.2f}"
             )
 
-            # 3. 计算止损价格（基于波动率）
+            # 3. 获取订单簿数据（Best Bid/Ask）
+            best_bid, best_ask = self._get_order_book_best_prices()
+
+            # 🛡️ 保护：如果拿不到价格，绝对不要开仓
+            if best_bid <= 0 or best_ask <= 0:
+                logger.warning("订单簿数据不可用，跳过本次开仓")
+                return
+
+            # 4. 计算 Maker 挂单价格
+            # 买入时：挂单价格 = Best Bid（买一价），排在买单队列前端
+            # 卖出时：挂单价格 = Best Ask（卖一价），排在卖单队列前端
+            maker_price = best_bid  # 买入时使用买一价
+
+            logger.info(
+                f"📊 [Maker 挂单] {self.symbol}: "
+                f"Best Bid={best_bid:.2f}, Best Ask={best_ask:.2f}, "
+                f"挂单价格={maker_price:.2f} (买入)"
+            )
+
+            # 5. 计算止损价格（基于波动率）
             stop_loss_price = self._calculate_stop_loss(price)
 
             logger.debug(
@@ -303,55 +351,106 @@ class ScalperV1(BaseStrategy):
                 f"距离={abs(price - stop_loss_price):.2f}"
             )
 
-            # 4. 计算激进入场价格（Taker 价格，确保能成交）
-            # 买入时溢价 0.1% 吃单，卖出时折价 0.1% 砸盘
-            slippage_pct = 0.001  # 0.1% 滑点
-            entry_price_adjusted = price * (1.0 + slippage_pct)  # 溢价买入
-
-            logger.debug(
-                f"🎯 [价格调整] 原价={price:.2f}, "
-                f"调整价={entry_price_adjusted:.2f}, "
-                f"滑点={slippage_pct*100:.2f}%"
-            )
-
-            # 5. 计算交易数量（强制整数，至少 1）
+            # 6. 计算交易数量（强制整数，至少 1）
             if self.config.position_size is not None:
                 # 使用固定仓位，但确保至少为 1
                 trade_size = max(1, int(self.config.position_size))
                 logger.debug(f"使用固定仓位: {trade_size}")
             else:
                 # 基于风险计算仓位，但确保至少为 1
-                # 临时计算风险仓位，然后取整
                 risk_amount = (self._capital_commander.get_total_equity() *
                              self._capital_commander._risk_config.RISK_PER_TRADE_PCT)
-                price_distance = abs(entry_price_adjusted - stop_loss_price)
+                price_distance = abs(maker_price - stop_loss_price)
                 base_quantity = risk_amount / price_distance
                 trade_size = max(1, int(base_quantity))
                 logger.debug(f"基于风险计算仓位: {trade_size} (base: {base_quantity:.4f})")
 
-            # 6. 立即开仓！
-            success = await self.buy(
+            # 7. Maker 挂单（限价单）
+            success = await self._place_maker_order(
                 symbol=self.symbol,
-                entry_price=entry_price_adjusted,
+                price=maker_price,
                 stop_loss_price=stop_loss_price,
-                order_type='market',
                 size=trade_size
             )
 
             if success:
-                # 记录入场状态
-                self._entry_price = price
-                self._entry_time = now
-                self._position_opened = True
-
-                # [新增] 开仓成功后，立即在本地记录数量
-                self.local_pos_size = float(trade_size)
                 self._increment_signals()
                 logger.info(
-                    f"✅ [开仓成功] {self.symbol} @ {price:.2f}, "
-                    f"数量={self.local_pos_size:.4f}, "
-                    f"止损={stop_loss_price:.2f}"
+                    f"✅ [Maker 挂单已提交] {self.symbol} @ {maker_price:.2f}, "
+                    f"数量={trade_size}, 止损={stop_loss_price:.2f}"
                 )
+
+    async def _place_maker_order(
+        self,
+        symbol: str,
+        price: float,
+        stop_loss_price: float,
+        size: float
+    ) -> bool:
+        """
+        下 Maker 挂单（限价单）
+
+        Args:
+            symbol (str): 交易对
+            price (float): 挂单价格（Best Bid）
+            stop_loss_price (float): 止损价格
+            size (float): 数量
+
+        Returns:
+            bool: 下单是否成功
+        """
+        # 调用基类下单方法，限价单
+        success = await self.buy(
+            symbol=symbol,
+            entry_price=price,
+            stop_loss_price=stop_loss_price,
+            order_type='limit',  # Maker 模式使用限价单
+            size=size
+        )
+
+        if success:
+            # 记录挂单信息
+            # 注意：这里我们使用一个临时 ID，真正的订单 ID 会在 ORDER_SUBMITTED 事件中获取
+            # 简化处理：假设下单成功，等待 ORDER_FILLED 事件
+            self._maker_order_id = "pending"  # 临时标记
+            self._maker_order_time = time.time()
+
+        return success
+
+    async def _cancel_maker_order(self):
+        """
+        撤销 Maker 挂单
+
+        注意：由于我们没有记录真实的订单 ID，这里只能通过 CancelAll 实现
+        """
+        try:
+            logger.info(f"🔄 撤销 Maker 挂单: {self.symbol}")
+
+            # 撤销所有挂单（简化处理）
+            if self._order_manager:
+                await self._order_manager.cancel_all_orders(symbol=self.symbol)
+
+            # 重置挂单状态
+            self._maker_order_id = None
+            self._maker_order_time = 0.0
+
+        except Exception as e:
+            logger.error(f"撤单失败: {e}", exc_info=True)
+
+    def _get_order_book_best_prices(self) -> tuple:
+        """
+        获取订单簿最优买卖价
+
+        Returns:
+            tuple: (best_bid, best_ask) 如果没有数据返回 (0.0, 0.0)
+        """
+        try:
+            if hasattr(self, 'public_gateway') and self.public_gateway:
+                return self.public_gateway.get_best_bid_ask()
+            return (0.0, 0.0)
+        except Exception as e:
+            logger.error(f"获取订单簿价格失败: {e}", exc_info=True)
+            return (0.0, 0.0)
 
     async def _check_exit_conditions(self, current_price: float, now: float):
         """
@@ -367,7 +466,7 @@ class ScalperV1(BaseStrategy):
 
         pnl_pct = (current_price - self._entry_price) / self._entry_price
 
-        # 1. 止盈：+0.2% 立即走人
+        # 1. 止盈：+0.2% 立即走人（市价单）
         if pnl_pct >= self.config.take_profit_pct:
             logger.info(
                 f"💰 [止盈离场] {self.symbol}: "
@@ -378,7 +477,7 @@ class ScalperV1(BaseStrategy):
             await self._close_position(current_price, "take_profit")
             return
 
-        # 2. 硬止损：-1% 立即走人
+        # 2. 硬止损：-1% 立即走人（市价单）
         if pnl_pct <= -self.config.stop_loss_pct:
             logger.warning(
                 f"🛑 [止损离场] {self.symbol}: "
@@ -389,7 +488,7 @@ class ScalperV1(BaseStrategy):
             await self._close_position(current_price, "stop_loss")
             return
 
-        # 3. 时间止损：5 秒不涨立即走人
+        # 3. 时间止损：5 秒不涨立即走人（市价单）
         time_elapsed = now - self._entry_time
         if time_elapsed >= self.config.time_limit_seconds:
             logger.info(
@@ -404,7 +503,7 @@ class ScalperV1(BaseStrategy):
 
     async def _close_position(self, price: float, reason: str):
         """
-        平仓
+        平仓（市价单）
 
         Args:
             price (float): 平仓价格
@@ -424,13 +523,13 @@ class ScalperV1(BaseStrategy):
             else:
                 self._loss_trades += 1
 
-        # 平仓
+        # 平仓（市价单，确保快速退出）
         success = await self.sell(
             symbol=self.symbol,
             entry_price=price,  # 平仓时的价格
             stop_loss_price=0,   # 无需止损
-            order_type='market',
-            size=self.local_pos_size  # [关键修复] 显式传入本地记录的数量
+            order_type='market',  # 市价单快速退出
+            size=self.local_pos_size  # 显式传入本地记录的数量
         )
 
         if success:
@@ -438,10 +537,10 @@ class ScalperV1(BaseStrategy):
             self._entry_price = 0.0
             self._entry_time = 0.0
 
-            # [新增] 平仓后重置本地记录
+            # 平仓后重置本地记录
             self.local_pos_size = 0.0
 
-            # [新增] 更新平仓时间（冷却机制）
+            # 更新平仓时间（冷却机制）
             self._last_close_time = time.time()
 
             logger.info(
@@ -478,6 +577,7 @@ class ScalperV1(BaseStrategy):
                 - stop_loss_pct: float
                 - time_limit_seconds: int
                 - position_size: float
+                - maker_timeout_seconds: float
         """
         if 'imbalance_ratio' in kwargs:
             self.config.imbalance_ratio = kwargs['imbalance_ratio']
@@ -503,6 +603,10 @@ class ScalperV1(BaseStrategy):
             self.config.position_size = kwargs['position_size']
             logger.info(f"position_size 更新为 {kwargs['position_size']:.4f}")
 
+        if 'maker_timeout_seconds' in kwargs:
+            self.config.maker_timeout_seconds = kwargs['maker_timeout_seconds']
+            logger.info(f"maker_timeout_seconds 更新为 {kwargs['maker_timeout_seconds']}s")
+
     def get_statistics(self) -> Dict[str, Any]:
         """
         获取策略统计信息
@@ -520,12 +624,14 @@ class ScalperV1(BaseStrategy):
 
         base_stats.update({
             'strategy': 'ScalperV1',
+            'mode': 'Maker',  # 标识为 Maker 模式
             'config': {
                 'imbalance_ratio': self.config.imbalance_ratio,
                 'min_flow_usdt': self.config.min_flow_usdt,
                 'take_profit_pct': self.config.take_profit_pct * 100,
                 'stop_loss_pct': self.config.stop_loss_pct * 100,
-                'time_limit_seconds': self.config.time_limit_seconds
+                'time_limit_seconds': self.config.time_limit_seconds,
+                'maker_timeout_seconds': self.config.maker_timeout_seconds
             },
             'trading': {
                 'total_trades': self._total_trades,
@@ -544,6 +650,7 @@ class ScalperV1(BaseStrategy):
             },
             'position': {
                 'is_open': self._position_opened,
+                'has_maker_order': self._maker_order_id is not None,
                 'entry_price': self._entry_price,
                 'entry_time': self._entry_time,
                 'hold_time': (
@@ -587,6 +694,13 @@ class ScalperV1(BaseStrategy):
         self._entry_price = 0.0
         self._entry_time = 0.0
         self._position_opened = False
+
+        # 重置 Maker 挂单状态
+        self._maker_order_id = None
+        self._maker_order_time = 0.0
+
+        # 重置本地持仓记录
+        self.local_pos_size = 0.0
 
         # 重置统计
         self._total_trades = 0
