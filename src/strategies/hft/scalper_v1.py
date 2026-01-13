@@ -54,6 +54,7 @@ class ScalperV1Config:
     take_profit_pct: float = 0.002       # 止盈 0.2%
     stop_loss_pct: float = 0.01          # 硬止损 1%
     time_limit_seconds: int = 5          # 时间止损 5 秒
+    cooldown_seconds: int = 10          # [新增] 交易冷却（秒）
     position_size: Optional[float] = None  # 仓位大小（None=基于风险计算）
 
 
@@ -142,6 +143,9 @@ class ScalperV1(BaseStrategy):
         # [新增] 本地强持仓记录（不依赖 PositionManager）
         self.local_pos_size = 0.0
 
+        # [新增] 冷却机制：防止平仓后立即重新开仓
+        self._last_close_time = 0.0  # 上次平仓时间戳
+
         # 波动率估算器（用于动态止损）
         self._volatility_estimator = VolatilityEstimator(
             alpha=0.2,
@@ -193,6 +197,12 @@ class ScalperV1(BaseStrategy):
         try:
             # 0. 检查策略是否启用
             if not self.is_enabled():
+                return
+
+            # [新增] 冷却检查：防止平仓后立即重新开仓
+            now = time.time()
+            if now - self._last_close_time < self.config.cooldown_seconds:
+                # 处于冷却期，跳过处理
                 return
 
             # 1. 窗口重置（每秒重置一次，比 deque 快得多）
@@ -431,9 +441,12 @@ class ScalperV1(BaseStrategy):
             # [新增] 平仓后重置本地记录
             self.local_pos_size = 0.0
 
+            # [新增] 更新平仓时间（冷却机制）
+            self._last_close_time = time.time()
+
             logger.info(
                 f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
-                f"reason={reason}"
+                f"reason={reason}, 冷却={self.config.cooldown_seconds}s"
             )
 
     def _calculate_stop_loss(self, entry_price: float) -> float:

@@ -185,14 +185,21 @@ def load_config_from_env() -> dict:
                 'capital': float(os.getenv('SCALPER_CAPITAL', 10000.0)),
                 'params': {
                     'symbol': os.getenv('SCALPER_SYMBOL', 'SOL-USDT-SWAP'),
-                    'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 3.0)),
-                    'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 1000.0)),
+                    'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 6.0)),
+                    'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 100000.0)),
                     'take_profit_pct': float(os.getenv('SCALPER_TAKE_PROFIT_PCT', 0.002)),
                     'stop_loss_pct': float(os.getenv('SCALPER_STOP_LOSS_PCT', 0.01)),
                     'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 5)),
+                    'cooldown_seconds': float(os.getenv('SCALPER_COOLDOWN', 10.0)),
                     'position_size': position_size_value  # 只在显式设置时才传值
                 }
             }
+
+            # [新增] 打印 ScalperV1 配置，验证环境变量透传
+            params_dict = scalper_config.get('params', {})
+            logger.info(f"🔧 ScalperV1 Config Loaded: min_flow={params_dict.get('min_flow_usdt', 'N/A')}, "
+                       f"ratio={params_dict.get('imbalance_ratio', 'N/A')}, "
+                       f"cooldown={params_dict.get('cooldown_seconds', 'N/A')}s")
 
             # 更新或追加策略配置
             existing = False
