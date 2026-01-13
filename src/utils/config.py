@@ -509,15 +509,6 @@ class ScalperV1Config:
     position_size: Optional[float] = None
 
 
-@dataclass
-class SniperConfig:
-    """Sniper 策略配置（已废弃，仅用于兼容）"""
-    symbol: str = "BTC-USDT-SWAP"
-    position_size: float = 0.1
-    cooldown_seconds: float = 5.0
-    order_type: str = "market"
-    min_big_order: float = 5000.0
-
 
 def load_scalper_config() -> ScalperV1Config:
     """
@@ -549,33 +540,6 @@ def load_scalper_config() -> ScalperV1Config:
                 f"leverage={config.leverage}x, "
                 f"min_flow={config.min_flow} USDT, "
                 f"imbalance_ratio={config.imbalance_ratio}x")
-
-    return config
-
-
-def load_sniper_config() -> SniperConfig:
-    """
-    从环境变量加载 Sniper 配置（已废弃）
-
-    ⚠️ 此函数已废弃，Sniper 策略已迁移到直接在代码中配置
-
-    Returns:
-        SniperConfig: Sniper 配置对象
-    """
-    logger.warning("load_sniper_config() 已废弃，Sniper 策略已迁移到直接在代码中配置")
-
-    config = SniperConfig()
-
-    # 读取环境变量
-    config.symbol = os.getenv('TRADING_SYMBOL', config.symbol)
-    config.position_size = float(os.getenv('SNIPER_POSITION_SIZE', str(config.position_size)))
-    config.cooldown_seconds = float(os.getenv('SNIPER_COOLDOWN', str(config.cooldown_seconds)))
-    config.order_type = os.getenv('SNIPER_ORDER_TYPE', config.order_type)
-    config.min_big_order = float(os.getenv('SNIPER_MIN_BIG_ORDER', str(config.min_big_order)))
-
-    logger.info(f"加载 Sniper 配置（已废弃）: symbol={config.symbol}, "
-                f"position_size={config.position_size}, "
-                f"cooldown={config.cooldown_seconds}s")
 
     return config
 

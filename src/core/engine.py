@@ -235,23 +235,7 @@ class Engine:
             strategy_id = strategy_config.get('id', strategy_type)
             params['strategy_id'] = strategy_id  # 将 strategy_id 添加到参数中
 
-            if strategy_type == 'vulture':
-                from ..strategies.hft.vulture import VultureStrategy
-                strategy = VultureStrategy(
-                    event_bus=self._event_bus,
-                    order_manager=self._order_manager,
-                    capital_commander=self._capital_commander,
-                    **params
-                )
-            elif strategy_type == 'sniper':
-                from ..strategies.hft.sniper import SniperStrategy
-                strategy = SniperStrategy(
-                    event_bus=self._event_bus,
-                    order_manager=self._order_manager,
-                    capital_commander=self._capital_commander,
-                    **params
-                )
-            elif strategy_type == 'scalper_v1':
+            if strategy_type == 'scalper_v1':
                 from ..strategies.hft.scalper_v1 import ScalperV1
                 strategy = ScalperV1(
                     event_bus=self._event_bus,
