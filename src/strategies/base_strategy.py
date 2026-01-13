@@ -64,6 +64,7 @@ class BaseStrategy(ABC):
         event_bus: EventBus,
         order_manager: Optional[OrderManager] = None,
         capital_commander: Optional[CapitalCommander] = None,
+        position_manager=None,
         symbol: str = "BTC-USDT-SWAP",
         mode: str = "PRODUCTION",
         strategy_id: Optional[str] = None
@@ -75,6 +76,7 @@ class BaseStrategy(ABC):
             event_bus (EventBus): 事件总线实例
             order_manager (OrderManager): 订单管理器
             capital_commander (CapitalCommander): 资金指挥官
+            position_manager: 持仓管理器（可选）
             symbol (str): 交易对
             mode (str): 策略模式（PRODUCTION/DEV）
             strategy_id (str): 策略 ID（可选，默认为类名小写）
@@ -91,6 +93,7 @@ class BaseStrategy(ABC):
         self._event_bus = event_bus
         self._order_manager = order_manager
         self._capital_commander = capital_commander
+        self._position_manager = position_manager
 
         # 策略风控配置（默认保守配置）
         self.risk_profile = RiskProfile(
@@ -221,7 +224,7 @@ class BaseStrategy(ABC):
         size: Optional[float] = None
     ) -> bool:
         """
-        统一内部下单逻辑（全量重写版 - 修复市价单 size 丢失）
+        统一内部下单逻辑（最终修复版：支持 size=None 自动全平）
 
         Args:
             symbol (str): 交易对
@@ -250,6 +253,26 @@ class BaseStrategy(ABC):
                 f"stop={stop_loss_price} (非市价单必须提供止损价)"
             )
             return False
+
+        # === [新增：自动补全 size（应对策略端持仓数据丢失）] ===
+        if size is None:
+            if order_type == "market":
+                # 尝试获取当前持仓
+                pos = self.get_position(symbol)
+                if pos:
+                    size = abs(pos.size)
+                    logger.warning(
+                        f"策略 {self.strategy_id} 未指定数量，自动使用当前持仓全平: {size:.4f}"
+                    )
+                else:
+                    logger.error(
+                        f"策略 {self.strategy_id} 无法自动获取持仓数量，且传入 size=None"
+                    )
+                    return False
+            else:
+                logger.error(f"策略 {self.strategy_id} 限价单必须指定 size")
+                return False
+        # === [自动补全结束] ===
 
         # 1. 冷却检查
         current_time = time.time()
@@ -431,6 +454,22 @@ class BaseStrategy(ABC):
     def _increment_signals(self):
         """增加信号计数"""
         self._signals_generated += 1
+
+    def get_position(self, symbol: str):
+        """
+        获取指定交易对的持仓
+
+        Args:
+            symbol (str): 交易对
+
+        Returns:
+            Position: 持仓对象，如果不存在返回 None
+        """
+        if self._position_manager:
+            return self._position_manager.get_position(symbol)
+        else:
+            logger.warning(f"策略 {self.strategy_id} PositionManager 未注入")
+            return None
 
     def set_risk_profile(self, profile: RiskProfile):
         """
