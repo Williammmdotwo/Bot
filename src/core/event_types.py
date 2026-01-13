@@ -169,7 +169,7 @@ class SignalEvent:
     策略信号事件
 
     Attributes:
-        strategy (str): 策略名称（如 "vulture", "sniper", "dual_ema"）
+        strategy (str): 策略名称（如 "vulture", "sniper", "scalper_v1"）
         signal (str): 信号类型（BUY/SELL/EXIT）
         symbol (str): 交易对
         price (float): 触发价格

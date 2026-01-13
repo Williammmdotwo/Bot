@@ -510,17 +510,6 @@ class ScalperV1Config:
 
 
 @dataclass
-class DualEMAConfig:
-    """DualEMA 策略配置"""
-    symbol: str = "BTC-USDT-SWAP"
-    fast_period: int = 9
-    slow_period: int = 21
-    timeframe: int = 5
-    leverage: float = 1.5
-    atr_multiplier: float = 2.0
-
-
-@dataclass
 class SniperConfig:
     """Sniper 策略配置（已废弃，仅用于兼容）"""
     symbol: str = "BTC-USDT-SWAP"
@@ -560,30 +549,6 @@ def load_scalper_config() -> ScalperV1Config:
                 f"leverage={config.leverage}x, "
                 f"min_flow={config.min_flow} USDT, "
                 f"imbalance_ratio={config.imbalance_ratio}x")
-
-    return config
-
-
-def load_dual_ema_config() -> DualEMAConfig:
-    """
-    从环境变量加载 DualEMA 配置
-
-    Returns:
-        DualEMAConfig: DualEMA 配置对象
-    """
-    config = DualEMAConfig()
-
-    # 读取环境变量
-    config.symbol = os.getenv('DUAL_EMA_SYMBOL', config.symbol)
-    config.fast_period = int(os.getenv('DUAL_EMA_FAST_PERIOD', str(config.fast_period)))
-    config.slow_period = int(os.getenv('DUAL_EMA_SLOW_PERIOD', str(config.slow_period)))
-    config.timeframe = int(os.getenv('DUAL_EMA_TIMEFRAME', str(config.timeframe)))
-    config.leverage = float(os.getenv('DUAL_EMA_LEVERAGE', str(config.leverage)))
-    config.atr_multiplier = float(os.getenv('DUAL_EMA_ATR_MULTIPLIER', str(config.atr_multiplier)))
-
-    logger.info(f"加载 DualEMA 配置: symbol={config.symbol}, "
-                f"fast={config.fast_period}, slow={config.slow_period}, "
-                f"timeframe={config.timeframe}m, leverage={config.leverage}x")
 
     return config
 
