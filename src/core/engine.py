@@ -263,6 +263,9 @@ class Engine:
                 logger.error(f"未知的策略类型: {strategy_type}")
                 return None
 
+            # [修复] 注入 PositionManager（支持自动全平）
+            strategy.set_position_manager(self._position_manager)
+
             logger.info(
                 f"策略已加载: {strategy.strategy_id} ({strategy_type})"
             )

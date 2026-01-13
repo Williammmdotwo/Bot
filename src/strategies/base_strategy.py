@@ -457,7 +457,7 @@ class BaseStrategy(ABC):
 
     def get_position(self, symbol: str):
         """
-        获取指定交易对的持仓
+        获取当前持仓（安全访问）
 
         Args:
             symbol (str): 交易对
@@ -465,11 +465,20 @@ class BaseStrategy(ABC):
         Returns:
             Position: 持仓对象，如果不存在返回 None
         """
-        if self._position_manager:
-            return self._position_manager.get_position(symbol)
-        else:
+        if not self._position_manager:
             logger.warning(f"策略 {self.strategy_id} PositionManager 未注入")
             return None
+        return self._position_manager.get_position(symbol)
+
+    def set_position_manager(self, position_manager):
+        """
+        注入 PositionManager
+
+        Args:
+            position_manager: 持仓管理器实例
+        """
+        self._position_manager = position_manager
+        logger.debug(f"策略 {self.strategy_id} PositionManager 已注入")
 
     def set_risk_profile(self, profile: RiskProfile):
         """
