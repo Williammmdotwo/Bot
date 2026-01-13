@@ -25,6 +25,10 @@ secrets/
 # Test files
 tests/unit/
 
+# Maintenance reports (local only)
+reports/MAINTENANCE_*.md
+reports/*.md
+
 # Cache and temporary files
 .cache/
 *.cache

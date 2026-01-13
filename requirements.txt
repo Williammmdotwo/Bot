@@ -1,43 +1,63 @@
-# Core Dependencies
-ccxt==4.2.25
-numpy==1.23.5
+# ============================================================================
+# Athena Trader 依赖管理
+# ============================================================================
+#
+# 本文件包含所有依赖，包括生产环境和开发环境。
+# 生产环境请使用 requirements-prod.txt，开发环境请使用 requirements-dev.txt。
+# ============================================================================
 
-# Technical Analysis
-# Using custom TechnicalIndicators class instead of external libraries
-# TA-Lib is deprecated and pandas-ta is not used
+# ============================================================================
+# 核心生产依赖（Core Production Dependencies）
+# ============================================================================
 
-# Data Validation and Settings
+# HTTP 和异步通信
+aiohttp==3.10.5
+websockets==13.1
+requests==2.32.3
+
+# 数据验证和配置
 pydantic==2.8.2
 pydantic-settings==2.4.0
+python-dotenv==1.0.0
 
-# Monitoring
-watchdog==5.0.2
+# 安全加密
+cryptography==42.0.8
 
-# Database
+# 交易所 SDK（备用）
+ccxt==4.2.25
+
+# 数据库（生产环境需要）
 redis==5.0.1
 psycopg2-binary==2.9.9
 asyncpg==0.29.0
 
-# Web Framework
+# Web 框架（用于监控 API）
 fastapi==0.111.1
 uvicorn==0.30.1
 
-# HTTP and Async
-requests==2.32.3
-aiohttp==3.10.5
-websockets==13.1
+# 监控工具
+watchdog==5.0.2
 
-# Configuration
-python-dotenv==1.0.0
+# ============================================================================
+# 开发依赖（Development Dependencies）
+# ============================================================================
 
-# Security
-cryptography==42.0.8
-
-# Built-in modules (no version needed)
-asyncio
-
-# Testing Framework
+# 测试框架
 pytest==7.4.3
 pytest-cov==4.1.0
 pytest-asyncio==0.21.1
 pytest-mock==3.12.0
+
+# ============================================================================
+# 注意事项
+# ============================================================================
+#
+# 2026年1月14日 - 移除重型依赖
+# - 已移除 pandas==2.2.3（节省 200-300MB 内存）
+# - 保留 numpy==1.23.5（当前未使用，但保留以防未来需要）
+#
+# 如果需要 numpy，请确保：
+#   1. 评估内存占用（约 100-150MB）
+#   2. 确认 1G 内存环境可以承受
+#   3. 优先使用原生 Python 实现
+# ============================================================================
