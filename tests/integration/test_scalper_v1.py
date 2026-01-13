@@ -60,9 +60,22 @@ def mock_position_manager():
 
 
 @pytest.fixture
-def scalper(mock_gateway, mock_order_manager, mock_event_bus, mock_position_manager):
+def mock_capital_commander():
+    """模拟资金指挥官"""
+    commander = Mock()
+    commander.get_total_equity = Mock(return_value=10000.0)  # 总权益
+    commander._risk_config = Mock()
+    commander._risk_config.RISK_PER_TRADE_PCT = 0.02  # 单笔风险 2%
+    return commander
+
+
+@pytest.fixture
+def scalper(mock_gateway, mock_order_manager, mock_event_bus, mock_position_manager, mock_capital_commander):
     """创建 ScalperV1 实例"""
     strategy = ScalperV1(
+        event_bus=mock_event_bus,
+        order_manager=mock_order_manager,
+        capital_commander=mock_capital_commander,
         symbol="BTC-USDT-SWAP",
         strategy_id="test_scalper_001"
     )
@@ -280,12 +293,11 @@ class TestStrategyLifecycle:
     @pytest.mark.asyncio
     async def test_reset_stats(self, scalper):
         """测试重置统计"""
-        scalper.reset()
+        scalper.reset_statistics()
 
         assert scalper._total_trades == 0
-        assert scalper._winning_trades == 0
-        assert scalper._losing_trades == 0
-        assert scalper._last_trade_time == 0.0
+        assert scalper._win_trades == 0
+        assert scalper._loss_trades == 0
 
 
 @pytest.mark.integration
