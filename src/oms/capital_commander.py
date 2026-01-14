@@ -198,6 +198,19 @@ class CapitalCommander:
 
         return True
 
+    def _get_effective_leverage(self, strategy_id: str) -> float:
+        """
+        内部辅助方法：获取策略的有效计算杠杆
+        逻辑：min(策略最大杠杆, 全局最大杠杆)，且不小于1.0
+        """
+        profile = self.get_strategy_profile(strategy_id)
+        leverage = 1.0
+        if profile:
+            leverage = min(profile.max_leverage, self._risk_config.MAX_GLOBAL_LEVERAGE)
+
+        # 确保杠杆至少为1.0
+        return max(1.0, leverage)
+
     def check_buying_power(
         self,
         strategy_id: str,
@@ -205,30 +218,39 @@ class CapitalCommander:
     ) -> bool:
         """
         检查策略是否有足够的购买力
-
-        Args:
-            strategy_id (str): 策略 ID
-            amount_usdt (float): 需要的金额（USDT）
-
-        Returns:
-            bool: 是否有足够的购买力
+        [FIX]: 支持合约杠杆逻辑，检查保证金(Margin)而非全额(Nominal)
         """
         if strategy_id not in self._strategies:
             logger.error(f"策略 {strategy_id} 未分配资金")
             return False
 
-        capital = self._strategies[strategy_id]
+        cap = self._strategies[strategy_id]
 
-        # 检查可用资金
-        has_power = capital.available >= amount_usdt
+        # 1. 计算有效杠杆
+        leverage = self._get_effective_leverage(strategy_id)
 
-        if not has_power:
+        # 2. 计算所需保证金 (Margin Requirement)
+        # 例如: 下单 30,000U, 杠杆 3x -> 仅需 10,000U 保证金
+        required_margin = amount_usdt / leverage
+
+        # 3. 检查可用资金 (保留 1% 缓冲以应对滑点或费率波动)
+        has_funds = cap.available >= (required_margin * 0.99)
+
+        if not has_funds:
             logger.warning(
-                f"策略 {strategy_id} 购买力不足: "
-                f"需要 {amount_usdt:.2f} USDT, 可用 {capital.available:.2f} USDT"
+                f"🚫 购买力不足 [{strategy_id}]: "
+                f"下单名义价值=${amount_usdt:.0f}, "
+                f"杠杆={leverage}x, "
+                f"需保证金=${required_margin:.0f}, "
+                f"可用=${cap.available:.0f}"
+            )
+        else:
+            logger.debug(
+                f"✅ 购买力检查通过 [{strategy_id}]: "
+                f"需保证金=${required_margin:.2f} (可用=${cap.available:.2f}, 杠杆={leverage}x)"
             )
 
-        return has_power
+        return has_funds
 
     def set_position_manager(self, position_manager: 'PositionManager'):
         """
@@ -465,27 +487,24 @@ class CapitalCommander:
         amount_usdt: float
     ) -> bool:
         """
-        预留资金（下单前调用）
-
-        Args:
-            strategy_id (str): 策略 ID
-            amount_usdt (float): 预留金额（USDT）
-
-        Returns:
-            bool: 预留是否成功
+        预留资金（下单前）
+        [FIX]: 预留保证金，而非全额名义价值
         """
+        # 复用检查逻辑
         if not self.check_buying_power(strategy_id, amount_usdt):
             return False
 
-        capital = self._strategies[strategy_id]
-        capital.used += amount_usdt
-        capital.available = capital.allocated - capital.used + capital.profit
+        # 计算并扣除保证金
+        leverage = self._get_effective_leverage(strategy_id)
+        margin_to_reserve = amount_usdt / leverage
+
+        self._strategies[strategy_id].used += margin_to_reserve
 
         logger.info(
-            f"策略 {strategy_id} 预留资金: {amount_usdt:.2f} USDT, "
-            f"剩余可用: {capital.available:.2f} USDT"
+            f"🔒 资金预留 [{strategy_id}]: "
+            f"锁定保证金 ${margin_to_reserve:.2f} "
+            f"(名义价值 ${amount_usdt:.2f}, 杠杆 {leverage}x)"
         )
-
         return True
 
     def release_capital(
@@ -494,23 +513,26 @@ class CapitalCommander:
         amount_usdt: float
     ):
         """
-        释放资金（订单取消或失败后调用）
-
-        Args:
-            strategy_id (str): 策略 ID
-            amount_usdt (float): 释放金额（USDT）
+        释放资金（撤单或拒绝后）
+        [FIX]: 释放保证金，而非全额名义价值
         """
         if strategy_id not in self._strategies:
-            logger.error(f"策略 {strategy_id} 未分配资金")
             return
 
-        capital = self._strategies[strategy_id]
-        capital.used -= amount_usdt
-        capital.available = capital.allocated - capital.used + capital.profit
+        # 计算并释放保证金
+        leverage = self._get_effective_leverage(strategy_id)
+        margin_to_release = amount_usdt / leverage
+
+        # 确保 used 不为负数
+        self._strategies[strategy_id].used = max(
+            0.0,
+            self._strategies[strategy_id].used - margin_to_release
+        )
 
         logger.info(
-            f"策略 {strategy_id} 释放资金: {amount_usdt:.2f} USDT, "
-            f"剩余可用: {capital.available:.2f} USDT"
+            f"🔓 资金释放 [{strategy_id}]: "
+            f"释放保证金 ${margin_to_release:.2f} "
+            f"(名义价值 ${amount_usdt:.2f})"
         )
 
     def record_profit(
