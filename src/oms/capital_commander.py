@@ -392,6 +392,13 @@ class CapitalCommander:
             total_symbol_exposure = symbol_exposure + nominal_value
             symbol_exposure_ratio = total_symbol_exposure / account_equity
 
+            # ✨ 调试日志：打印当前使用的 limit 值
+            logger.debug(
+                f"🛡️ [敞口检查] {symbol}: "
+                f"当前敞口={symbol_exposure_ratio * 100:.1f}%, "
+                f"限制={self._risk_config.MAX_SINGLE_SYMBOL_EXPOSURE * 100:.1f}%"
+            )
+
             if symbol_exposure_ratio > self._risk_config.MAX_SINGLE_SYMBOL_EXPOSURE:
                 logger.warning(
                     f"🛑 单一币种敞口超限: {symbol} "

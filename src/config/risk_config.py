@@ -56,7 +56,8 @@ class RiskConfig:
 
     # ========== 敞口检查 ==========
     # 单一币种最大持仓比例
-    MAX_SINGLE_SYMBOL_EXPOSURE: float = 0.5
+    # ✨ 修复：从 50% 提升到 1000%（10.0），允许高杠杆交易
+    MAX_SINGLE_SYMBOL_EXPOSURE: float = 10.0
 
     # 警告级别的杠杆比例（仅记录日志，不拒绝）
     WARNING_LEVERAGE_THRESHOLD: float = 2.0
