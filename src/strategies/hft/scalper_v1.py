@@ -93,7 +93,11 @@ class ScalperV1(BaseStrategy):
         time_limit_seconds: int = 5,
         position_size: Optional[float] = None,
         mode: str = "PRODUCTION",
-        strategy_id: Optional[str] = None
+        strategy_id: Optional[str] = None,
+        # ✨ 新增参数
+        cooldown_seconds: float = 10.0,
+        # ✨ 容错参数（吃掉所有未定义的参数，防止崩溃）
+        **kwargs
     ):
         """
         初始化 ScalperV1 策略
@@ -130,8 +134,15 @@ class ScalperV1(BaseStrategy):
             stop_loss_pct=stop_loss_pct,
             time_limit_seconds=time_limit_seconds,
             position_size=position_size,
+            cooldown_seconds=int(cooldown_seconds),  # 转换为 int
             maker_timeout_seconds=2.0  # 默认2秒超时
         )
+
+        # ✨ 容错：记录未识别的参数
+        if kwargs:
+            logger.warning(
+                f"策略 {strategy_id} 收到未识别的参数: {list(kwargs.keys())}"
+            )
 
         # ========== 极简状态变量（O(1) 访问）==========
         # 成交量窗口（1秒滑动窗口）
