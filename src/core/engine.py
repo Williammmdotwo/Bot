@@ -267,7 +267,7 @@ class Engine:
 
     async def _register_event_handlers(self):
         """注册事件处理器"""
-        # 注册 OMS 事件处理器
+        # 1. 注册 OMS 事件处理器
         self._event_bus.register(
             EventType.ORDER_FILLED,
             self._capital_commander.on_order_filled
@@ -292,6 +292,25 @@ class Engine:
             EventType.ORDER_CANCELLED,
             self._order_manager.on_order_cancelled
         )
+
+        # 2. ✨ 关键修复：注册策略的事件处理器
+        if not self._strategies:
+            logger.warning("没有加载任何策略，跳过策略事件注册")
+            return
+
+        for strategy in self._strategies:
+            # 注册行情事件 (驱动策略核心逻辑)
+            self._event_bus.register(EventType.TICK, strategy.on_tick)
+
+            # 注册成交事件 (驱动持仓更新和挂单管理)
+            # 注意：BaseStrategy 通常已经实现了 on_order_filled
+            if hasattr(strategy, 'on_order_filled'):
+                self._event_bus.register(EventType.ORDER_FILLED, strategy.on_order_filled)
+
+            logger.info(
+                f"✅ 策略 {strategy.strategy_id} 已注册监听 "
+                f"TICK 和 ORDER_FILLED"
+            )
 
     async def _load_instruments(self):
         """

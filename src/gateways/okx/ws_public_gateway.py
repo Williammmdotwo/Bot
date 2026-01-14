@@ -294,7 +294,7 @@ class OkxPublicWsGateway(WebSocketGateway):
                     logger.debug(f"收到订单簿数据")
                     await self._process_orderbook(data["data"])
                 elif channel == "trades":
-                    logger.debug(f"收到 {len(data['data'])} 笔交易数据")
+                    # 📉 优化：高频数据流不记录详细日志，仅保留错误日志
                     for trade_item in data["data"]:
                         await self._process_trade(trade_item)
 
@@ -343,7 +343,11 @@ class OkxPublicWsGateway(WebSocketGateway):
             # 计算交易金额
             usdt_value = price * size
 
-            logger.debug(f"收到成交: {price:.2f} x {size:.4f} = {usdt_value:.2f} USDT")
+            # 📉 优化：高频成交数据不记录详细日志，仅保留错误日志
+            if usdt_value >= self.WHALE_THRESHOLD:
+                logger.info(
+                    f"🐋 [大单] {price:.2f} x {size:.4f} = {usdt_value:.2f} USDT"
+                )
 
             # 推送 TICK 事件到事件总线
             if self._event_bus:
@@ -385,10 +389,7 @@ class OkxPublicWsGateway(WebSocketGateway):
                 self._order_book['bids'] = bids[:5] if bids else []
                 self._order_book['asks'] = asks[:5] if asks else []
 
-                logger.debug(
-                    f"订单簿更新: Bid1={bids[0][0] if bids else 'N/A'}, "
-                    f"Ask1={asks[0][0] if asks else 'N/A'}"
-                )
+                # 📉 优化：高频订单簿数据不记录详细日志，仅保留错误日志
 
         except Exception as e:
             logger.error(f"订单簿处理异常: {e}", exc_info=True)
