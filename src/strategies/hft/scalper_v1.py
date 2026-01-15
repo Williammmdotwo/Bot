@@ -31,6 +31,7 @@ Example:
 """
 
 import time
+import asyncio
 import logging
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
@@ -58,6 +59,10 @@ class ScalperV1Config:
     cooldown_seconds: int = 10          # 交易冷却（秒）
     position_size: Optional[float] = None  # 仓位大小（None=基于风险计算）
     maker_timeout_seconds: float = 2.0    # [新增] Maker 挂单超时时间（秒）
+    # ✨ 新增：插队和追单配置
+    tick_size: float = 0.01              # 最小价格跳动单位（默认 0.01 USDT）
+    max_chase_distance_pct: float = 0.001 # 最大追单距离（默认 0.1%），防止无限追高
+    enable_chasing: bool = True          # 是否启用追单机制（默认启用）
 
 
 class ScalperV1(BaseStrategy):
@@ -163,8 +168,10 @@ class ScalperV1(BaseStrategy):
         self._last_close_time = 0.0  # 上次平仓时间戳
 
         # [新增] Maker 挂单管理
-        self._maker_order_id = None      # 当前挂单 ID
-        self._maker_order_time = 0.0    # 挂单时间戳
+        self._maker_order_id = None          # 当前挂单 ID
+        self._maker_order_time = 0.0        # 挂单时间戳
+        self._maker_order_price = 0.0        # 挂单价格
+        self._maker_order_initial_price = 0.0  # 初始信号价格（用于追单风控）
 
         # 波动率估算器（用于动态止损）
         self._volatility_estimator = VolatilityEstimator(
@@ -285,7 +292,11 @@ class ScalperV1(BaseStrategy):
             if self._position_opened:
                 await self._check_exit_conditions(price, now)
 
-            # 9. 触发逻辑（仅空仓且无挂单时检查）
+            # 9. 追单机制（监控已挂订单）
+            if self._maker_order_id is not None:
+                await self._check_chasing_conditions(price, now)
+
+            # 10. 触发逻辑（仅空仓且无挂单时检查）
             if not self._position_opened and self._maker_order_id is None:
                 await self._check_entry_conditions(price, now)
 
@@ -342,15 +353,17 @@ class ScalperV1(BaseStrategy):
                 logger.warning("订单簿数据不可用，跳过本次开仓")
                 return
 
-            # 4. 计算 Maker 挂单价格
-            # 买入时：挂单价格 = Best Bid（买一价），排在买单队列前端
-            # 卖出时：挂单价格 = Best Ask（卖一价），排在卖单队列前端
-            maker_price = best_bid  # 买入时使用买一价
+            # 4. 计算 Maker 挂单价格（插队机制）
+            # 使用 min(Best Bid + Tick, Best Ask - Tick)
+            # 在买一价基础上加一个最小跳动单位，抢占第一排位，但绝不直接吃掉卖单（保持 Maker 身份）
+            aggressive_bid = best_bid + self.config.tick_size
+            conservative_ask = best_ask - self.config.tick_size
+            maker_price = min(aggressive_bid, conservative_ask)
 
             logger.info(
-                f"📊 [Maker 挂单] {self.symbol}: "
+                f"📊 [插队挂单] {self.symbol}: "
                 f"Best Bid={best_bid:.2f}, Best Ask={best_ask:.2f}, "
-                f"挂单价格={maker_price:.2f} (买入)"
+                f"挂单价格={maker_price:.2f} (插队+{self.config.tick_size})"
             )
 
             # 5. 计算止损价格（基于波动率）
@@ -420,13 +433,102 @@ class ScalperV1(BaseStrategy):
         )
 
         if success:
-            # 记录挂单信息
-            # 注意：这里我们使用一个临时 ID，真正的订单 ID 会在 ORDER_SUBMITTED 事件中获取
-            # 简化处理：假设下单成功，等待 ORDER_FILLED 事件
+            # 记录挂单信息（用于追单机制）
             self._maker_order_id = "pending"  # 临时标记
             self._maker_order_time = time.time()
+            self._maker_order_price = price  # 记录挂单价格
+            self._maker_order_initial_price = price  # 记录初始信号价格
 
         return success
+
+    async def _check_chasing_conditions(self, current_price: float, now: float):
+        """
+        检查追单条件（追单机制）
+
+        如果发现 Market Best Bid 已经超过了 My Order Price（说明我被挤下去了），
+        且时间未到超时时间，则立即撤销当前订单并重新挂单。
+
+        Args:
+            current_price (float): 当前价格
+            now (float): 当前时间戳
+        """
+        # 检查是否启用追单机制
+        if not self.config.enable_chasing:
+            return
+
+        # 检查挂单是否存在
+        if self._maker_order_id is None or self._maker_order_price <= 0:
+            return
+
+        # 获取当前订单簿数据
+        best_bid, best_ask = self._get_order_book_best_prices()
+
+        # 🛡️ 保护：如果拿不到价格，不进行追单
+        if best_bid <= 0:
+            return
+
+        # 判断是否需要追单
+        # 如果 Market Best Bid > My Order Price，说明我被挤到队列后面了
+        if best_bid > self._maker_order_price:
+            # 计算追单距离（风控保护）
+            chase_distance = abs(best_bid - self._maker_order_initial_price) / self._maker_order_initial_price
+
+            # 🛡️ 风控：如果追单距离超过最大限制，放弃追单
+            if chase_distance > self.config.max_chase_distance_pct:
+                logger.warning(
+                    f"🛑 [追单放弃] {self.symbol}: "
+                    f"追单距离={chase_distance*100:.2f}% > "
+                    f"最大限制={self.config.max_chase_distance_pct*100:.2f}%, "
+                    f"撤单并放弃"
+                )
+                await self._cancel_maker_order()
+                return
+
+            # 计算新的挂单价格（插队机制）
+            aggressive_bid = best_bid + self.config.tick_size
+            conservative_ask = best_ask - self.config.tick_size
+            new_price = min(aggressive_bid, conservative_ask)
+
+            logger.info(
+                f"🔄 [追单触发] {self.symbol}: "
+                f"原价格={self._maker_order_price:.2f}, "
+                f"新Best Bid={best_bid:.2f}, "
+                f"新价格={new_price:.2f} "
+                f"(追单距离={chase_distance*100:.2f}%)"
+            )
+
+            # 撤销旧订单
+            await self._cancel_maker_order()
+
+            # 等待一小段时间确保撤单完成（避免订单冲突）
+            await asyncio.sleep(0.1)
+
+            # 重新挂单（使用新价格）
+            # 注意：这里需要重新计算交易数量，保持一致性
+            if self.config.position_size is not None:
+                trade_size = max(1, int(self.config.position_size))
+            else:
+                # 基于风险计算仓位
+                stop_loss_price = self._calculate_stop_loss(current_price)
+                risk_amount = (self._capital_commander.get_total_equity() *
+                             self._capital_commander._risk_config.RISK_PER_TRADE_PCT)
+                price_distance = abs(new_price - stop_loss_price)
+                base_quantity = risk_amount / price_distance
+                trade_size = max(1, int(base_quantity))
+
+            # 重新挂单
+            success = await self._place_maker_order(
+                symbol=self.symbol,
+                price=new_price,
+                stop_loss_price=self._calculate_stop_loss(current_price),
+                size=trade_size
+            )
+
+            if success:
+                logger.info(
+                    f"✅ [追单成功] {self.symbol} @ {new_price:.2f}, "
+                    f"数量={trade_size}"
+                )
 
     async def _cancel_maker_order(self):
         """
