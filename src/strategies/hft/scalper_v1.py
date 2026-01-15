@@ -127,7 +127,8 @@ class ScalperV1(BaseStrategy):
             capital_commander=capital_commander,
             symbol=symbol,
             mode=mode,
-            strategy_id=strategy_id
+            strategy_id=strategy_id,
+            cooldown_seconds=cooldown_seconds  # [FIX] 传递冷却时间给基类
         )
 
         # 策略配置

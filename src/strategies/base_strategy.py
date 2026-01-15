@@ -67,7 +67,8 @@ class BaseStrategy(ABC):
         position_manager=None,
         symbol: str = "BTC-USDT-SWAP",
         mode: str = "PRODUCTION",
-        strategy_id: Optional[str] = None
+        strategy_id: Optional[str] = None,
+        cooldown_seconds: float = 5.0  # [FIX] 冷却时间参数
     ):
         """
         初始化策略
@@ -108,8 +109,11 @@ class BaseStrategy(ABC):
         self._orders_submitted = 0
         self._last_trade_time = 0.0
 
+        # [FIX] 冷却时间参数（默认 5.0 秒，可通过子类覆盖）
+        self._cooldown_period = cooldown_seconds
+
         logger.info(
-            f"策略初始化: {self.strategy_id}, symbol={symbol}, mode={mode}"
+            f"策略初始化: {self.strategy_id}, symbol={symbol}, mode={mode}, cooldown={cooldown_seconds}s"
         )
 
     @abstractmethod
@@ -276,12 +280,12 @@ class BaseStrategy(ABC):
 
         # 1. 冷却检查
         current_time = time.time()
-        if current_time - self._last_trade_time < 5.0:
+        if current_time - self._last_trade_time < self._cooldown_period:
             # 仅在非市价单时检查冷却（市价平仓通常比较急）
             if order_type != "market":
                 logger.warning(
                     f"策略 {self.strategy_id} 冷却中，跳过下单 "
-                    f"(剩余: {5.0 - (current_time - self._last_trade_time):.1f}s)"
+                    f"(剩余: {self._cooldown_period - (current_time - self._last_trade_time):.1f}s)"
                 )
                 return False
 
