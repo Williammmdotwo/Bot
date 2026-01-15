@@ -139,7 +139,7 @@ class ScalperV1(BaseStrategy):
             stop_loss_pct=stop_loss_pct,
             time_limit_seconds=time_limit_seconds,
             position_size=position_size,
-            cooldown_seconds=int(cooldown_seconds),  # 转换为 int
+            cooldown_seconds=0,  # [FIX] HFT 策略强制无冷却
             maker_timeout_seconds=2.0  # 默认2秒超时
         )
 
@@ -215,6 +215,16 @@ class ScalperV1(BaseStrategy):
         self.public_gateway = gateway
         logger.info(f"公共网关已注入到策略 {self.strategy_id}")
 
+    def _is_cooling_down(self) -> bool:
+        """
+        检查是否处于冷却期
+
+        Returns:
+            bool: 是否处于冷却期
+        """
+        now = time.time()
+        return now - self._last_close_time < self.config.cooldown_seconds
+
     async def on_tick(self, event: Event):
         """
         处理 Tick 事件（策略核心逻辑）
@@ -237,6 +247,10 @@ class ScalperV1(BaseStrategy):
             if not self.is_enabled():
                 return
 
+            # [FIX] 如果在冷却中，直接静默跳过，节省 CPU 和日志空间
+            if self._is_cooling_down():
+                return
+
             now = time.time()
 
             # 1. 检查挂单超时（Maker 挂单管理）
@@ -248,13 +262,6 @@ class ScalperV1(BaseStrategy):
                         f"未成交，超时 {self.config.maker_timeout_seconds}s，撤单"
                     )
                     await self._cancel_maker_order()
-
-            # 冷却检查：防止平仓后立即重新开仓
-            # ✨ 追单操作（已有挂单）绕过冷却检查
-            if self._maker_order_id is None:
-                if now - self._last_close_time < self.config.cooldown_seconds:
-                    # 处于冷却期，跳过处理
-                    return
 
             # 2. 窗口重置（每秒重置一次，比 deque 快得多）
             if now - self.vol_window_start >= 1.0:
