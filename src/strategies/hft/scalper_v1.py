@@ -215,6 +215,19 @@ class ScalperV1(BaseStrategy):
         self.public_gateway = gateway
         logger.info(f"公共网关已注入到策略 {self.strategy_id}")
 
+    async def start(self):
+        """
+        策略启动
+
+        [FIX] 强制重置冷却时间，确保 HFT 逻辑不被拦截
+        """
+        # 调用基类的 start 方法
+        await super().start()
+
+        # [FIX] 强制移除冷却，确保 HFT 逻辑不被拦截
+        self.config.cooldown_seconds = 0
+        logger.info("🚀 [HFT 模式] ScalperV1 冷却时间已强制设为 0s")
+
     def _is_cooling_down(self) -> bool:
         """
         检查是否处于冷却期

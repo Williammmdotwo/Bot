@@ -190,7 +190,7 @@ def load_config_from_env() -> dict:
                     'take_profit_pct': float(os.getenv('SCALPER_TAKE_PROFIT_PCT', 0.002)),
                     'stop_loss_pct': float(os.getenv('SCALPER_STOP_LOSS_PCT', 0.01)),
                     'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 5)),
-                    'cooldown_seconds': float(os.getenv('SCALPER_COOLDOWN', 10.0)),
+                    'cooldown_seconds': float(os.getenv('SCALPER_COOLDOWN', 0.0)),  # [FIX] HFT 策略强制无冷却
                     'position_size': position_size_value  # 只在显式设置时才传值
                 }
             }
