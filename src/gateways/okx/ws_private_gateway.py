@@ -142,20 +142,8 @@ class OkxPrivateWsGateway(WebSocketGateway):
             # 发送登录包
             await self._send_login()
 
-            # ⚠️ 修复：等待登录确认后再启动消息循环
-            # 使用 asyncio.wait_for 防止无限等待
-            try:
-                await asyncio.wait_for(
-                    self._wait_for_login(),
-                    timeout=10.0  # 10秒登录超时
-                )
-                logger.info(f"✅ 登录确认完成，可以开始接收消息")
-            except asyncio.TimeoutError:
-                logger.error(f"❌ 登录超时，可能订阅失败")
-                self._connected = False
-                return False
-
-            # 登录成功后启动消息循环
+            # ⚠️ 修复：移除阻塞性登录等待，直接启动消息循环
+            # 理由：已有 REST API 定时同步和开仓锁，不强制依赖 WS 登录确认
             asyncio.create_task(self._message_loop())
 
             # 启动重连循环

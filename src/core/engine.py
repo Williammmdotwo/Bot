@@ -426,18 +426,33 @@ class Engine:
         else:
             logger.info("✅ Private WebSocket 已连接")
 
-        # 2. 设置杠杆（为所有策略的交易对设置 10x 杠杆）
+        # 2. 设置杠杆（优先从策略配置中读取）
         logger.info("设置杠杆...")
+
         # 获取所有策略使用的交易对
         symbols = set()
         for strategy in self._strategies:
             if hasattr(strategy, 'symbol'):
                 symbols.add(strategy.symbol)
 
+        # 确定目标杠杆（默认 10x）
+        target_leverage = 10
+
+        # 尝试从配置中获取第一个策略的杠杆设置
+        strategies_config = self.config.get('strategies', [])
+        if strategies_config:
+            first_strategy = strategies_config[0]
+            # 尝试获取 params.leverage
+            target_leverage = first_strategy.get('params', {}).get('leverage', 10)
+            logger.info(f"📊 从策略配置读取杠杆: {target_leverage}x")
+        else:
+            logger.info(f"📊 使用默认杠杆: {target_leverage}x")
+
         # 设置杠杆
         for symbol in symbols:
             try:
-                await self._rest_gateway.set_leverage(symbol, leverage=10)
+                await self._rest_gateway.set_leverage(symbol, leverage=int(target_leverage))
+                logger.info(f"✅ 杠杆设置成功: {symbol} = {target_leverage}x")
             except Exception as e:
                 logger.warning(f"设置杠杆失败 {symbol}: {e}（继续运行）")
 
