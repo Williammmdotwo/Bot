@@ -152,6 +152,28 @@ class BaseStrategy(ABC):
         """
         pass
 
+    async def on_order_filled(self, event: Event):
+        """
+        处理订单成交事件（可选回调）
+
+        子类可以覆盖此方法来处理订单成交后的逻辑。
+
+        Args:
+            event (Event): ORDER_FILLED 事件
+        """
+        pass
+
+    async def on_order_cancelled(self, event: Event):
+        """
+        处理订单取消事件（可选回调）
+
+        子类可以覆盖此方法来处理订单取消后的逻辑。
+
+        Args:
+            event (Event): ORDER_CANCELLED 事件
+        """
+        pass
+
     async def buy(
         self,
         symbol: str,

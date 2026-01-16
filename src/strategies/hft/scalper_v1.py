@@ -168,6 +168,9 @@ class ScalperV1(BaseStrategy):
         # [新增] 冷却机制：防止平仓后立即重新开仓
         self._last_close_time = 0.0  # 上次平仓时间戳
 
+        # [新增] 开仓锁机制：防止重复开仓
+        self._is_pending_open = False  # 是否有在途的开仓请求
+
         # [新增] Maker 挂单管理
         self._maker_order_id = None          # 当前挂单 ID
         self._maker_order_time = 0.0        # 挂单时间戳
@@ -336,6 +339,65 @@ class ScalperV1(BaseStrategy):
         """
         pass
 
+    async def on_order_filled(self, event: Event):
+        """
+        处理订单成交事件（解锁开仓锁）
+
+        Args:
+            event (Event): ORDER_FILLED 事件
+        """
+        try:
+            data = event.data
+            symbol = data.get('symbol', '')
+
+            # 只处理当前交易对的订单
+            if symbol != self.symbol:
+                return
+
+            # 检查是否是我们的开仓订单成交
+            if self._is_pending_open:
+                logger.info(f"✅ [开仓成交] {self.symbol}: 解锁开仓锁")
+                self._is_pending_open = False
+
+                # 记录持仓信息
+                side = data.get('side', '').lower()
+                filled_size = float(data.get('filled_size', 0))
+
+                if side == 'buy':
+                    self._position_opened = True
+                    self._entry_price = float(data.get('price', 0))
+                    self._entry_time = time.time()
+                    self.local_pos_size = filled_size
+
+                    logger.info(
+                        f"📊 [开仓成功] {self.symbol} @ {self._entry_price:.2f}, "
+                        f"数量={filled_size:.4f}"
+                    )
+        except Exception as e:
+            logger.error(f"处理订单成交事件失败: {e}", exc_info=True)
+
+    async def on_order_cancelled(self, event: Event):
+        """
+        处理订单取消事件（解锁开仓锁）
+
+        Args:
+            event (Event): ORDER_CANCELLED 事件
+        """
+        try:
+            data = event.data
+            symbol = data.get('symbol', '')
+
+            # 只处理当前交易对的订单
+            if symbol != self.symbol:
+                return
+
+            # 检查是否是我们的开仓订单被取消
+            if self._is_pending_open:
+                logger.warning(f"🚫 [开仓失败] {self.symbol}: 订单被取消，解锁开仓锁")
+                self._is_pending_open = False
+        except Exception as e:
+            logger.error(f"处理订单取消事件失败: {e}", exc_info=True)
+
     async def _check_entry_conditions(self, price: float, now: float):
         """
         检查入场条件（买卖失衡触发）- Maker 模式
@@ -447,7 +509,17 @@ class ScalperV1(BaseStrategy):
         Returns:
             bool: 下单是否成功
         """
+        # 1. 【新增】检查是否已经有在途的开仓请求
+        if self._is_pending_open:
+            logger.warning(
+                f"🚫 [风控拦截] {self.symbol}: 上一个开仓请求尚未结束，拒绝重复开仓"
+            )
+            return False
+
         try:
+            # 2. 【新增】上锁
+            self._is_pending_open = True
+
             # 调用基类下单方法，限价单
             success = await self.buy(
                 symbol=symbol,
@@ -463,9 +535,14 @@ class ScalperV1(BaseStrategy):
                 self._maker_order_time = time.time()
                 self._maker_order_price = price  # 记录挂单价格
                 self._maker_order_initial_price = price  # 记录初始信号价格
+            else:
+                # 下单失败，解锁
+                self._is_pending_open = False
 
             return success
         except Exception as e:
+            # 异常解锁
+            self._is_pending_open = False
             logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
             return False
 

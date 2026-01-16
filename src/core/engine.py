@@ -307,9 +307,14 @@ class Engine:
             if hasattr(strategy, 'on_order_filled'):
                 self._event_bus.register(EventType.ORDER_FILLED, strategy.on_order_filled)
 
+            # 注册取消事件 (解锁开仓锁)
+            # 注意：BaseStrategy 已经实现了 on_order_cancelled
+            if hasattr(strategy, 'on_order_cancelled'):
+                self._event_bus.register(EventType.ORDER_CANCELLED, strategy.on_order_cancelled)
+
             logger.info(
                 f"✅ 策略 {strategy.strategy_id} 已注册监听 "
-                f"TICK 和 ORDER_FILLED"
+                f"TICK, ORDER_FILLED 和 ORDER_CANCELLED"
             )
 
     async def _load_instruments(self):

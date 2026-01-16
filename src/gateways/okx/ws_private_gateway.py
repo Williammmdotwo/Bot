@@ -8,6 +8,7 @@ OKX 私有 WebSocket 网关 (Private WebSocket Gateway)
 - 推送 POSITION_UPDATE 和 ORDER_UPDATE 事件
 - 自动重连机制（指数退避）
 - 签名鉴权
+- 登录确认机制（修复订阅失败问题）
 
 设计原则：
 - 使用标准事件格式
@@ -100,6 +101,10 @@ class OkxPrivateWsGateway(WebSocketGateway):
         self._max_reconnect_delay = 120.0 if use_demo else 60.0
         self._max_reconnect_attempts = 10
 
+        # 登录和订阅状态
+        self._login_completed = False
+        self._subscribe_completed = False
+
         logger.info(
             f"OkxPrivateWsGateway 初始化: use_demo={use_demo}, "
             f"ws_url={self.ws_url}"
@@ -116,7 +121,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
             if self._session is None or self._session.closed:
                 self._session = ClientSession()
 
-            logger.info(f"正在连接私有 WebSocket: {self.ws_url}")
+            logger.info(f"🔌 正在连接私有 WebSocket: {self.ws_url}")
 
             self._ws = await self._session.ws_connect(
                 self.ws_url,
@@ -126,13 +131,28 @@ class OkxPrivateWsGateway(WebSocketGateway):
             self._connected = True
             self._reconnect_attempts = 0
             self._is_logged_in = False
+            self._login_completed = False
+            self._subscribe_completed = False
 
-            logger.info(f"私有 WebSocket 连接成功")
+            logger.info(f"✅ 私有 WebSocket 连接成功")
 
             # 发送登录包
             await self._send_login()
 
-            # 启动消息循环
+            # ⚠️ 修复：等待登录确认后再启动消息循环
+            # 使用 asyncio.wait_for 防止无限等待
+            try:
+                await asyncio.wait_for(
+                    self._wait_for_login(),
+                    timeout=10.0  # 10秒登录超时
+                )
+                logger.info(f"✅ 登录确认完成，可以开始接收消息")
+            except asyncio.TimeoutError:
+                logger.error(f"❌ 登录超时，可能订阅失败")
+                self._connected = False
+                return False
+
+            # 登录成功后启动消息循环
             asyncio.create_task(self._message_loop())
 
             # 启动重连循环
@@ -141,18 +161,20 @@ class OkxPrivateWsGateway(WebSocketGateway):
             return True
 
         except ClientError as e:
-            logger.error(f"私有 WebSocket 连接失败: {e}")
+            logger.error(f"❌ 私有 WebSocket 连接失败: {e}")
             return False
         except Exception as e:
-            logger.error(f"私有 WebSocket 连接异常: {e}")
+            logger.error(f"❌ 私有 WebSocket 连接异常: {e}")
             return False
 
     async def disconnect(self):
         """断开连接"""
-        logger.info("停止私有 WebSocket...")
+        logger.info("⏹ 停止私有 WebSocket...")
         self._is_running = False
         self._connected = False
         self._is_logged_in = False
+        self._login_completed = False
+        self._subscribe_completed = False
 
         if self._ws:
             try:
@@ -168,7 +190,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
                 logger.error(f"关闭 Session 失败: {e}")
             self._session = None
 
-        logger.info("私有 WebSocket 已停止")
+        logger.info("✅ 私有 WebSocket 已停止")
 
     async def is_connected(self) -> bool:
         """
@@ -212,10 +234,37 @@ class OkxPrivateWsGateway(WebSocketGateway):
                     json.dumps(unsubscribe_msg, separators=(',', ':'))
                 )
 
-                logger.info(f"已取消订阅: {channel}")
+                logger.info(f"🔕 已取消订阅: {channel}")
 
         except Exception as e:
             logger.error(f"取消订阅失败: {e}")
+
+    async def _wait_for_login(self):
+        """
+        等待登录确认（修复：防止订阅时机错误）
+
+        此方法由 connect() 调用，使用 Event 等待登录确认。
+        """
+        # 创建一个事件用于同步
+        login_event = asyncio.Event()
+
+        # 临时修改 _process_data 来设置事件
+        original_process = self._process_data
+
+        async def patched_process(data):
+            await original_process(data)
+            # 检查是否登录成功
+            if "event" in data and data["event"] == "login":
+                if data.get("code") == "0":
+                    login_event.set()
+
+        self._process_data = patched_process
+
+        # 等待事件
+        await login_event.wait()
+
+        # 恢复原始方法
+        self._process_data = original_process
 
     async def _send_login(self):
         """
@@ -244,21 +293,23 @@ class OkxPrivateWsGateway(WebSocketGateway):
                 }]
             }
 
-            logger.info(f"发送登录包 (Unix TS={timestamp})")
+            logger.info(f"🔐 发送登录包 (Unix TS={timestamp})")
 
             await self._ws.send_json(login_msg)
 
-            logger.info("登录包已发送")
+            logger.info("✅ 登录包已发送，等待服务器确认...")
 
         except Exception as e:
-            logger.error(f"发送登录包失败: {e}")
+            logger.error(f"❌ 发送登录包失败: {e}")
             raise
 
     async def _subscribe_channels(self):
         """
-        登录成功后订阅频道
+        登录成功后订阅频道（修复：增强日志和错误处理）
         """
         try:
+            logger.info("📡 准备订阅私有频道...")
+
             # 订阅持仓频道
             positions_subscribe_msg = {
                 "op": "subscribe",
@@ -280,15 +331,15 @@ class OkxPrivateWsGateway(WebSocketGateway):
             await self._ws.send_str(
                 json.dumps(positions_subscribe_msg, separators=(',', ':'))
             )
-            logger.info("已订阅 positions 频道")
+            logger.info("✅ [订阅请求] positions 频道订阅请求已发送")
 
             await self._ws.send_str(
                 json.dumps(orders_subscribe_msg, separators=(',', ':'))
             )
-            logger.info("已订阅 orders 频道")
+            logger.info("✅ [订阅请求] orders 频道订阅请求已发送")
 
         except Exception as e:
-            logger.error(f"订阅频道失败: {e}")
+            logger.error(f"❌ 订阅频道失败: {e}", exc_info=True)
             raise
 
     async def on_message(self, message: WSMessage):
@@ -304,21 +355,23 @@ class OkxPrivateWsGateway(WebSocketGateway):
                 await self._process_data(data)
 
             elif message.type == aiohttp.WSMsgType.ERROR:
-                logger.error(f"私有 WebSocket 错误: {message.data}")
+                logger.error(f"❌ 私有 WebSocket 错误: {message.data}")
                 self._connected = False
 
             elif message.type == aiohttp.WSMsgType.CLOSED:
-                logger.warning("私有 WebSocket 连接已关闭")
+                logger.warning("⚠️ 私有 WebSocket 连接已关闭")
                 self._connected = False
                 self._is_logged_in = False
+                self._login_completed = False
+                self._subscribe_completed = False
 
             else:
                 logger.debug(f"未处理的消息类型: {message.type}")
 
         except json.JSONDecodeError as e:
-            logger.error(f"JSON 解析失败: {e}")
+            logger.error(f"❌ JSON 解析失败: {e}")
         except Exception as e:
-            logger.error(f"消息处理异常: {e}")
+            logger.error(f"❌ 消息处理异常: {e}")
 
     async def _process_data(self, data: dict):
         """
@@ -332,21 +385,29 @@ class OkxPrivateWsGateway(WebSocketGateway):
             if "event" in data:
                 if data["event"] == "login":
                     code = data.get("code")
+                    msg = data.get("msg", "")
                     if code == "0":
-                        logger.info("✅ 登录成功")
+                        logger.info(f"✅ [登录成功] 服务器确认登录完成")
                         self._is_logged_in = True
+                        self._login_completed = True
                         # 登录成功后订阅频道
                         await self._subscribe_channels()
                     else:
-                        logger.error(f"❌ 登录失败: {data}")
+                        logger.error(f"❌ [登录失败] code={code}, msg={msg}")
                         self._is_logged_in = False
+                        self._login_completed = False
 
                 elif data["event"] == "subscribe":
                     channel = data.get("arg", {}).get("channel")
-                    logger.info(f"✅ 频道订阅成功: {channel}")
+                    code = data.get("code")
+                    if code == "0":
+                        logger.info(f"✅ [订阅确认] 频道 '{channel}' 订阅成功")
+                        self._subscribe_completed = True
+                    else:
+                        logger.error(f"❌ [订阅失败] 频道 '{channel}' 订阅失败: code={code}")
 
                 elif data["event"] == "error":
-                    logger.error(f"❌ WebSocket 错误: {data}")
+                    logger.error(f"❌ [WebSocket 错误] {data}")
 
             # 处理持仓推送
             if "data" in data and "arg" in data:
@@ -355,7 +416,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
                 if channel == "positions":
                     positions = data.get("data", [])
-                    logger.debug(f"收到持仓推送: {len(positions)} 个")
+                    logger.debug(f"📊 收到持仓推送: {len(positions)} 个")
 
                     # 推送 POSITION_UPDATE 事件
                     if self._event_bus and positions:
@@ -376,7 +437,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
                 elif channel == "orders":
                     orders = data.get("data", [])
-                    logger.debug(f"收到订单推送: {len(orders)} 个")
+                    logger.debug(f"📋 收到订单推送: {len(orders)} 个")
 
                     # 推送 ORDER_UPDATE 事件
                     if self._event_bus and orders:
@@ -406,11 +467,12 @@ class OkxPrivateWsGateway(WebSocketGateway):
                             await self.publish_event(event)
 
         except Exception as e:
-            logger.error(f"数据处理异常: {e}, 原始数据: {data}")
+            logger.error(f"❌ 数据处理异常: {e}, 原始数据: {data}", exc_info=True)
 
     async def _message_loop(self):
         """消息接收循环"""
         try:
+            logger.info("🔄 消息循环已启动")
             while self._connected and self._is_running:
                 try:
                     msg = await asyncio.wait_for(
@@ -420,13 +482,15 @@ class OkxPrivateWsGateway(WebSocketGateway):
                     await self.on_message(msg)
 
                 except asyncio.TimeoutError:
-                    logger.warning("接收消息超时，可能连接已断开")
+                    logger.warning("⚠️ 接收消息超时，可能连接已断开")
                     self._connected = False
                     break
 
         except Exception as e:
-            logger.error(f"消息循环异常: {e}")
+            logger.error(f"❌ 消息循环异常: {e}")
             self._connected = False
+        finally:
+            logger.info("⏹ 消息循环已停止")
 
     async def _reconnect_loop(self):
         """自动重连循环"""
@@ -441,7 +505,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
             # 检查是否超过最大重连次数
             if self._reconnect_attempts >= self._max_reconnect_attempts:
                 logger.error(
-                    f"重连次数超过限制 ({self._max_reconnect_attempts})，停止重连"
+                    f"❌ 重连次数超过限制 ({self._max_reconnect_attempts})，停止重连"
                 )
                 break
 
@@ -453,7 +517,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
             delay = min(delay, self._max_reconnect_delay)
 
             logger.info(
-                f"等待 {delay:.1f} 秒后重连 "
+                f"⏰ 等待 {delay:.1f} 秒后重连 "
                 f"(尝试 {self._reconnect_attempts + 1}/{self._max_reconnect_attempts})"
             )
 
@@ -464,9 +528,9 @@ class OkxPrivateWsGateway(WebSocketGateway):
             success = await self.connect()
 
             if success:
-                logger.info(f"重连成功 (尝试 {self._reconnect_attempts})")
+                logger.info(f"✅ 重连成功 (尝试 {self._reconnect_attempts})")
             else:
-                logger.warning(f"重连失败 (尝试 {self._reconnect_attempts})")
+                logger.warning(f"⚠️ 重连失败 (尝试 {self._reconnect_attempts})")
 
     async def on_error(self, error: Exception):
         """
@@ -475,7 +539,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
         Args:
             error (Exception): 错误对象
         """
-        logger.error(f"私有 WebSocket 错误: {error}")
+        logger.error(f"❌ 私有 WebSocket 错误: {error}")
         if self._event_bus:
             event = Event(
                 type=EventType.ERROR,
@@ -490,9 +554,11 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
     async def on_close(self):
         """连接关闭回调"""
-        logger.warning("私有 WebSocket 连接已关闭")
+        logger.warning("⚠️ 私有 WebSocket 连接已关闭")
         self._connected = False
         self._is_logged_in = False
+        self._login_completed = False
+        self._subscribe_completed = False
 
     async def close(self):
         """关闭网关"""
