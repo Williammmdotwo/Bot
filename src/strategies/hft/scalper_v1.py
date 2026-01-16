@@ -369,8 +369,8 @@ class ScalperV1(BaseStrategy):
                 f"价格={price:.2f}"
             )
 
-            # 3. 获取订单簿数据（Best Bid/Ask）
-            best_bid, best_ask = self._get_order_book_best_prices()
+            # 3. 获取订单簿数据（Best Bid/Ask）- 带降级策略
+            best_bid, best_ask = self._get_order_book_best_prices(price)
 
             # 🛡️ 保护：如果拿不到价格，绝对不要开仓
             if best_bid <= 0 or best_ask <= 0:
@@ -447,23 +447,27 @@ class ScalperV1(BaseStrategy):
         Returns:
             bool: 下单是否成功
         """
-        # 调用基类下单方法，限价单
-        success = await self.buy(
-            symbol=symbol,
-            entry_price=price,
-            stop_loss_price=stop_loss_price,
-            order_type='limit',  # Maker 模式使用限价单
-            size=size
-        )
+        try:
+            # 调用基类下单方法，限价单
+            success = await self.buy(
+                symbol=symbol,
+                entry_price=price,
+                stop_loss_price=stop_loss_price,
+                order_type='limit',  # Maker 模式使用限价单
+                size=size
+            )
 
-        if success:
-            # 记录挂单信息（用于追单机制）
-            self._maker_order_id = "pending"  # 临时标记
-            self._maker_order_time = time.time()
-            self._maker_order_price = price  # 记录挂单价格
-            self._maker_order_initial_price = price  # 记录初始信号价格
+            if success:
+                # 记录挂单信息（用于追单机制）
+                self._maker_order_id = "pending"  # 临时标记
+                self._maker_order_time = time.time()
+                self._maker_order_price = price  # 记录挂单价格
+                self._maker_order_initial_price = price  # 记录初始信号价格
 
-        return success
+            return success
+        except Exception as e:
+            logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
+            return False
 
     async def _check_chasing_conditions(self, current_price: float, now: float):
         """
@@ -574,16 +578,39 @@ class ScalperV1(BaseStrategy):
         except Exception as e:
             logger.error(f"撤单失败: {e}", exc_info=True)
 
-    def _get_order_book_best_prices(self) -> tuple:
+    def _get_order_book_best_prices(self, current_price: float = 0.0) -> tuple:
         """
-        获取订单簿最优买卖价
+        获取订单簿最优买卖价（带降级策略）
+
+        当订单簿数据不可用时，使用当前 Tick 的最新成交价作为临时基准价格：
+        - 临时 Bid = Last Price - TickSize
+        - 临时 Ask = Last Price + TickSize
+
+        Args:
+            current_price (float): 当前 Tick 的最新成交价（用于降级策略）
 
         Returns:
             tuple: (best_bid, best_ask) 如果没有数据返回 (0.0, 0.0)
         """
         try:
             if hasattr(self, 'public_gateway') and self.public_gateway:
-                return self.public_gateway.get_best_bid_ask()
+                best_bid, best_ask = self.public_gateway.get_best_bid_ask()
+
+                # 🛡️ 降级策略：订单簿数据不可用时使用 Last Price
+                if best_bid is None or best_ask is None or best_bid <= 0 or best_ask <= 0:
+                    if current_price > 0:
+                        logger.warning(
+                            f"⚠️ [降级策略] {self.symbol}: 订单簿数据不可用， "
+                            f"使用 Last Price={current_price:.2f} 作为基准价格"
+                        )
+                        # 临时 Bid = Last Price - TickSize
+                        best_bid = current_price - self.config.tick_size
+                        # 临时 Ask = Last Price + TickSize
+                        best_ask = current_price + self.config.tick_size
+                    else:
+                        return (0.0, 0.0)
+
+                return (best_bid, best_ask)
             return (0.0, 0.0)
         except Exception as e:
             logger.error(f"获取订单簿价格失败: {e}", exc_info=True)
@@ -660,30 +687,34 @@ class ScalperV1(BaseStrategy):
             else:
                 self._loss_trades += 1
 
-        # 平仓（市价单，确保快速退出）
-        success = await self.sell(
-            symbol=self.symbol,
-            entry_price=price,  # 平仓时的价格
-            stop_loss_price=0,   # 无需止损
-            order_type='market',  # 市价单快速退出
-            size=self.local_pos_size  # 显式传入本地记录的数量
-        )
-
-        if success:
-            self._position_opened = False
-            self._entry_price = 0.0
-            self._entry_time = 0.0
-
-            # 平仓后重置本地记录
-            self.local_pos_size = 0.0
-
-            # 更新平仓时间（冷却机制）
-            self._last_close_time = time.time()
-
-            logger.info(
-                f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
-                f"reason={reason}, 冷却={self.config.cooldown_seconds}s"
+        try:
+            # 平仓（市价单，确保快速退出）
+            success = await self.sell(
+                symbol=self.symbol,
+                entry_price=price,  # 平仓时的价格
+                stop_loss_price=0,   # 无需止损
+                order_type='market',  # 市价单快速退出
+                size=self.local_pos_size  # 显式传入本地记录的数量
             )
+
+            if success:
+                self._position_opened = False
+                self._entry_price = 0.0
+                self._entry_time = 0.0
+
+                # 平仓后重置本地记录
+                self.local_pos_size = 0.0
+
+                # 更新平仓时间（冷却机制）
+                self._last_close_time = time.time()
+
+                logger.info(
+                    f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
+                    f"reason={reason}, 冷却={self.config.cooldown_seconds}s"
+                )
+        except Exception as e:
+            logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}")
+            # 注意：即使平仓失败，也不重置持仓状态，等待下次尝试
 
     def _calculate_stop_loss(self, entry_price: float) -> float:
         """

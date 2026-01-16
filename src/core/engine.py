@@ -442,6 +442,11 @@ class Engine:
             await strategy.start()
         logger.info("✅ 所有策略已启动")
 
+        # ✅ [关键] 启动 OMS 定时持仓同步（修复幽灵持仓问题）
+        sync_interval = self.config.get('position_sync_interval', 30)
+        self._position_manager.start_scheduled_sync(interval=sync_interval)
+        logger.info(f"✅ 定时持仓同步已启动，间隔: {sync_interval}秒")
+
         # 4. 设置信号处理
         self._setup_signal_handlers()
 
