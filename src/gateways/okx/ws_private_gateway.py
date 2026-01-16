@@ -49,7 +49,10 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
     # OKX Private WebSocket URL
     WS_URL_PRODUCTION = "wss://ws.okx.com:8443/ws/v5/private"
-    WS_URL_DEMO = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
+    # ⚠️ 修复：移除 ?brokerId=9999 参数，使用标准模拟盘 URL
+    # 旧的: "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
+    # 新的 (标准模拟盘): "wss://wspap.okx.com:8443/ws/v5/private"
+    WS_URL_DEMO = "wss://wspap.okx.com:8443/ws/v5/private"
 
     def __init__(
         self,
