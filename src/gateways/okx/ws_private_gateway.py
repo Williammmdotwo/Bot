@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 from typing import Optional
+import aiohttp
 from aiohttp import WSMessage, ClientError
 from ...core.event_types import Event, EventType
 from .ws_base import WsBaseGateway

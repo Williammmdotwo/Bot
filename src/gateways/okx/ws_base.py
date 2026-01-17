@@ -22,6 +22,7 @@ import logging
 import time
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
+import aiohttp
 from aiohttp import ClientSession, WSMessage, ClientError
 
 logger = logging.getLogger(__name__)
