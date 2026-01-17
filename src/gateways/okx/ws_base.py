@@ -253,6 +253,7 @@ class WsBaseGateway:
         - 使用 try...finally 结构
         - 在 finally 块中，不直接调用 connect()，而是通过 _reconnect() 触发重连
         - 避免阻塞消息循环
+        - 拦截心跳响应 "pong"，避免 JSON 解析错误
         """
         try:
             self._logger.info("消息接收循环已启动")
@@ -266,6 +267,14 @@ class WsBaseGateway:
 
                     # 更新最后数据时间
                     self._last_heartbeat = time.time()
+
+                    # 🔥 修复：拦截心跳响应 "pong"
+                    # OKX 服务器回复的心跳响应是纯文本字符串 "pong"，而不是 JSON 格式
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = msg.data
+                        if data == 'pong':
+                            self._logger.debug("💓 收到心跳响应 (pong)")
+                            continue  # 直接跳过，不进行 JSON 解析和子类处理
 
                     # 处理消息
                     await self._on_message(msg)
