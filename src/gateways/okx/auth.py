@@ -44,10 +44,14 @@ class OkxSigner:
         now = datetime.now(timezone.utc)
 
         if mode == 'iso':
-            # ISO 8601 格式（UTC）
-            return now.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            # 🔥 关键修复：使用 isoformat(timespec='milliseconds') 确保毫秒精度
+            # 然后替换时区后缀为 'Z'（UTC 标准格式）
+            iso_str = now.isoformat(timespec='milliseconds')
+            # 将 +00:00 替换为 Z（OKX 要求的标准 UTC 格式）
+            return iso_str.replace('+00:00', 'Z')
         else:
-            # Unix 时间戳（毫秒）
+            # Unix 时间戳（毫秒字符串格式）
+            # 🔥 关键：返回字符串格式，确保签名和 payload 使用完全相同的时间戳
             return str(int(now.timestamp() * 1000))
 
     @staticmethod

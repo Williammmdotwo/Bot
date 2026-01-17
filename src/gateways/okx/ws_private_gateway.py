@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 from typing import Optional
+from datetime import datetime, timezone
 import aiohttp
 from aiohttp import WSMessage, ClientError
 from ...core.event_types import Event, EventType
@@ -174,15 +175,21 @@ class OkxPrivateWsGateway(WsBaseGateway):
         发送登录包
 
         🔥 修复：时间戳在发送前最后一刻生成，避免网络延迟导致的时间戳过期
+        🔥 关键修复：签名和 payload 使用不同格式的时间戳
         """
         try:
-            # 🔥 关键修复：时间戳必须在发送前的最后一刻生成
-            # 不能提前生成，否则网络延迟可能导致时间戳过期（Code 60006）
-            timestamp = OkxSigner.get_timestamp(mode='unix')
+            # 🔥 关键修复：生成两种时间戳
+            # 1. 签名使用的时间戳：ISO 8601 格式（与 REST API 一致）
+            timestamp_iso = OkxSigner.get_timestamp(mode='iso')
 
-            # 生成签名
+            # 2. Payload 中的时间戳：Unix 时间戳（秒，不是毫秒）
+            # OKX WebSocket 登录要求 payload 的 timestamp 是秒级别的 Unix 时间戳
+            now = datetime.now(timezone.utc)
+            timestamp_unix_seconds = str(int(now.timestamp()))
+
+            # 生成签名（使用 ISO 格式时间戳）
             sign = OkxSigner.sign(
-                timestamp,
+                timestamp_iso,
                 "GET",
                 "/users/self/verify",
                 "",
@@ -194,12 +201,14 @@ class OkxPrivateWsGateway(WsBaseGateway):
                 "args": [{
                     "apiKey": self.api_key,
                     "passphrase": self.passphrase,
-                    "timestamp": timestamp,
+                    "timestamp": timestamp_unix_seconds,  # 🔥 Unix 秒级别时间戳
                     "sign": sign
                 }]
             }
 
-            logger.info(f"🔐 发送登录包 (Unix TS={timestamp})")
+            logger.info(
+                f"🔐 发送登录包 (ISO TS={timestamp_iso}, Unix TS={timestamp_unix_seconds})"
+            )
 
             # 🔥 使用基类的 send_message 方法
             # send_message 内部会立即发送 WebSocket 消息
