@@ -4,7 +4,7 @@ OKX 私有 WebSocket 网关 (Private WebSocket Gateway)
 提供实时私有数据流，推送持仓和订单更新事件到事件总线。
 
 关键特性：
-- 继承 WebSocketGateway 基类
+- 继承 WsBaseGateway 基类（修复重连风暴）
 - 推送 POSITION_UPDATE 和 ORDER_UPDATE 事件
 - 自动重连机制（指数退避）
 - 签名鉴权
@@ -14,37 +14,47 @@ OKX 私有 WebSocket 网关 (Private WebSocket Gateway)
 - 使用标准事件格式
 - 集成事件总线
 - 保持原有 UserStream 功能
+
+🔥 修复内容：
+- 继承新的 WsBaseGateway，避免并发竞争
+- 使用基类的自动重连和资源清理机制
+- 防止 WebSocket 重连风暴
 """
 
 import asyncio
 import json
 import logging
 from typing import Optional
-import aiohttp
-from aiohttp import ClientSession, WSMessage, ClientError
-from ..base_gateway import WebSocketGateway
+from aiohttp import WSMessage, ClientError
 from ...core.event_types import Event, EventType
+from .ws_base import WsBaseGateway
 from .auth import OkxSigner
 
 logger = logging.getLogger(__name__)
 
 
-class OkxPrivateWsGateway(WebSocketGateway):
+class OkxPrivateWsGateway(WsBaseGateway):
     """
-    OKX 私有 WebSocket 网关
+    OKX 私有 WebSocket 网关（修复版）
 
     实时接收持仓和订单推送，推送标准事件到事件总线。
+    继承自 WsBaseGateway，自动获得：
+    - 并发连接保护（asyncio.Lock）
+    - 指数退避重连机制
+    - 资源自动清理
+    - 心跳保活
 
     Example:
-        >>> async with OkxPrivateWsGateway(
+        >>> gateway = OkxPrivateWsGateway(
         ...     api_key="your_api_key",
         ...     secret_key="your_secret",
         ...     passphrase="your_passphrase",
         ...     use_demo=True,
         ...     event_bus=event_bus
-        ... ) as gateway:
-        ...     await gateway.connect()
-        ...     await asyncio.sleep(60)
+        ... )
+        >>> await gateway.connect()
+        >>> await asyncio.sleep(60)
+        >>> await gateway.disconnect()
     """
 
     # OKX Private WebSocket URL
@@ -74,8 +84,19 @@ class OkxPrivateWsGateway(WebSocketGateway):
             ws_url (Optional[str]): WebSocket URL
             event_bus: 事件总线实例
         """
+        # 根据 env 选择 URL
+        if ws_url:
+            final_url = ws_url
+        else:
+            if use_demo:
+                final_url = self.WS_URL_DEMO
+            else:
+                final_url = self.WS_URL_PRODUCTION
+
+        # 调用父类初始化
         super().__init__(
             name="okx_ws_private",
+            ws_url=final_url,
             event_bus=event_bus
         )
 
@@ -84,124 +105,37 @@ class OkxPrivateWsGateway(WebSocketGateway):
         self.passphrase = passphrase
         self.use_demo = use_demo
 
-        # 根据 env 选择 URL
-        if ws_url:
-            self.ws_url = ws_url
-        else:
-            if use_demo:
-                self.ws_url = self.WS_URL_DEMO
-            else:
-                self.ws_url = self.WS_URL_PRODUCTION
-
-        # 连接状态
-        self._session: Optional[ClientSession] = None
-        self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
-        self._is_running = False
-        self._reconnect_attempts = 0
-        self._is_logged_in = False
-        self._reconnect_enabled = True
-        self._base_reconnect_delay = 3.0 if use_demo else 1.0
-        self._max_reconnect_delay = 120.0 if use_demo else 60.0
-        self._max_reconnect_attempts = 10
-
         # 登录和订阅状态
+        self._is_logged_in = False
         self._login_completed = False
         self._subscribe_completed = False
 
         logger.info(
             f"OkxPrivateWsGateway 初始化: use_demo={use_demo}, "
-            f"ws_url={self.ws_url}"
+            f"ws_url={final_url}"
         )
 
     async def connect(self) -> bool:
         """
-        连接 WebSocket
+        连接 WebSocket（委托给基类）
 
         Returns:
             bool: 连接是否成功
         """
-        try:
-            if self._session is None or self._session.closed:
-                self._session = ClientSession()
-
-            logger.info(f"🔌 正在连接私有 WebSocket: {self.ws_url}")
-
-            self._ws = await self._session.ws_connect(
-                self.ws_url,
-                receive_timeout=30.0
-            )
-
-            self._connected = True
-            self._reconnect_attempts = 0
-            self._is_logged_in = False
-            self._login_completed = False
-            self._subscribe_completed = False
-
-            logger.info(f"✅ 私有 WebSocket 连接成功")
-
-            # 发送登录包
-            await self._send_login()
-
-            # ⚠️ 修复：移除阻塞性登录等待，直接启动消息循环
-            # 理由：已有 REST API 定时同步和开仓锁，不强制依赖 WS 登录确认
-            asyncio.create_task(self._message_loop())
-
-            # 启动重连循环
-            asyncio.create_task(self._reconnect_loop())
-
-            return True
-
-        except ClientError as e:
-            logger.error(f"❌ 私有 WebSocket 连接失败: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"❌ 私有 WebSocket 连接异常: {e}")
-            return False
+        # 委托给基类的 connect 方法（自动处理并发、重连、资源清理）
+        return await super().connect()
 
     async def disconnect(self):
-        """断开连接"""
+        """
+        断开连接（委托给基类）
+        """
         logger.info("⏹ 停止私有 WebSocket...")
-        self._is_running = False
-        self._connected = False
-        self._is_logged_in = False
-        self._login_completed = False
-        self._subscribe_completed = False
+        # 委托给基类（自动清理所有资源）
+        await super().disconnect()
 
-        if self._ws:
-            try:
-                await self._ws.close()
-            except Exception as e:
-                logger.error(f"关闭 WebSocket 失败: {e}")
-            self._ws = None
+    # is_connected() 已由基类实现，无需重写
 
-        if self._session:
-            try:
-                await self._session.close()
-            except Exception as e:
-                logger.error(f"关闭 Session 失败: {e}")
-            self._session = None
-
-        logger.info("✅ 私有 WebSocket 已停止")
-
-    async def is_connected(self) -> bool:
-        """
-        检查连接状态
-
-        Returns:
-            bool: 是否已连接
-        """
-        return self._connected and self._ws and not self._ws.closed
-
-    async def subscribe(self, channels: list, symbol: Optional[str] = None):
-        """
-        订阅频道（登录后自动调用）
-
-        Args:
-            channels (list): 频道列表
-            symbol (str): 交易对（可选）
-        """
-        # 私有 WebSocket 在登录成功后自动订阅
-        pass
+    # subscribe() 已由 _subscribe_channels 实现，无需重写
 
     async def unsubscribe(self, channels: list, symbol: Optional[str] = None):
         """
@@ -221,41 +155,15 @@ class OkxPrivateWsGateway(WebSocketGateway):
                     }]
                 }
 
-                await self._ws.send_str(
-                    json.dumps(unsubscribe_msg, separators=(',', ':'))
-                )
+                # 使用基类的 send_message 方法
+                await self.send_message(json.dumps(unsubscribe_msg, separators=(',', ':')))
 
                 logger.info(f"🔕 已取消订阅: {channel}")
 
         except Exception as e:
             logger.error(f"取消订阅失败: {e}")
 
-    async def _wait_for_login(self):
-        """
-        等待登录确认（修复：防止订阅时机错误）
-
-        此方法由 connect() 调用，使用 Event 等待登录确认。
-        """
-        # 创建一个事件用于同步
-        login_event = asyncio.Event()
-
-        # 临时修改 _process_data 来设置事件
-        original_process = self._process_data
-
-        async def patched_process(data):
-            await original_process(data)
-            # 检查是否登录成功
-            if "event" in data and data["event"] == "login":
-                if data.get("code") == "0":
-                    login_event.set()
-
-        self._process_data = patched_process
-
-        # 等待事件
-        await login_event.wait()
-
-        # 恢复原始方法
-        self._process_data = original_process
+    # _wait_for_login 已废弃，登录确认在 _on_message 中处理
 
     async def _send_login(self):
         """
@@ -286,7 +194,8 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
             logger.info(f"🔐 发送登录包 (Unix TS={timestamp})")
 
-            await self._ws.send_json(login_msg)
+            # 使用基类的 send_message 方法
+            await self.send_message(json.dumps(login_msg, separators=(',', ':')))
 
             logger.info("✅ 登录包已发送，等待服务器确认...")
 
@@ -296,7 +205,7 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
     async def _subscribe_channels(self):
         """
-        登录成功后订阅频道（修复：增强日志和错误处理）
+        登录成功后订阅频道
         """
         try:
             logger.info("📡 准备订阅私有频道...")
@@ -319,23 +228,21 @@ class OkxPrivateWsGateway(WebSocketGateway):
                 }]
             }
 
-            await self._ws.send_str(
-                json.dumps(positions_subscribe_msg, separators=(',', ':'))
-            )
+            # 使用基类的 send_message 方法
+            await self.send_message(json.dumps(positions_subscribe_msg, separators=(',', ':')))
             logger.info("✅ [订阅请求] positions 频道订阅请求已发送")
 
-            await self._ws.send_str(
-                json.dumps(orders_subscribe_msg, separators=(',', ':'))
-            )
+            await self.send_message(json.dumps(orders_subscribe_msg, separators=(',', ':')))
             logger.info("✅ [订阅请求] orders 频道订阅请求已发送")
 
         except Exception as e:
             logger.error(f"❌ 订阅频道失败: {e}", exc_info=True)
             raise
 
-    async def on_message(self, message: WSMessage):
+    # 🔥 重写基类的 _on_message 方法
+    async def _on_message(self, message: WSMessage):
         """
-        收到消息时的回调
+        收到消息时的回调（基类调用）
 
         Args:
             message (WSMessage): WebSocket 消息
@@ -347,11 +254,9 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
             elif message.type == aiohttp.WSMsgType.ERROR:
                 logger.error(f"❌ 私有 WebSocket 错误: {message.data}")
-                self._connected = False
 
             elif message.type == aiohttp.WSMsgType.CLOSED:
                 logger.warning("⚠️ 私有 WebSocket 连接已关闭")
-                self._connected = False
                 self._is_logged_in = False
                 self._login_completed = False
                 self._subscribe_completed = False
@@ -460,99 +365,29 @@ class OkxPrivateWsGateway(WebSocketGateway):
         except Exception as e:
             logger.error(f"❌ 数据处理异常: {e}, 原始数据: {data}", exc_info=True)
 
-    async def _message_loop(self):
-        """消息接收循环"""
+    # 🔥 新增：重写 _on_connected 钩子，连接成功后自动登录和订阅
+    async def _on_connected(self):
+        """
+        连接成功后的钩子（自动登录和订阅）
+        """
+        logger.info("✅ WebSocket 连接成功，准备登录...")
         try:
-            logger.info("🔄 消息循环已启动")
-            while self._connected and self._is_running:
-                try:
-                    msg = await asyncio.wait_for(
-                        self._ws.receive(),
-                        timeout=30.0
-                    )
-                    await self.on_message(msg)
-
-                except asyncio.TimeoutError:
-                    logger.warning("⚠️ 接收消息超时，可能连接已断开")
-                    self._connected = False
-                    break
-
+            # 发送登录包
+            await self._send_login()
         except Exception as e:
-            logger.error(f"❌ 消息循环异常: {e}")
-            self._connected = False
-        finally:
-            logger.info("⏹ 消息循环已停止")
+            logger.error(f"❌ 登录失败: {e}")
 
-    async def _reconnect_loop(self):
-        """自动重连循环"""
-        self._is_running = True
+    # 消息循环已由基类实现，无需重写
 
-        while self._is_running and self._reconnect_enabled:
-            # 如果已连接，等待一段时间后检查
-            if self._connected:
-                await asyncio.sleep(10)
-                continue
+    # 重连机制已由基类实现（指数退避），无需重写
 
-            # 检查是否超过最大重连次数
-            if self._reconnect_attempts >= self._max_reconnect_attempts:
-                logger.error(
-                    f"❌ 重连次数超过限制 ({self._max_reconnect_attempts})，停止重连"
-                )
-                break
+    # 错误处理已由基类实现，可选重写
 
-            # 计算重连延迟
-            if self._reconnect_attempts == 0:
-                delay = 1.0
-            else:
-                delay = self._base_reconnect_delay * (2 ** min(self._reconnect_attempts, 5))
-            delay = min(delay, self._max_reconnect_delay)
+    # 连接关闭处理已由基类实现，无需重写
 
-            logger.info(
-                f"⏰ 等待 {delay:.1f} 秒后重连 "
-                f"(尝试 {self._reconnect_attempts + 1}/{self._max_reconnect_attempts})"
-            )
-
-            await asyncio.sleep(delay)
-
-            # 尝试重连
-            self._reconnect_attempts += 1
-            success = await self.connect()
-
-            if success:
-                logger.info(f"✅ 重连成功 (尝试 {self._reconnect_attempts})")
-            else:
-                logger.warning(f"⚠️ 重连失败 (尝试 {self._reconnect_attempts})")
-
-    async def on_error(self, error: Exception):
-        """
-        错误回调
-
-        Args:
-            error (Exception): 错误对象
-        """
-        logger.error(f"❌ 私有 WebSocket 错误: {error}")
-        if self._event_bus:
-            event = Event(
-                type=EventType.ERROR,
-                data={
-                    'code': 'WS_PRIVATE_ERROR',
-                    'message': str(error),
-                    'source': 'okx_ws_private'
-                },
-                source="okx_ws_private"
-            )
-            await self.publish_event(event)
-
-    async def on_close(self):
-        """连接关闭回调"""
-        logger.warning("⚠️ 私有 WebSocket 连接已关闭")
-        self._connected = False
-        self._is_logged_in = False
-        self._login_completed = False
-        self._subscribe_completed = False
-
+    # 兼容性方法
     async def close(self):
-        """关闭网关"""
+        """关闭网关（兼容性）"""
         await self.disconnect()
 
     async def __aenter__(self):
@@ -561,4 +396,4 @@ class OkxPrivateWsGateway(WebSocketGateway):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """异步上下文管理器退出"""
-        await self.close()
+        await self.disconnect()
