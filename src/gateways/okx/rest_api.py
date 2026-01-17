@@ -544,6 +544,33 @@ class OkxRestGateway(RestGateway):
 
             return {}
 
+        except ValueError as e:
+            # 🔥 修复：增强撤单容错处理
+            # 捕获特定的 API 错误码
+            error_msg = str(e)
+
+            # 错误码 1: All operations failed（所有操作失败）
+            # 错误码 51402: Order does not exist（订单不存在）
+            # 这些错误表示订单可能已经成交或不存在，可以视为撤单成功
+            if '1' in error_msg and 'All operations failed' in error_msg:
+                logger.warning(
+                    f"⚠️ 撤单返回 'All operations failed'，订单可能已成交或不存在。"
+                    f"order_id={order_id}, symbol={symbol}"
+                )
+                # 返回成功，避免策略因为撤单失败而卡死
+                return {'ordId': order_id, 'sCode': '1', 'sMsg': 'Order may be filled or not exist'}
+
+            if '51402' in error_msg:
+                logger.warning(
+                    f"⚠️ 订单不存在 (51402)，可能已成交。"
+                    f"order_id={order_id}, symbol={symbol}"
+                )
+                # 返回成功，避免策略因为撤单失败而卡死
+                return {'ordId': order_id, 'sCode': '51402', 'sMsg': 'Order does not exist'}
+
+            # 其他错误继续抛出
+            logger.error(f"撤单失败: {e}")
+            raise
         except Exception as e:
             logger.error(f"撤单失败: {e}")
             raise

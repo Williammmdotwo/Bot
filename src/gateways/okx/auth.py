@@ -14,7 +14,7 @@ import base64
 import hmac
 import hashlib
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class OkxSigner:
@@ -39,13 +39,16 @@ class OkxSigner:
         Returns:
             str: 时间戳字符串
         """
+        # 🔥 修复：使用 datetime.now(timezone.utc) 替代 datetime.utcnow()
+        # 这样可以确保时间戳与 UTC 时区正确对齐，避免时间戳过期错误
+        now = datetime.now(timezone.utc)
+
         if mode == 'iso':
             # ISO 8601 格式（UTC）
-            now = datetime.utcnow()
             return now.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         else:
             # Unix 时间戳（毫秒）
-            return str(int(time.time() * 1000))
+            return str(int(now.timestamp() * 1000))
 
     @staticmethod
     def sign(

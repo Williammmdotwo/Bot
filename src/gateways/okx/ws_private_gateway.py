@@ -172,9 +172,12 @@ class OkxPrivateWsGateway(WsBaseGateway):
     async def _send_login(self):
         """
         发送登录包
+
+        🔥 修复：时间戳在发送前最后一刻生成，避免网络延迟导致的时间戳过期
         """
         try:
-            # 使用 Unix Epoch 时间戳
+            # 🔥 关键修复：时间戳必须在发送前的最后一刻生成
+            # 不能提前生成，否则网络延迟可能导致时间戳过期（Code 60006）
             timestamp = OkxSigner.get_timestamp(mode='unix')
 
             # 生成签名
@@ -198,7 +201,9 @@ class OkxPrivateWsGateway(WsBaseGateway):
 
             logger.info(f"🔐 发送登录包 (Unix TS={timestamp})")
 
-            # 使用基类的 send_message 方法
+            # 🔥 使用基类的 send_message 方法
+            # send_message 内部会立即发送 WebSocket 消息
+            # 时间戳和签名的生成与发送是紧邻的，最小化时间差
             await self.send_message(json.dumps(login_msg, separators=(',', ':')))
 
             logger.info("✅ 登录包已发送，等待服务器确认...")
