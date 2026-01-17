@@ -111,6 +111,9 @@ class OkxPrivateWsGateway(WsBaseGateway):
         self._login_completed = False
         self._subscribe_completed = False
 
+        # 🔥 新增：防止重复警告的标志
+        self._disconnect_logged = False
+
         logger.info(
             f"OkxPrivateWsGateway 初始化: use_demo={use_demo}, "
             f"ws_url={final_url}"
@@ -257,7 +260,8 @@ class OkxPrivateWsGateway(WsBaseGateway):
                 logger.error(f"❌ 私有 WebSocket 错误: {message.data}")
 
             elif message.type == aiohttp.WSMsgType.CLOSED:
-                logger.warning("⚠️ 私有 WebSocket 连接已关闭")
+                # 🔥 修复：基类已经处理连接关闭和重连，这里只重置状态
+                # 不记录警告，避免日志爆炸
                 self._is_logged_in = False
                 self._login_completed = False
                 self._subscribe_completed = False

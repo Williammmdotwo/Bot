@@ -249,6 +249,31 @@ class OkxPublicWsGateway(WsBaseGateway):
         except Exception as e:
             logger.error(f"数据处理异常: {e}, 原始数据: {data}")
 
+    async def _process_orderbook(self, book_data):
+        """
+        处理订单簿数据，更新 Best Bid/Ask
+
+        Args:
+            book_data: 订单簿数据
+        """
+        try:
+            # 取最新的订单簿数据
+            if isinstance(book_data, list) and len(book_data) > 0:
+                book = book_data[0]  # OKX 返回的是数组，取第一个
+
+                # 更新买单和卖单
+                bids = book.get('bids', [])
+                asks = book.get('asks', [])
+
+                # 只保留前5档（足够用于 Maker 策略）
+                self._order_book['bids'] = bids[:5] if bids else []
+                self._order_book['asks'] = asks[:5] if asks else []
+
+                # 📉 优化：高频订单簿数据不记录详细日志
+
+        except Exception as e:
+            logger.error(f"订单簿处理异常: {e}", exc_info=True)
+
     async def _process_trade(self, trade_item):
         """
         处理单笔交易数据，推送 TICK 事件
