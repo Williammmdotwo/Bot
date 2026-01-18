@@ -320,8 +320,16 @@ class OkxPrivateWsGateway(WsBaseGateway):
                     if code == "0":
                         logger.info(f"✅ [订阅确认] 频道 '{channel}' 订阅成功")
                         self._subscribe_completed = True
+                    elif code is None:
+                        # 🔥 修复：code=None 可能是 OKX 返回的非标准响应，但订阅实际成功
+                        # 降级为 DEBUG 级别，避免假报警
+                        logger.debug(
+                            f"⚠️ [订阅响应] 频道 '{channel}' 返回 code=None，"
+                            f"可能已成功订阅，等待数据推送验证"
+                        )
+                        # 不标记失败，等待数据推送来确认订阅成功
                     else:
-                        # 🔥 修复：打印完整的原始数据以便调试
+                        # 真正的订阅失败（code 不是 "0" 或 None）
                         logger.error(
                             f"❌ [订阅失败] 频道 '{channel}' 订阅失败: "
                             f"code={code}, msg={msg}"
@@ -339,6 +347,11 @@ class OkxPrivateWsGateway(WsBaseGateway):
                 if channel == "positions":
                     positions = data.get("data", [])
                     logger.debug(f"📊 收到持仓推送: {len(positions)} 个")
+
+                    # 🔥 修复：收到数据推送，说明订阅成功
+                    if not self._subscribe_completed:
+                        self._subscribe_completed = True
+                        logger.info("✅ [订阅确认] 通过数据推送确认：positions 频道订阅成功")
 
                     # 推送 POSITION_UPDATE 事件
                     if self._event_bus and positions:
@@ -360,6 +373,11 @@ class OkxPrivateWsGateway(WsBaseGateway):
                 elif channel == "orders":
                     orders = data.get("data", [])
                     logger.debug(f"📋 收到订单推送: {len(orders)} 个")
+
+                    # 🔥 修复：收到数据推送，说明订阅成功
+                    if not self._subscribe_completed:
+                        self._subscribe_completed = True
+                        logger.info("✅ [订阅确认] 通过数据推送确认：orders 频道订阅成功")
 
                     # 推送 ORDER_UPDATE 事件
                     if self._event_bus and orders:
