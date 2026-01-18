@@ -301,6 +301,11 @@ class OkxPrivateWsGateway(WsBaseGateway):
                         logger.info(f"✅ [登录成功] 服务器确认登录完成")
                         self._is_logged_in = True
                         self._login_completed = True
+
+                        # 🔥 修复：在订阅前增加延时，确保服务器状态同步
+                        logger.info("⏳ [订阅缓冲] 登录成功，等待 1.0s 以确保服务器状态同步...")
+                        await asyncio.sleep(1.0)  # <--- 关键修复：强制等待
+
                         # 登录成功后订阅频道
                         await self._subscribe_channels()
                     else:
