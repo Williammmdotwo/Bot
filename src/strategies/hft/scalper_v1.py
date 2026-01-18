@@ -553,6 +553,8 @@ class ScalperV1(BaseStrategy):
         如果发现 Market Best Bid 已经超过了 My Order Price（说明我被挤下去了），
         且时间未到超时时间，则立即撤销当前订单并重新挂单。
 
+        🔥 修复：增加持仓检查，防止追单竞态条件导致重复开仓
+
         Args:
             current_price (float): 当前价格
             now (float): 当前时间戳
@@ -563,6 +565,18 @@ class ScalperV1(BaseStrategy):
 
         # 检查挂单是否存在
         if self._maker_order_id is None or self._maker_order_price <= 0:
+            return
+
+        # 🔥 修复 1: Pre-Check - 在进入追单逻辑前，检查是否已有持仓
+        # 防止：Maker Order 刚成交，检测到价格变化触发追单，导致重复开仓
+        if self._position_opened or abs(self.local_pos_size) > 0.001:
+            logger.warning(
+                f"🛑 [追单拦截] {self.symbol}: "
+                f"检测到已有持仓 ({self.local_pos_size:.4f})，停止追单"
+            )
+            # 重置挂单状态，防止后续误判
+            self._maker_order_id = None
+            self._maker_order_price = 0.0
             return
 
         # 获取当前订单簿数据
@@ -607,6 +621,15 @@ class ScalperV1(BaseStrategy):
 
             # 等待一小段时间确保撤单完成（避免订单冲突）
             await asyncio.sleep(0.1)
+
+            # 🔥 修复 2: Double-Check - 撤单后，在下新单前再次检查持仓
+            # 防止：撤单期间订单已成交，导致重复开仓
+            if self._position_opened or abs(self.local_pos_size) > 0.001:
+                logger.warning(
+                    f"🛑 [追单拦截] {self.symbol}: "
+                    f"撤单期间订单已成交 (持仓={self.local_pos_size:.4f})，取消发送新单"
+                )
+                return
 
             # 重新挂单（使用新价格）
             # 注意：这里需要重新计算交易数量，保持一致性
@@ -746,6 +769,8 @@ class ScalperV1(BaseStrategy):
         """
         平仓（市价单）
 
+        🔥 修复：从 OMS 获取真实持仓数量，避免残余持仓
+
         Args:
             price (float): 平仓价格
             reason (str): 平仓原因（take_profit/stop_loss/time_stop）
@@ -765,13 +790,31 @@ class ScalperV1(BaseStrategy):
                 self._loss_trades += 1
 
         try:
+            # 🔥 修复：从 OMS 获取真实持仓数量
+            # 不再依赖本地记录的 self.local_pos_size，避免漏单导致残余持仓
+            real_position = self._order_manager.get_position(self.symbol)
+
+            if real_position:
+                real_pos_size = abs(real_position.size)
+                logger.debug(
+                    f"📊 [真实持仓] {self.symbol}: 本地={self.local_pos_size:.4f}, "
+                    f"真实={real_pos_size:.4f}"
+                )
+            else:
+                # 如果获取不到持仓，回退到本地记录
+                real_pos_size = self.local_pos_size
+                logger.warning(
+                    f"⚠️ [持仓回退] {self.symbol}: 无法获取真实持仓， "
+                    f"使用本地记录={real_pos_size:.4f}"
+                )
+
             # 平仓（市价单，确保快速退出）
             success = await self.sell(
                 symbol=self.symbol,
                 entry_price=price,  # 平仓时的价格
                 stop_loss_price=0,   # 无需止损
                 order_type='market',  # 市价单快速退出
-                size=self.local_pos_size  # 显式传入本地记录的数量
+                size=real_pos_size  # 🔥 使用真实持仓数量
             )
 
             if success:
@@ -787,7 +830,8 @@ class ScalperV1(BaseStrategy):
 
                 logger.info(
                     f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
-                    f"reason={reason}, 冷却={self.config.cooldown_seconds}s"
+                    f"reason={reason}, 数量={real_pos_size:.4f}, "
+                    f"冷却={self.config.cooldown_seconds}s"
                 )
         except Exception as e:
             logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}")
