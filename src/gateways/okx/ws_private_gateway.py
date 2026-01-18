@@ -316,11 +316,17 @@ class OkxPrivateWsGateway(WsBaseGateway):
                 elif data["event"] == "subscribe":
                     channel = data.get("arg", {}).get("channel")
                     code = data.get("code")
+                    msg = data.get("msg", "")
                     if code == "0":
                         logger.info(f"✅ [订阅确认] 频道 '{channel}' 订阅成功")
                         self._subscribe_completed = True
                     else:
-                        logger.error(f"❌ [订阅失败] 频道 '{channel}' 订阅失败: code={code}")
+                        # 🔥 修复：打印完整的原始数据以便调试
+                        logger.error(
+                            f"❌ [订阅失败] 频道 '{channel}' 订阅失败: "
+                            f"code={code}, msg={msg}"
+                        )
+                        logger.error(f"❌ [原始错误包] OKX 返回: {data}")
 
                 elif data["event"] == "error":
                     logger.error(f"❌ [WebSocket 错误] {data}")
