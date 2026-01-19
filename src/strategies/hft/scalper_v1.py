@@ -790,9 +790,9 @@ class ScalperV1(BaseStrategy):
                 self._loss_trades += 1
 
         try:
-            # 🔥 修复：从 OMS 获取真实持仓数量
+            # 🔥 修复：使用 BaseStrategy 提供的 get_position 方法
             # 不再依赖本地记录的 self.local_pos_size，避免漏单导致残余持仓
-            real_position = self._order_manager.get_position(self.symbol)
+            real_position = self.get_position(self.symbol)
 
             if real_position:
                 real_pos_size = abs(real_position.size)
