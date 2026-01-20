@@ -23,7 +23,7 @@ import time
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
 import aiohttp
-from aiohttp import ClientSession, WSMessage, ClientError
+from aiohttp import ClientSession, WSMessage, ClientError, ClientWebSocketResponse
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,10 @@ class WsBaseGateway:
         self._heartbeat_interval = 20  # 心跳间隔（秒）
         self._heartbeat_task = None
 
+        # 🔥 新增：看门狗（Watchdog）- 防止假死
+        self._last_msg_time = 0  # 最后收到消息的时间（包括 ping、pong 和数据推送）
+        self._watchdog_timeout = 30  # 看门狗超时时间（秒）
+
         self._logger.info(f"WebSocket 基类初始化: {name}, url={ws_url}")
 
     def is_connected(self) -> bool:
@@ -124,6 +128,9 @@ class WsBaseGateway:
 
                 self._connected = True
                 self._running = True
+
+                # 🔥 修复：初始化看门狗时间戳（连接成功时立即更新）
+                self._last_msg_time = time.time()
 
                 # 🔥 关键修复：在连接成功后，启动消息接收任务
                 self._receive_task = asyncio.create_task(self._message_loop())
@@ -265,7 +272,11 @@ class WsBaseGateway:
                         timeout=30.0
                     )
 
-                    # 更新最后数据时间
+                    # 🔥 修复：更新看门狗时间戳（每次收到消息都更新）
+                    # 包括 ping、pong 和数据推送
+                    self._last_msg_time = time.time()
+
+                    # 更新最后心跳时间（兼容旧代码）
                     self._last_heartbeat = time.time()
 
                     # 🔥 修复：拦截心跳响应 "pong"
@@ -306,14 +317,27 @@ class WsBaseGateway:
 
     async def _heartbeat_loop(self):
         """
-        心跳发送循环
+        心跳发送循环（带看门狗机制）
 
         每隔一定时间发送心跳包，保持连接活跃。
+        同时检查看门狗，如果超时未收到任何消息，强制重连。
         """
         try:
             self._logger.info("心跳循环已启动")
 
             while self._running and self._ws is not None and not self._ws.closed:
+                # 🔥 修复：看门狗检查（防止假死）
+                # 如果超过 30 秒没有收到任何消息（包括 ping、pong 和数据推送），强制重连
+                time_since_last_msg = time.time() - self._last_msg_time
+                if time_since_last_msg > self._watchdog_timeout:
+                    self._logger.error(
+                        f"❌ [看门狗超时] {time_since_last_msg:.1f}秒未收到数据，"
+                        f"连接可能已假死，强制重连..."
+                    )
+                    # 强制断开，触发重连
+                    await self.disconnect()
+                    break
+
                 await asyncio.sleep(self._heartbeat_interval)
 
                 if not self._running or self._ws is None or self._ws.closed:
