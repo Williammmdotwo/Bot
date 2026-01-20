@@ -115,7 +115,8 @@ class PreTradeCheck:
                 f"订单金额超限: {amount_usdt:.2f} USDT > "
                 f"{self.max_order_amount:.2f} USDT"
             )
-            logger.warning(f"风控拒绝: {reason}")
+            # 🔥 降级：金额超限是频繁且正常的风控拦截，改为 DEBUG
+            logger.debug(f"风控拒绝: {reason}")
             return False, reason
 
         # 2. 检查下单频率
@@ -129,7 +130,8 @@ class PreTradeCheck:
                 f"下单频率过高: {recent_count} 单 / "
                 f"{self.frequency_window}s > {self.max_frequency} 单"
             )
-            logger.warning(f"风控拒绝: {reason}")
+            # 🔥 降级：频率过高是频繁且正常的风控拦截，改为 DEBUG
+            logger.debug(f"风控拒绝: {reason}")
             return False, reason
 
         # 3. 记录订单
@@ -140,7 +142,11 @@ class PreTradeCheck:
         global_exposure_passed, exposure_reason = self._check_global_exposure(order)
         if not global_exposure_passed:
             self._total_rejections += 1
-            logger.warning(f"风控拒绝: {exposure_reason}")
+            # 🔥 条件降级：全局敞口超限是严重风险，保持 WARNING
+            if "Global Leverage Limit Exceeded" in exposure_reason:
+                logger.warning(f"🚨 [风险警报] {exposure_reason}")
+            else:
+                logger.debug(f"风控拒绝: {exposure_reason}")
             return False, exposure_reason
 
         # 通过检查

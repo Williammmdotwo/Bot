@@ -157,7 +157,8 @@ class OrderManager:
             })
 
             if not risk_passed:
-                logger.error(f"风控拒绝下单: {risk_reason}")
+                # 🔥 降级：风控拦截是正常行为，改为 DEBUG
+                logger.debug(f"风控拒绝下单: {risk_reason}")
                 return None
 
         # 2. 其他风控检查（待实现）
