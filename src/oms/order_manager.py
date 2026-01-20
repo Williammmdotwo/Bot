@@ -75,7 +75,8 @@ class OrderManager:
         self,
         rest_gateway: RestGateway,
         event_bus=None,
-        pre_trade_check: Optional[PreTradeCheck] = None
+        pre_trade_check: Optional[PreTradeCheck] = None,
+        capital_commander=None
     ):
         """
         初始化订单管理器
@@ -84,10 +85,12 @@ class OrderManager:
             rest_gateway (RestGateway): REST API 网关
             event_bus: 事件总线实例
             pre_trade_check (PreTradeCheck): 交易前检查器
+            capital_commander: 资金指挥官（用于购买力检查）
         """
         self._rest_gateway = rest_gateway
         self._event_bus = event_bus
         self._pre_trade_check = pre_trade_check or PreTradeCheck()
+        self._capital_commander = capital_commander  # 新增：资金指挥官引用
 
         # 本地订单 {order_id: Order}
         self._orders: Dict[str, Order] = {}
@@ -144,7 +147,7 @@ class OrderManager:
         logger.info(f"收到下单请求: {symbol} {side} {order_type} {size} @ {price_str} (Stop: {stop_str})")
         # --- [修复结束] ---
 
-        # 1. 风控检查
+        # 1. 风控检查（PreTradeCheck：频率/限额）
         amount_usdt = price * size if price else 0
         if amount_usdt > 0:
             risk_passed, risk_reason = self._pre_trade_check.check({
@@ -161,8 +164,33 @@ class OrderManager:
                 logger.debug(f"风控拒绝下单: {risk_reason}")
                 return None
 
-        # 2. 其他风控检查（待实现）
-        # - 检查策略资金是否充足
+        # 2. 🔥 [修复] 资金检查（CapitalCommander：购买力）
+        # 在调用 Gateway 之前检查资金，避免订单被交易所拒绝
+        if self._capital_commander and amount_usdt > 0:
+            try:
+                # 注意：需要传入 symbol 和 side 以支持平仓检测
+                has_power = self._capital_commander.check_buying_power(
+                    strategy_id=strategy_id,
+                    amount_usdt=amount_usdt,
+                    symbol=symbol,
+                    side=side
+                )
+
+                if not has_power:
+                    logger.warning(
+                        f"🚫 资金检查未通过 [{strategy_id}]: "
+                        f"{symbol} {side} {size:.4f}, "
+                        f"amount={amount_usdt:.2f} USDT"
+                    )
+                    return None
+            except Exception as e:
+                # 资金检查失败时，记录警告但继续尝试
+                logger.warning(
+                    f"⚠️ 资金检查异常，继续下单: {e} "
+                    f"(strategy={strategy_id}, symbol={symbol})"
+                )
+
+        # 3. 其他风控检查（待实现）
         # - 检查持仓限制
         # - 检查风险参数
 

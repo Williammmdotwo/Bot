@@ -536,20 +536,59 @@ class PositionManager:
         定期通过 REST API 获取真实持仓，与本地持仓进行对比，防止因 WebSocket
         事件丢失导致的持仓不同步问题。
 
+        [修复]：添加指数退避和熔断保护，防止无限重试
+
         Args:
             interval (int): 同步间隔（秒），默认 30 秒
         """
         async def _sync_loop():
-            """后台同步循环"""
+            """后台同步循环（已修复：指数退避 + 熔断保护）"""
+            # 🔥 新增：重试状态追踪
+            consecutive_failures = 0  # 连续失败次数
+            backoff_seconds = 1.0   # 当前退避时间（秒）
+            max_backoff = 60.0      # 最大退避时间（秒）
+            circuit_breaker_limit = 10  # 熔断阈值（连续失败次数）
+
             while True:
                 try:
+                    # 🔥 修复：正常等待间隔
                     await asyncio.sleep(interval)
+
+                    # 执行同步
                     await self._sync_positions_from_api()
+
+                    # 🔥 修复：成功时重置计数器和退避时间
+                    consecutive_failures = 0
+                    backoff_seconds = 1.0
+
                 except asyncio.CancelledError:
                     logger.info("定时持仓同步任务已取消")
                     break
                 except Exception as e:
-                    logger.error(f"定时持仓同步任务异常: {e}", exc_info=True)
+                    consecutive_failures += 1
+
+                    # 🔥 修复：熔断保护
+                    if consecutive_failures >= circuit_breaker_limit:
+                        logger.critical(
+                            f"🚨 [熔断触发] 持仓同步连续失败 {consecutive_failures} 次，"
+                            f"暂停 {max_backoff} 秒后重试。错误: {e}"
+                        )
+                        # 熔断期间等待最大退避时间
+                        await asyncio.sleep(max_backoff)
+                        # 重置计数器，尝试重新开始
+                        consecutive_failures = 0
+                        backoff_seconds = 1.0
+                        continue
+
+                    # 🔥 修复：指数退避
+                    logger.warning(
+                        f"⚠️ [同步失败 {consecutive_failures}/{circuit_breaker_limit}] "
+                        f"等待 {backoff_seconds:.1f} 秒后重试。错误: {e}"
+                    )
+                    await asyncio.sleep(backoff_seconds)
+
+                    # 指数退避：每次失败时间加倍，最大 60 秒
+                    backoff_seconds = min(backoff_seconds * 2, max_backoff)
 
         # 创建后台任务
         task = asyncio.create_task(_sync_loop())

@@ -182,13 +182,14 @@ class Engine:
             f"max_frequency={risk_config.get('max_frequency', 5)}/1s"
         )
 
-        # 5. 创建 OrderManager（注入风控检查器）
+        # 5. 创建 OrderManager（注入风控检查器和资金指挥官）
         self._order_manager = OrderManager(
             rest_gateway=self._rest_gateway,
             event_bus=self._event_bus,
-            pre_trade_check=self._pre_trade_check
+            pre_trade_check=self._pre_trade_check,
+            capital_commander=self._capital_commander  # 🔧 修复：传入资金指挥官
         )
-        logger.info("✅ OrderManager 已初始化（已集成风控）")
+        logger.info("✅ OrderManager 已初始化（已集成风控和资金检查）")
 
         # 将 OrderManager 设置到 PositionManager（用于幽灵单防护）
         self._position_manager._order_manager = self._order_manager

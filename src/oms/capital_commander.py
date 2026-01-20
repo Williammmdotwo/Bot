@@ -214,17 +214,67 @@ class CapitalCommander:
     def check_buying_power(
         self,
         strategy_id: str,
-        amount_usdt: float
+        amount_usdt: float,
+        symbol: str = None,
+        side: str = None
     ) -> bool:
         """
         检查策略是否有足够的购买力
         [FIX]: 支持合约杠杆逻辑，检查保证金(Margin)而非全额(Nominal)
+        [FIX]: 判断平仓场景，跳过保证金检查（修复平仓死锁）
+
+        Args:
+            strategy_id (str): 策略 ID
+            amount_usdt (float): 订单金额（USDT）
+            symbol (str): 交易对（可选，用于判断平仓）
+            side (str): 订单方向 buy/sell（可选，用于判断平仓）
+
+        Returns:
+            bool: 是否有足够的购买力
         """
         if strategy_id not in self._strategies:
             logger.error(f"策略 {strategy_id} 未分配资金")
             return False
 
         cap = self._strategies[strategy_id]
+
+        # 🔥 核心修复：判断是否为平仓操作（Reduce Only）
+        # 平仓操作应该释放保证金，不需要检查可用资金
+        if symbol and side and self._position_manager:
+            try:
+                # 获取当前持仓（从 PositionManager）
+                position = self._position_manager.get_position(symbol)
+
+                if position and position.size != 0:
+                    # 判断订单方向是否与持仓方向相反
+                    is_reducing_position = False
+
+                    if position.size > 0 and side == 'sell':
+                        # 多头平仓：持仓为正，订单为卖出
+                        is_reducing_position = True
+                        logger.debug(
+                            f"🔍 [平仓检测] {symbol} Long → Sell, "
+                            f"跳过保证金检查"
+                        )
+                    elif position.size < 0 and side == 'buy':
+                        # 空头平仓：持仓为负，订单为买入
+                        is_reducing_position = True
+                        logger.debug(
+                            f"🔍 [平仓检测] {symbol} Short → Buy, "
+                            f"跳过保证金检查"
+                        )
+
+                    # 如果是减少持仓的操作，直接通过
+                    if is_reducing_position:
+                        logger.info(
+                            f"✅ 购买力检查通过 [{strategy_id}]: "
+                            f"平仓操作 (symbol={symbol}, side={side}), "
+                            f"跳过保证金检查"
+                        )
+                        return True
+            except Exception as e:
+                # 获取持仓失败时，继续使用原有逻辑
+                logger.warning(f"获取持仓信息失败: {e}，使用默认检查")
 
         # 1. 计算有效杠杆
         leverage = self._get_effective_leverage(strategy_id)

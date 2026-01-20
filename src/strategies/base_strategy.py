@@ -272,13 +272,24 @@ class BaseStrategy(ABC):
             )
             return False
 
-        # 对于市价单，允许止损价为 0（如时间止损平仓时）
+        # 🔥 [修复] 市价单止损逻辑优化
+        # 市价单通常用于紧急平仓，允许止损价为 0
+        # 如果是市价单且止损价为 0 或负数，不发送止损单
         if stop_loss_price <= 0 and order_type != 'market':
             logger.error(
                 f"策略 {self.strategy_id} 止损价格无效: "
                 f"stop={stop_loss_price} (非市价单必须提供止损价)"
             )
             return False
+
+        # 市价单且止损价无效时，记录警告但继续下单
+        if order_type == 'market' and (stop_loss_price is None or stop_loss_price <= 0):
+            logger.debug(
+                f"策略 {self.strategy_id} 市价单止损价无效 (stop={stop_loss_price})，"
+                f"将只发送主订单，不发送止损单"
+            )
+            # 将止损价设为 None，防止 OrderManager 尝试发送止损单
+            stop_loss_price = None
 
         # === [新增：自动补全 size（应对策略端持仓数据丢失）] ===
         if size is None:
