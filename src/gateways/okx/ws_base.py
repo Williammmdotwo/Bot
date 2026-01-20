@@ -297,14 +297,15 @@ class WsBaseGateway:
                 except asyncio.CancelledError:
                     self._logger.info("消息接收循环被取消")
                     break
-                except ClientError as e:
+                except (ClientError, aiohttp.ClientConnectionError, aiohttp.ServerDisconnectedError) as e:
                     self._logger.warning(f"WebSocket 连接错误: {e}")
                     self._connected = False
-                    break
+                    break  # ✅ 强制退出接收循环，触发重连
                 except Exception as e:
                     self._logger.error(f"消息循环异常: {e}", exc_info=True)
                     self._connected = False
-                    break
+                    await asyncio.sleep(1)  # 🔥 防止未知错误导致瞬间日志爆炸
+                    break  # ✅ 遇到未知错误也强制退出，触发重连
 
         finally:
             self._logger.info("消息接收循环已停止")
