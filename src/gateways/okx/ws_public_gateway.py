@@ -207,7 +207,7 @@ class OkxPublicWsGateway(WsBaseGateway):
                 logger.error(f"WebSocket 错误: {message.data}")
 
             elif message.type == aiohttp.WSMsgType.CLOSED:
-                logger.warning("WebSocket 连接已关闭")
+                logger.debug("WebSocket 连接已关闭")
 
             else:
                 logger.debug(f"未处理的消息类型: {message.type}")

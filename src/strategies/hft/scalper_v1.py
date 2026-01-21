@@ -171,6 +171,9 @@ class ScalperV1(BaseStrategy):
         # [新增] 开仓锁机制：防止重复开仓
         self._is_pending_open = False  # 是否有在途的开仓请求
 
+        # 🔥 新增：开仓锁超时保护（防止事件丢失导致死锁）
+        self._pending_open_timeout = 60.0  # 60秒无响应则强制解锁
+
         # [新增] Maker 挂单管理
         self._maker_order_id = None          # 当前挂单 ID
         self._maker_order_time = 0.0        # 挂单时间戳
@@ -270,6 +273,18 @@ class ScalperV1(BaseStrategy):
 
             now = time.time()
 
+            # 🔥 新增：开仓锁超时保护（防止事件丢失导致死锁）
+            if self._is_pending_open:
+                time_locked = time.time() - self._maker_order_time
+                if time_locked > self._pending_open_timeout:
+                    logger.error(
+                        f"🚨 [死锁解除] {self.symbol}: "
+                        f"开仓锁已卡住 {time_locked:.1f}s (可能是事件丢失)，强制重置状态！"
+                    )
+                    # 强制重置状态
+                    self._is_pending_open = False
+                    self._maker_order_id = None
+
             # 1. 检查挂单超时（Maker 挂单管理）
             if self._maker_order_id is not None:
                 if now - self._maker_order_time >= self.config.maker_timeout_seconds:
@@ -354,10 +369,12 @@ class ScalperV1(BaseStrategy):
             if symbol != self.symbol:
                 return
 
-            # 检查是否是我们的开仓订单成交
+            # 🔥 修复：防御性解锁（防止事件丢失）
+            # 只要检测到本策略的成交事件，都尝试解锁
             if self._is_pending_open:
                 logger.info(f"✅ [开仓成交] {self.symbol}: 解锁开仓锁")
                 self._is_pending_open = False
+                self._maker_order_id = None  # 清理挂单ID
 
                 # 记录持仓信息
                 side = data.get('side', '').lower()
@@ -825,13 +842,20 @@ class ScalperV1(BaseStrategy):
                 # 平仓后重置本地记录
                 self.local_pos_size = 0.0
 
+                # 🔥 修复：重置 Maker 挂单状态
+                self._maker_order_id = None
+                self._maker_order_time = 0.0
+                self._maker_order_price = 0.0
+                self._maker_order_initial_price = 0.0
+                self._is_pending_open = False  # 确保开仓锁被清除
+
                 # 更新平仓时间（冷却机制）
                 self._last_close_time = time.time()
 
                 logger.info(
                     f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
                     f"reason={reason}, 数量={real_pos_size:.4f}, "
-                    f"冷却={self.config.cooldown_seconds}s"
+                    f"冷却={self.config.cooldown_seconds}s, 状态已完全重置"
                 )
         except Exception as e:
             logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}")

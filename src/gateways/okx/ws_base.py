@@ -386,8 +386,8 @@ class WsBaseGateway:
             wait_seconds = min(wait_seconds, self._max_backoff)
 
             self._logger.info(
-                f"等待 {wait_seconds:.1f} 秒后重连 "
-                f"(尝试 {self._reconnect_attempt + 1}/{self._max_reconnect_attempts})"
+                f"🔄 [重连 {self._reconnect_attempt + 1}/{self._max_reconnect_attempts}] "
+                f"等待 {wait_seconds:.1f} 秒后重连..."
             )
 
             # 等待退避时间
@@ -405,9 +405,9 @@ class WsBaseGateway:
 
             success = await self.connect()
             if success:
-                self._logger.info(f"✅ 重连成功 (尝试 {self._reconnect_attempt})")
+                self._logger.info(f"✅ [重连成功] 第 {self._reconnect_attempt} 次重连成功")
             else:
-                self._logger.warning(f"重连失败 (尝试 {self._reconnect_attempt})")
+                self._logger.warning(f"⚠️ [重连失败] 第 {self._reconnect_attempt} 次重连失败，继续等待...")
                 # 继续循环，递增退避时间
                 asyncio.create_task(self._reconnect())
 
