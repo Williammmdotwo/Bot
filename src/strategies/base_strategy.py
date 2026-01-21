@@ -370,16 +370,27 @@ class BaseStrategy(ABC):
         # === [修复结束] ===
 
         # 3. 检查购买力（如果 safe_size 有效）
+        # 🔥 修复：市价单跳过资金检查（用于紧急平仓）
         if self._capital_commander and safe_size is not None:
-            amount_usdt = entry_price * safe_size
-            if not self._capital_commander.check_buying_power(
-                self.strategy_id,
-                amount_usdt
-            ):
-                logger.error(
-                    f"策略 {self.strategy_id} 资金不足，无法下单"
+            if order_type == 'market':
+                # 市价单（通常用于紧急平仓）：跳过资金检查
+                logger.warning(
+                    f"策略 {self.strategy_id} 市价单跳过购买力检查: "
+                    f"信任策略判断（用于紧急平仓）"
                 )
-                return False
+            else:
+                # 限价单：执行资金检查
+                amount_usdt = entry_price * safe_size
+                if not self._capital_commander.check_buying_power(
+                    self.strategy_id,
+                    amount_usdt,
+                    symbol=symbol,
+                    side=side  # 传递symbol和side用于平仓检测
+                ):
+                    logger.error(
+                        f"策略 {self.strategy_id} 资金不足，无法下单"
+                    )
+                    return False
 
         # 4. 提交订单
         order = await self._order_manager.submit_order(
@@ -388,7 +399,8 @@ class BaseStrategy(ABC):
             order_type=order_type,
             size=safe_size,  # 使用经过确认的 safe_size
             price=entry_price,
-            strategy_id=self.strategy_id
+            strategy_id=self.strategy_id,
+            stop_loss_price=stop_loss_price  # 🔥 修复：传递止损价格
         )
 
         if order:
