@@ -284,6 +284,9 @@ class ScalperV1(BaseStrategy):
                     # 强制重置状态
                     self._is_pending_open = False
                     self._maker_order_id = None
+                    # 🔥 修复：重置本地记录，防止残余仓位累积
+                    self.local_pos_size = 0.0
+                    self._position_opened = False
 
             # 1. 检查挂单超时（Maker 挂单管理）
             if self._maker_order_id is not None:
