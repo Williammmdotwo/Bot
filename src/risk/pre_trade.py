@@ -7,12 +7,12 @@
 - 检查单笔订单金额是否超过阈值
 - 检查下单频率是否过高
 - 全局敞口检查（防止总杠杆超限）
-- 拒绝不合规的订单
+- **🔥 拒绝不合规的订单**：支持bypass参数，用于紧急平仓
 """
 
 import logging
 import time
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 from ..config.risk_config import RiskConfig, DEFAULT_RISK_CONFIG
 
@@ -33,6 +33,8 @@ class PreTradeCheck:
     检查项：
     1. 单笔订单金额是否超过阈值（默认 2000 USDT）
     2. 下单频率限制（1 秒内 < 5 单）
+    3. 全局敞口检查（防止总杠杆超限）
+    4. **🔥 Bypass支持**：支持紧急平仓时跳过风控检查
 
     Example:
         >>> checker = PreTradeCheck(
@@ -55,7 +57,7 @@ class PreTradeCheck:
         max_frequency: int = 5,
         frequency_window: float = 1.0,
         risk_config: Optional[RiskConfig] = None
-    ):
+    ) -> None:
         """
         初始化交易前检查
 
@@ -78,17 +80,23 @@ class PreTradeCheck:
         self._total_rejections = 0
 
         # 外部依赖（用于全局敞口检查）
-        self._position_manager: Optional['PositionManager'] = None
-        self._capital_commander: Optional['CapitalCommander'] = None
+        self._position_manager: Optional[PositionManager] = None
+        self._capital_commander: Optional[CapitalCommander] = None
 
         logger.info(
             f"PreTradeCheck 初始化: max_amount={max_order_amount:.2f} USDT, "
             f"max_frequency={max_frequency}/{frequency_window}s"
         )
 
-    def check(self, order: dict) -> tuple[bool, Optional[str]]:
+    def check(
+        self,
+        order: dict,
+        bypass: bool = False
+    ) -> Tuple[bool, Optional[str]]:
         """
         检查订单是否符合风控要求
+
+        **🔥 修复**：新增 bypass 参数，用于紧急平仓时跳过风控检查
 
         Args:
             order (dict): 订单信息
@@ -99,6 +107,7 @@ class PreTradeCheck:
                     'price': float,
                     'amount_usdt': float  # 订单金额（USDT）
                 }
+            bypass (bool): 是否跳过风控检查（用于紧急平仓）
 
         Returns:
             tuple: (是否通过, 拒绝原因)
@@ -106,6 +115,15 @@ class PreTradeCheck:
                 - False, "原因": 未通过
         """
         self._total_checks += 1
+
+        # 🔥 修复：如果启用 bypass，直接通过所有检查
+        if bypass:
+            logger.debug(
+                f"🔓 [Bypass 风控] 紧急平仓跳过所有检查: "
+                f"symbol={order.get('symbol')}, "
+                f"amount={order.get('amount_usdt', 0):.2f} USDT"
+            )
+            return True, None
 
         # 1. 检查订单金额
         amount_usdt = order.get('amount_usdt', 0)
@@ -156,7 +174,7 @@ class PreTradeCheck:
         )
         return True, None
 
-    def _check_global_exposure(self, order: dict) -> tuple[bool, Optional[str]]:
+    def _check_global_exposure(self, order: dict) -> Tuple[bool, Optional[str]]:
         """
         检查全局敞口（防止总杠杆超限）
 
@@ -265,7 +283,7 @@ class PreTradeCheck:
         for ts in expired_timestamps:
             del self._order_history[ts]
 
-    def get_statistics(self) -> dict:
+    def get_statistics(self) -> Dict:
         """
         获取统计信息
 
@@ -300,7 +318,7 @@ class PreTradeCheck:
         max_order_amount: Optional[float] = None,
         max_frequency: Optional[int] = None,
         frequency_window: Optional[float] = None
-    ):
+    ) -> None:
         """
         更新配置
 

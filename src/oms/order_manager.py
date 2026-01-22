@@ -151,13 +151,18 @@ class OrderManager:
         # 1. 风控检查（PreTradeCheck：频率/限额）
         amount_usdt = price * size if price else 0
         if amount_usdt > 0:
+            # 🔥 修复：判断是否为紧急平仓（市价单），传递bypass参数
+            is_emergency_close = (order_type == 'market' or
+                                  kwargs.get('is_emergency_close', False))
+
             risk_passed, risk_reason = self._pre_trade_check.check({
                 'symbol': symbol,
                 'side': side,
                 'size': size,
                 'price': price if price else 0,
                 'amount_usdt': amount_usdt,
-                'order_id': f"{symbol}_{time.time()}"
+                'order_id': f"{symbol}_{time.time()}",
+                'bypass': is_emergency_close  # 🔥 传递bypass参数
             })
 
             if not risk_passed:
@@ -478,12 +483,23 @@ class OrderManager:
         try:
             data = event.data
             order_id = data.get('order_id')
+            cl_ord_id = data.get('clOrdId')  # 🔥 修复：获取客户端订单ID
 
-            if not order_id:
+            if not order_id and not cl_ord_id:
                 return
 
-            # 更新订单状态
-            order = self._orders.get(order_id)
+            # 🔥 修复：增强查找逻辑（优先用 order_id，失败则用 cl_ord_id）
+            local_order = self._orders.get(order_id)
+
+            if not local_order and cl_ord_id:
+                # 遍历所有订单，通过 clOrdId 查找
+                for o in self._orders.values():
+                    if o.raw and o.raw.get('clOrdId') == cl_ord_id:
+                        local_order = o
+                        logger.debug(
+                            f"通过 clOrdId 找到订单: {cl_ord_id} -> {order_id or 'unknown'}"
+                        )
+                        break
             if order:
                 order.filled_size = data.get('filled_size', order.filled_size)
                 order.status = 'filled'
