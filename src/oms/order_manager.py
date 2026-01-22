@@ -488,7 +488,7 @@ class OrderManager:
             if not order_id and not cl_ord_id:
                 return
 
-            # 🔥 修复：增强查找逻辑（优先用 order_id，失败则用 cl_ord_id）
+            # 🔥 修复：增强查找逻辑（优先用 order_id，失败则用 cl_ordId）
             local_order = self._orders.get(order_id)
 
             if not local_order and cl_ord_id:
@@ -500,19 +500,20 @@ class OrderManager:
                             f"通过 clOrdId 找到订单: {cl_ord_id} -> {order_id or 'unknown'}"
                         )
                         break
-            if order:
-                order.filled_size = data.get('filled_size', order.filled_size)
-                order.status = 'filled'
+            # 🔥 修复：只有 local_order 存在时才执行后续逻辑
+            if local_order:
+                local_order.filled_size = data.get('filled_size', local_order.filled_size)
+                local_order.status = 'filled'
 
                 logger.info(
                     f"订单成交: {order_id} - "
-                    f"{order.symbol} {order.side} {order.filled_size:.4f}"
+                    f"{local_order.symbol} {local_order.side} {local_order.filled_size:.4f}"
                 )
 
                 # 硬止损执行：立即发送止损订单
                 # 只有开仓订单（买入/卖出）才需要止损
-                if order.order_id not in self._stop_loss_orders:
-                    await self._place_stop_loss_order(order, data)
+                if local_order.order_id not in self._stop_loss_orders:
+                    await self._place_stop_loss_order(local_order, data)
 
                 # 清理已完成订单
                 self._cleanup_order(order_id)
