@@ -217,6 +217,7 @@ class OrderManager:
             return None
 
         # 创建本地订单对象
+        # 🔥 修复：将stop_loss_price保存到Order对象和raw字段，防止成交回调中丢失
         order = Order(
             order_id=order_id,
             symbol=symbol,
@@ -227,7 +228,8 @@ class OrderManager:
             filled_size=float(response.get('fillSz', 0)),
             status='live',
             strategy_id=strategy_id,
-            raw=response
+            stop_loss_price=stop_loss_price,  # 保存止损价格
+            raw=response  # raw字段已经包含了完整数据
         )
 
         # 保存订单
