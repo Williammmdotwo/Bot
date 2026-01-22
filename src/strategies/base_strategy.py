@@ -1,13 +1,5 @@
 """
-策略基类 (Base Strategy)
-
-定义所有策略的通用接口和基础功能。
-
-设计原则：
-- 策略只负责交易逻辑，不关心数据源
-- 通过事件总线接收市场数据
-- 纯粹的策略实现，不包含网络通信
-- 强制止损机制（机构级风控）
+策略基类
 """
 
 import logging
@@ -40,23 +32,6 @@ class OrderRequest:
 class BaseStrategy(ABC):
     """
     策略基类
-
-    所有策略都必须继承此类并实现抽象方法。
-
-    Attributes:
-        strategy_id (str): 策略 ID
-        symbol (str): 交易对
-        mode (str): 策略模式（PRODUCTION/DEV）
-        event_bus (EventBus): 事件总线
-        order_manager (OrderManager): 订单管理器
-        capital_commander (CapitalCommander): 资金指挥官
-
-    Example:
-        >>> class MyStrategy(BaseStrategy):
-        ...     async def on_tick(self, event: Event):
-        ...         data = event.data
-        ...         if data['price'] > 100:
-        ...             await self.buy('BTC-USDT-SWAP', 0.1)
     """
 
     def __init__(
@@ -70,19 +45,6 @@ class BaseStrategy(ABC):
         strategy_id: Optional[str] = None,
         cooldown_seconds: float = 5.0  # [FIX] 冷却时间参数
     ):
-        """
-        初始化策略
-
-        Args:
-            event_bus (EventBus): 事件总线实例
-            order_manager (OrderManager): 订单管理器
-            capital_commander (CapitalCommander): 资金指挥官
-            position_manager: 持仓管理器（可选）
-            symbol (str): 交易对
-            mode (str): 策略模式（PRODUCTION/DEV）
-            strategy_id (str): 策略 ID（可选，默认为类名小写）
-        """
-        # 使用显式传入的 strategy_id，如果没有则使用类名小写
         self.strategy_id = (
             strategy_id if strategy_id else self.__class__.__name__.lower()
         )
@@ -264,7 +226,7 @@ class BaseStrategy(ABC):
             bool: 下单是否成功
         """
         # 0. 参数验证
-        # 🔧 修复市价平仓死循环：市价单允许 stop_loss_price=0
+        # 🔥 修复：防止除零错误（市价平仓时 entry_price=0）
         if entry_price <= 0:
             logger.error(
                 f"策略 {self.strategy_id} 入场价格无效: "
@@ -272,7 +234,7 @@ class BaseStrategy(ABC):
             )
             return False
 
-        # 🔥 [修复] 市价单止损逻辑优化
+        # 🔥 修复：市价单止损逻辑优化
         # 市价单通常用于紧急平仓，允许止损价为 0
         # 如果是市价单且止损价为 0 或负数，不发送止损单
         if stop_loss_price <= 0 and order_type != 'market':
@@ -328,7 +290,7 @@ class BaseStrategy(ABC):
             return False
 
         # === [核心修复：风控检查逻辑] ===
-        # 关键 1：默认 safe_size 等于传入的 size (防止后续变成 None)
+        # 关键 1：默认 safe_size 基于传入的 size (防止后续变成 None)
         safe_size = size
 
         # 关键 2：执行风控计算

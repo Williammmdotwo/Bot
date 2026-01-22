@@ -285,11 +285,12 @@ class ScalperV1(BaseStrategy):
 
             now = time.time()
 
-            # 🔥 修复：时间计算BUG - 确保时间戳有效才进行计算
-            # 防止打印"卡住 50 年"的错误日志
+            # 🔥 修复 1：时间计算必须先检查 self._entry_time 不为 None
+            # 🔥 修复 2：开仓锁超时保护必须先检查 self._maker_order_time 不为 None
+            # 防止打印"卡住 50 年"的错误日志，以及除零/None比较错误
 
             # 🔥 新增：开仓锁超时保护（防止事件丢失导致死锁）
-            if self._is_pending_open and self._maker_order_time > 0:  # 🔥 添加时间戳检查
+            if self._is_pending_open and self._maker_order_time is not None:  # 🔥 关键：先检查不为 None
                 time_locked = now - self._maker_order_time
                 if time_locked > self._pending_open_timeout:
                     logger.error(
@@ -755,15 +756,24 @@ class ScalperV1(BaseStrategy):
         """
         检查出场条件（止盈/止损/时间止损）
 
+        🔥 修复：添加 None 检查，防止除零/None比较错误
         Args:
             current_price (float): 当前价格
             now (float): 当前时间戳
         """
-        # 计算盈亏百分比
-        if self._entry_price <= 0:
+        # 🔥 修复 1：必须先检查 _entry_price 不为 None
+        if self._entry_price is None or self._entry_price <= 0:
             return
 
-        pnl_pct = (current_price - self._entry_price) / self._entry_price
+        # 🔥 修复 2：计算盈亏百分比（防止除零错误）
+        try:
+            pnl_pct = (current_price - self._entry_price) / self._entry_price
+        except ZeroDivisionError:
+            logger.error(
+                f"🚨 [除零错误] {self.symbol}: "
+                f"_entry_price={self._entry_price}, 跳过盈亏计算"
+            )
+            return
 
         # 1. 止盈：+0.2% 立即走人（市价单）
         if pnl_pct >= self.config.take_profit_pct:
@@ -788,6 +798,14 @@ class ScalperV1(BaseStrategy):
             return
 
         # 3. 时间止损：5 秒不涨立即走人（市价单）
+        # 🔥 修复 3：检查 _entry_time 不为 None，防止 None 比较错误
+        if self._entry_time is None or self._entry_time <= 0:
+            logger.warning(
+                f"⚠️  [时间检查异常] {self.symbol}: "
+                f"_entry_time={self._entry_time}, 跳过时间止损"
+            )
+            return
+
         time_elapsed = now - self._entry_time
         if time_elapsed >= self.config.time_limit_seconds:
             logger.info(
