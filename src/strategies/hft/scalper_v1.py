@@ -285,9 +285,12 @@ class ScalperV1(BaseStrategy):
 
             now = time.time()
 
+            # 🔥 修复：时间计算BUG - 确保时间戳有效才进行计算
+            # 防止打印"卡住 50 年"的错误日志
+
             # 🔥 新增：开仓锁超时保护（防止事件丢失导致死锁）
-            if self._is_pending_open:
-                time_locked = time.time() - self._maker_order_time
+            if self._is_pending_open and self._maker_order_time > 0:  # 🔥 添加时间戳检查
+                time_locked = now - self._maker_order_time
                 if time_locked > self._pending_open_timeout:
                     logger.error(
                         f"🚨 [死锁解除] {self.symbol}: "

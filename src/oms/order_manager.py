@@ -457,11 +457,11 @@ class OrderManager:
             if not order_id and not cl_ord_id:
                 return
 
-            # 🔥 修复：增强查找逻辑（优先用 order_id，失败则用 cl_ord_id）
-            local_order = self._orders.get(order_id)
-
-            if not local_order and cl_ord_id:
-                # 遍历所有订单，通过 clOrdId 查找
+            # 🔥 修复：增强查找逻辑（优先用 clOrdId，失败则用 order_id）
+            # 🔥 优化：直接遍历查找，避免ID映射延迟
+            local_order = None
+            if cl_ord_id:
+                # 遍历所有订单，通过 clOrdId 查找（这是关键补丁）
                 for o in self._orders.values():
                     if o.raw and o.raw.get('clOrdId') == cl_ord_id:
                         local_order = o
@@ -472,6 +472,9 @@ class OrderManager:
                             f"通过 clOrdId 找到订单: {cl_ord_id} -> {order_id or 'unknown'}"
                         )
                         break
+            else:
+                # 如果没有 clOrdId，尝试用 order_id 查找
+                local_order = self._orders.get(order_id)
 
             # 🔥 修复：只有 local_order 存在时才执行后续逻辑
             if local_order:
