@@ -237,7 +237,7 @@ class BaseStrategy(ABC):
         # 🔥 修复：市价单止损逻辑优化
         # 市价单通常用于紧急平仓，允许止损价为 0
         # 如果是市价单且止损价为 0 或负数，不发送止损单
-        if stop_loss_price <= 0 and order_type != 'market':
+        if (stop_loss_price is not None and stop_loss_price <= 0) and order_type != 'market':
             logger.error(
                 f"策略 {self.strategy_id} 止损价格无效: "
                 f"stop={stop_loss_price} (非市价单必须提供止损价)"
@@ -245,7 +245,8 @@ class BaseStrategy(ABC):
             return False
 
         # 市价单且止损价无效时，记录警告但继续下单
-        if order_type == 'market' and (stop_loss_price is None or stop_loss_price <= 0):
+        # 🔥 修复：先检查 stop_loss_price 不为 None，再进行数值比较
+        if order_type == 'market' and (stop_loss_price is None or (stop_loss_price is not None and stop_loss_price <= 0)):
             logger.debug(
                 f"策略 {self.strategy_id} 市价单止损价无效 (stop={stop_loss_price})，"
                 f"将只发送主订单，不发送止损单"
@@ -369,9 +370,10 @@ class BaseStrategy(ABC):
             self._orders_submitted += 1
             self._last_trade_time = current_time
 
-            # 🔧 修复 stop_loss_price=0 格式化错误：处理市价单
-            stop_str = f"{stop_loss_price:.2f}" if stop_loss_price > 0 else "0.00 (市价)"
-            # 🔧 修复：确保 safe_size 在格式化前有效
+            # 🔥 修复：先处理 None，防止日志打印时崩溃
+            safe_stop_price = stop_loss_price if stop_loss_price is not None else 0.0
+            stop_str = f"{safe_stop_price:.2f}" if safe_stop_price > 0 else "0.00 (市价)"
+            # 🔥 修复：确保 safe_size 在格式化前有效
             size_str = f"{safe_size:.4f}" if safe_size is not None else "None"
             logger.info(
                 f"策略 {self.strategy_id} 下单成功: "
