@@ -91,31 +91,34 @@ class OrderManager:
         """
         提交订单（已修复市价单日志崩溃问题）
         """
-        # --- [修复开始：安全的参数格式化] ---
-        # 1. 价格显示处理
-        if price is not None:
+        # 🔥 修复：处理市价单的 price=None 问题（防止 NoneType 比较错误）
+        # 1. 确定计算价值用的价格
+        calc_price = price
+        if calc_price is None or calc_price <= 0:
+            # 如果是市价单(price=None)，尝试获取当前市场价格
+            ticker = None
             try:
-                price_str = f"{float(price):.5f}"
-            except:
-                price_str = str(price)
-        else:
-            price_str = "MARKET"
+                if hasattr(self._rest_gateway, 'get_ticker'):
+                    ticker = self._rest_gateway.get_ticker(symbol)
+                if ticker:
+                    calc_price = float(ticker.get('last', 0.0))
+            except Exception as e:
+                logger.debug(f"获取ticker失败: {e}")
 
-        # 2. 止损价格显示处理
-        if stop_loss_price is not None:
+        # 2. 如果还是获取不到价格，使用 0（市价单的风控依赖 bypass）
+        if calc_price is None or calc_price <= 0:
+            calc_price = 0.0
+
+        # 3. 计算订单名义价值
+        amount_usdt = calc_price * size if calc_price else 0
+
+        # 4. 更新价格显示逻辑（使用计算后的价格）
+        price_str = "MARKET"
+        if calc_price and calc_price > 0:
             try:
-                stop_str = f"{float(stop_loss_price):.5f}"
+                price_str = f"{calc_price:.5f}"
             except:
-                stop_str = str(stop_loss_price)
-        else:
-            stop_str = "NONE"
-
-        # 3. 安全记录日志
-        logger.info(f"收到下单请求: {symbol} {side} {order_type} {size} @ {price_str} (Stop: {stop_str})")
-        # --- [修复结束] ---
-
-        # 1. 风控检查（PreTradeCheck：频率/限额）
-        amount_usdt = price * size if price else 0
+                price_str = str(calc_price)
         if amount_usdt > 0:
             # 🔥 修复：判断是否为紧急平仓（市价单），传递bypass参数
             is_emergency_close = (order_type == 'market' or
