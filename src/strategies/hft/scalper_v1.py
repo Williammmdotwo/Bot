@@ -267,6 +267,18 @@ class ScalperV1(BaseStrategy):
             if not self.is_enabled():
                 return
 
+            # 🔥 修复：强制对账逻辑 - 检查本地持仓是否异常
+            # 假设每次开仓是2.0手，超过4.0肯定不对
+            if abs(self.local_pos_size) > 4.0:
+                self.logger.warning(
+                    f"⚠️  [持仓异常] {self.symbol}: "
+                    f"本地持仓异常 ({self.local_pos_size:.2f})，强制重置为 0"
+                )
+                self.local_pos_size = 0.0
+                self._position_opened = False
+                # 可选：尝试调用一次 API 同步
+                return
+
             # [FIX] 如果在冷却中，直接静默跳过，节省 CPU 和日志空间
             if self._is_cooling_down():
                 return

@@ -1,21 +1,5 @@
 """
-订单管理器 (Order Manager)
-
-订单生命周期的大总管，负责下单、撤单和订单状态跟踪。
-
-核心职责：
-- 接收策略下单请求
-- 风控检查
-- 调用 Gateway 发单
-- 追踪订单状态
-- 自动撤单
-- 硬止损执行（Hard Stop）
-
-设计原则：
-- 监听网关的订单推送
-- 维护本地订单状态
-- 提供统一的订单接口
-- 订单成交后立即发送止损订单到交易所
+订单管理器
 """
 
 import logging
@@ -52,24 +36,6 @@ class OrderManager:
 
     负责订单生命周期的管理，包括下单、撤单和状态跟踪。
     硬止损策略：订单成交后立即发送止损订单到交易所。
-
-    Example:
-        >>> om = OrderManager(
-        ...     rest_gateway=gateway,
-        ...     event_bus=event_bus
-        ... )
-        >>>
-        >>> # 下单
-        >>> order = await om.submit_order(
-        ...     symbol="BTC-USDT-SWAP",
-        ...     side="buy",
-        ...     order_type="market",
-        ...     size=0.1,
-        ...     strategy_id="vulture"
-        ... )
-        >>>
-        >>> # 撤单
-        >>> await om.cancel_order(order.order_id, order.symbol)
     """
 
     def __init__(
@@ -91,7 +57,7 @@ class OrderManager:
         self._rest_gateway = rest_gateway
         self._event_bus = event_bus
         self._pre_trade_check = pre_trade_check or PreTradeCheck()
-        self._capital_commander = capital_commander  # 新增：资金指挥官引用
+        self._capital_commander = capital_commander
 
         # 本地订单 {order_id: Order}
         self._orders: Dict[str, Order] = {}
@@ -192,7 +158,7 @@ class OrderManager:
             except Exception as e:
                 # 资金检查失败时，记录警告但继续尝试
                 logger.warning(
-                    f"⚠️ 资金检查异常，继续下单: {e} "
+                    f"⚠️  资金检查异常，继续下单: {e} "
                     f"(strategy={strategy_id}, symbol={symbol})"
                 )
 
@@ -488,7 +454,7 @@ class OrderManager:
             if not order_id and not cl_ord_id:
                 return
 
-            # 🔥 修复：增强查找逻辑（优先用 order_id，失败则用 cl_ordId）
+            # 🔥 修复：增强查找逻辑（优先用 order_id，失败则用 cl_ord_id）
             local_order = self._orders.get(order_id)
 
             if not local_order and cl_ord_id:
@@ -496,10 +462,14 @@ class OrderManager:
                 for o in self._orders.values():
                     if o.raw and o.raw.get('clOrdId') == cl_ord_id:
                         local_order = o
+                        # 🔥 修复：找到后，建立ID映射，方便下次查找
+                        if order_id:
+                            self._orders[order_id] = o
                         logger.debug(
                             f"通过 clOrdId 找到订单: {cl_ord_id} -> {order_id or 'unknown'}"
                         )
                         break
+
             # 🔥 修复：只有 local_order 存在时才执行后续逻辑
             if local_order:
                 local_order.filled_size = data.get('filled_size', local_order.filled_size)
