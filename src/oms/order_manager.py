@@ -43,6 +43,7 @@ class Order:
     strategy_id: str = "default"
     raw: dict = None
     stop_loss_order_id: str = None  # 关联的止损订单 ID
+    stop_loss_price: Optional[float] = None  # 🔥 修复：保存止损价格，防止成交回调中丢失
 
 
 class OrderManager:
