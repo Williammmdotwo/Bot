@@ -178,6 +178,10 @@ class ScalperV1(BaseStrategy):
         self._last_close_time = 0.0  # 上次平仓时间戳（用于防止连发）
         self._close_lock_timeout = 10.0  # 平仓锁超时时间（秒）
 
+        # 🔥 新增：定时同步机制（防止仓位漂移）
+        self._last_sync_time = 0.0  # 上次持仓同步时间
+        self._sync_interval = 15.0  # 持仓同步间隔（秒）
+
         # [新增] Maker 挂单管理
         self._maker_order_id = None          # 当前挂单 ID
         self._maker_order_time = 0.0        # 挂单时间戳
@@ -271,10 +275,31 @@ class ScalperV1(BaseStrategy):
             if not self.is_enabled():
                 return
 
+            now = time.time()
+
+            # 🔥 修复1: 强制状态对齐（防止幽灵仓位累积）
+            # 如果策略认为自己处于"未开仓状态"，但 local_pos_size 不为 0，说明出现了"幽灵仓位"
+            if not self._position_opened and abs(self.local_pos_size) > 0.0001:
+                logger.warning(
+                    f"⚠️ [状态校准] {self.symbol}: "
+                    f"策略处于空仓状态，但检测到残留仓位 {self.local_pos_size:.4f}，强制归零"
+                )
+                self.local_pos_size = 0.0
+
+            # 🔥 修复：定时同步机制（防止仓位漂移）
+            if now - self._last_sync_time > self._sync_interval:
+                self._last_sync_time = now
+                logger.info(
+                    f"🔍 [持仓监控] {self.symbol}: "
+                    f"Local={self.local_pos_size:.4f}, "
+                    f"Status={'开仓' if self._position_opened else '空仓'}, "
+                    f"HasOrder={'是' if self._maker_order_id else '否'}"
+                )
+
             # 🔥 修复：强制对账逻辑 - 检查本地持仓是否异常
             # 假设每次开仓是2.0手，超过4.0肯定不对
             if abs(self.local_pos_size) > 4.0:
-                self.logger.warning(
+                logger.warning(
                     f"⚠️  [持仓异常] {self.symbol}: "
                     f"本地持仓异常 ({self.local_pos_size:.2f})，强制重置为 0"
                 )
@@ -286,8 +311,6 @@ class ScalperV1(BaseStrategy):
             # [FIX] 如果在冷却中，直接静默跳过，节省 CPU 和日志空间
             if self._is_cooling_down():
                 return
-
-            now = time.time()
 
             # 🔥 修复 1：时间计算必须先检查 self._entry_time 不为 None
             # 🔥 修复 2：开仓锁超时保护必须先检查 self._maker_order_time 不为 None
@@ -896,25 +919,34 @@ class ScalperV1(BaseStrategy):
             )
 
             if success:
-                self._position_opened = False
-                self._entry_price = 0.0
-                self._entry_time = 0.0
+                # 🔥 修复2: 平仓完全成交时，物理归零
+                if reason in ['take_profit', 'stop_loss', 'time_stop']:
+                    logger.info(
+                        f"✅ [成交归零] {self.symbol}: 平仓单完全成交，持仓物理归零"
+                    )
+                    self.local_pos_size = 0.0
+                    self._position_opened = False
+                    self._entry_price = 0.0
+                    self._entry_time = 0.0
 
-                # 平仓后重置本地记录
-                self.local_pos_size = 0.0
+                    # 🔥 修复：重置 Maker 挂单状态
+                    self._maker_order_id = None
+                    self._maker_order_time = 0.0
+                    self._maker_order_price = 0.0
+                    self._maker_order_initial_price = 0.0
+                    self._is_pending_open = False  # 确保开仓锁被清除
 
-                # 🔥 修复：重置 Maker 挂单状态
-                self._maker_order_id = None
-                self._maker_order_time = 0.0
-                self._maker_order_price = 0.0
-                self._maker_order_initial_price = 0.0
-                self._is_pending_open = False  # 确保开仓锁被清除
-
-                logger.info(
-                    f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
-                    f"reason={reason}, 数量={real_pos_size:.4f}, "
-                    f"状态已完全重置"
-                )
+                    logger.info(
+                        f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
+                        f"reason={reason}, 数量={real_pos_size:.4f}, "
+                        f"状态已完全重置"
+                    )
+                else:
+                    # 其他原因的平仓（如异常），不完全重置
+                    logger.info(
+                        f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
+                        f"reason={reason}, 数量={real_pos_size:.4f}"
+                    )
         except Exception as e:
             # 🔥 4. 异常处理：立即释放锁，防止死锁
             logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}", exc_info=True)
