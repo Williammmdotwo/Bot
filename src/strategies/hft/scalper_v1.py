@@ -174,8 +174,9 @@ class ScalperV1(BaseStrategy):
         # 🔥 新增：开仓锁超时保护（防止事件丢失导致死锁）
         self._pending_open_timeout = 60.0  # 60秒无响应则强制解锁
 
-        # 🔥 新增：平仓锁机制（防止"机枪平仓"重复下单）
-        self._is_closing = False  # 是否正在平仓
+        # 🔥 新增：平仓锁机制（防止"机枪平仓"重复下单）- 升级为超时锁
+        self._last_close_time = 0.0  # 上次平仓时间戳（用于防止连发）
+        self._close_lock_timeout = 10.0  # 平仓锁超时时间（秒）
 
         # [新增] Maker 挂单管理
         self._maker_order_id = None          # 当前挂单 ID
@@ -826,21 +827,29 @@ class ScalperV1(BaseStrategy):
         平仓（市价单）
 
         🔥 修复：从 OMS 获取真实持仓数量，避免残余持仓
-        🔥 修复：添加平仓锁机制，防止重复下单（防止"机枪平仓"）
+        🔥 修复：添加平仓锁机制（超时锁），防止重复下单（防止"机枪平仓"）
+        🔥 修复：添加异常保护，防止下单失败导致死锁
 
         Args:
             price (float): 平仓价格
             reason (str): 平仓原因（take_profit/stop_loss/time_stop）
         """
-        # 🔥 1. 如果正在平仓，直接返回，防止连发
-        if self._is_closing:
-            logger.warning(f"🚫 [平仓锁] {self.symbol}: 正在平仓中，拒绝重复平仓请求")
+        now = time.time()
+
+        # 🔥 1. 超时锁机制：检查是否在冷却期内
+        if now - self._last_close_time < self._close_lock_timeout:
+            remaining = self._close_lock_timeout - (now - self._last_close_time)
+            logger.warning(
+                f"🚫 [平仓锁] {self.symbol}: 正在平仓冷却中 "
+                f"(剩余 {remaining:.1f}s)，拒绝重复平仓请求"
+            )
             return
 
         if not self._position_opened:
             return
 
-        self._is_closing = True  # 🔥 2. 上锁
+        # 🔥 2. 更新上锁时间
+        self._last_close_time = now
 
         # 计算盈亏
         if self._entry_price > 0:
@@ -872,7 +881,7 @@ class ScalperV1(BaseStrategy):
                     f"使用本地记录={real_pos_size:.4f}"
                 )
 
-            # 平仓（市价单，确保快速退出）
+            # 🔥 3. 平仓（市价单，确保快速退出）
             success = await self.sell(
                 symbol=self.symbol,
                 entry_price=price,  # 平仓时的价格
@@ -896,20 +905,21 @@ class ScalperV1(BaseStrategy):
                 self._maker_order_initial_price = 0.0
                 self._is_pending_open = False  # 确保开仓锁被清除
 
-                # 更新平仓时间（冷却机制）
-                self._last_close_time = time.time()
-
                 logger.info(
                     f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
                     f"reason={reason}, 数量={real_pos_size:.4f}, "
-                    f"冷却={self.config.cooldown_seconds}s, 状态已完全重置"
+                    f"状态已完全重置"
                 )
-
-                # 🔥 3. 平仓完成，解锁
-                self._is_closing = False
-                logger.debug(f"🔓 [平仓锁] {self.symbol}: 平仓完成，已解锁")
         except Exception as e:
-            logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}")
+            # 🔥 4. 异常处理：立即释放锁，防止死锁
+            logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}", exc_info=True)
+
+            # 🔥 关键修复：立即重置锁，允许下一帧重试
+            self._last_close_time = 0.0
+            logger.warning(
+                f"🔓 [平仓锁释放] {self.symbol}: 平仓异常，已立即释放锁，允许下次重试"
+            )
+
             # 注意：即使平仓失败，也不重置持仓状态，等待下次尝试
 
     def _calculate_stop_loss(self, entry_price: float) -> float:
