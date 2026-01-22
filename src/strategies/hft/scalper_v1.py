@@ -174,6 +174,9 @@ class ScalperV1(BaseStrategy):
         # 🔥 新增：开仓锁超时保护（防止事件丢失导致死锁）
         self._pending_open_timeout = 60.0  # 60秒无响应则强制解锁
 
+        # 🔥 新增：平仓锁机制（防止"机枪平仓"重复下单）
+        self._is_closing = False  # 是否正在平仓
+
         # [新增] Maker 挂单管理
         self._maker_order_id = None          # 当前挂单 ID
         self._maker_order_time = 0.0        # 挂单时间戳
@@ -823,13 +826,21 @@ class ScalperV1(BaseStrategy):
         平仓（市价单）
 
         🔥 修复：从 OMS 获取真实持仓数量，避免残余持仓
+        🔥 修复：添加平仓锁机制，防止重复下单（防止"机枪平仓"）
 
         Args:
             price (float): 平仓价格
             reason (str): 平仓原因（take_profit/stop_loss/time_stop）
         """
+        # 🔥 1. 如果正在平仓，直接返回，防止连发
+        if self._is_closing:
+            logger.warning(f"🚫 [平仓锁] {self.symbol}: 正在平仓中，拒绝重复平仓请求")
+            return
+
         if not self._position_opened:
             return
+
+        self._is_closing = True  # 🔥 2. 上锁
 
         # 计算盈亏
         if self._entry_price > 0:
@@ -893,6 +904,10 @@ class ScalperV1(BaseStrategy):
                     f"reason={reason}, 数量={real_pos_size:.4f}, "
                     f"冷却={self.config.cooldown_seconds}s, 状态已完全重置"
                 )
+
+                # 🔥 3. 平仓完成，解锁
+                self._is_closing = False
+                logger.debug(f"🔓 [平仓锁] {self.symbol}: 平仓完成，已解锁")
         except Exception as e:
             logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}")
             # 注意：即使平仓失败，也不重置持仓状态，等待下次尝试
