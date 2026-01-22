@@ -380,7 +380,8 @@ class BaseStrategy(ABC):
             )
             return True
         else:
-            logger.error(f"策略 {self.strategy_id} 下单失败")
+            # 🔥 关键修复：把具体错误 e 打印出来，并开启 exc_info=True 显示堆栈
+            logger.error(f"策略 {self.strategy_id} 下单失败", exc_info=True)
             return False
 
     async def start(self):

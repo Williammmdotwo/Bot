@@ -294,7 +294,8 @@ class ScalperV1(BaseStrategy):
             # 防止打印"卡住 50 年"的错误日志，以及除零/None比较错误
 
             # 🔥 新增：开仓锁超时保护（防止事件丢失导致死锁）
-            if self._is_pending_open and self._maker_order_time is not None:  # 🔥 关键：先检查不为 None
+            if self._is_pending_open and self._maker_order_time is not None and self._maker_order_time > 0:
+                # 🔥 关键：只有时间戳 > 0 时才计算差值，避免算出 17亿秒（50年）
                 time_locked = now - self._maker_order_time
                 if time_locked > self._pending_open_timeout:
                     logger.error(
@@ -353,17 +354,21 @@ class ScalperV1(BaseStrategy):
                 )
             self._previous_price = price
 
-            # 8. 持仓管理（检查止盈/止损/时间止损）
-            if self._position_opened:
-                await self._check_exit_conditions(price, now)
+            # 🔥 修复：单向模式 - 有持仓时绝对禁止开新仓，全力处理平仓
+            if abs(self.local_pos_size) > 0.001:
+                # 只有平仓逻辑能继续执行，开仓逻辑全部跳过
+                # 8. 持仓管理（检查止盈/止损/时间止损）
+                if self._position_opened:
+                    await self._check_exit_conditions(price, now)
 
-            # 9. 追单机制（监控已挂订单）
-            if self._maker_order_id is not None:
-                await self._check_chasing_conditions(price, now)
-
-            # 10. 触发逻辑（仅空仓且无挂单时检查）
-            if not self._position_opened and self._maker_order_id is None:
-                await self._check_entry_conditions(price, now)
+                # 9. 追单机制（监控已挂订单）
+                if self._maker_order_id is not None:
+                    await self._check_chasing_conditions(price, now)
+            else:
+                # 🔥 只有空仓时才允许检查开仓信号（10. 触发逻辑）
+                # 10. 触发逻辑（仅空仓且无挂单时检查）
+                if not self._position_opened and self._maker_order_id is None:
+                    await self._check_entry_conditions(price, now)
 
         except Exception as e:
             logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
