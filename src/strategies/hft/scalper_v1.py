@@ -168,6 +168,9 @@ class ScalperV1(BaseStrategy):
         # [新增] 冷却机制：防止平仓后立即重新开仓
         self._last_close_time = 0.0  # 上次平仓时间戳
 
+        # 🔥 [Fix 1: 交易冷却] 60秒冷却防止频繁交易
+        self.last_exit_time = 0.0  # 上次平仓时间戳（全局冷却）
+
         # [新增] 开仓锁机制：防止重复开仓
         self._is_pending_open = False  # 是否有在途的开仓请求
 
@@ -276,6 +279,11 @@ class ScalperV1(BaseStrategy):
                 return
 
             now = time.time()
+
+            # 🔥 [Fix 1: 交易冷却] 60秒冷却防止频繁交易（Churning）
+            # 如果上次平仓后未满60秒，禁止开仓
+            if now - self.last_exit_time < 60.0:
+                return
 
             # 🔥 修复1: 强制状态对齐（防止幽灵仓位累积）
             # 如果策略认为自己处于"未开仓状态"，但 local_pos_size 不为 0，说明出现了"幽灵仓位"
@@ -584,6 +592,8 @@ class ScalperV1(BaseStrategy):
         """
         处理订单成交事件（解锁开仓锁）
 
+        🔥 [Fix 2: 精确状态跟踪] 使用增量更新，避免盲目重置状态
+
         Args:
             event (Event): ORDER_FILLED 事件
         """
@@ -595,26 +605,48 @@ class ScalperV1(BaseStrategy):
             if symbol != self.symbol:
                 return
 
-            # 🔥 修复：防御性解锁（防止事件丢失）
-            # 只要检测到本策略的成交事件，都尝试解锁
-            if self._is_pending_open:
+            side = data.get('side', '').lower()
+            filled_size = float(data.get('filled_size', 0))
+
+            # 🔥 [Fix 2] 处理开仓订单成交（买入）
+            if self._is_pending_open and side == 'buy':
                 logger.info(f"✅ [开仓成交] {self.symbol}: 解锁开仓锁")
                 self._is_pending_open = False
                 self._maker_order_id = None  # 清理挂单ID
 
-                # 记录持仓信息
-                side = data.get('side', '').lower()
-                filled_size = float(data.get('filled_size', 0))
+                # 🔥 [Fix 2] 增量更新：使用 += 而不是 =
+                self.local_pos_size += filled_size
 
-                if side == 'buy':
-                    self._position_opened = True
-                    self._entry_price = float(data.get('price', 0))
-                    self._entry_time = time.time()
-                    self.local_pos_size = filled_size
+                self._position_opened = True
+                self._entry_price = float(data.get('price', 0))
+                self._entry_time = time.time()
 
-                    logger.info(
-                        f"📊 [开仓成功] {self.symbol} @ {self._entry_price:.2f}, "
-                        f"数量={filled_size:.4f}"
+                logger.info(
+                    f"📊 [开仓成功] {self.symbol} @ {self._entry_price:.2f}, "
+                    f"数量={filled_size:.4f}, 本地持仓={self.local_pos_size:.4f}"
+                )
+
+            # 🔥 [Fix 2] 处理平仓订单成交（卖出）
+            # 平仓时增量减少持仓，避免盲目重置
+            elif side == 'sell':
+                # 🔥 [Fix 2] 增量更新：使用 -= 而不是 =
+                self.local_pos_size -= filled_size
+
+                logger.info(
+                    f"📊 [平仓成交] {self.symbol}: 数量={filled_size:.4f}, "
+                    f"本地持仓={self.local_pos_size:.4f}"
+                )
+
+                # 🔥 [Fix 2] 只在持仓接近0时重置标志
+                if abs(self.local_pos_size) < 0.001:
+                    logger.info(f"✅ [持仓归零] {self.symbol}: 平仓完成，重置状态")
+                    self._position_opened = False
+                    self._entry_price = 0.0
+                    self._entry_time = 0.0
+                else:
+                    logger.debug(
+                        f"⚠️  [持仓未归零] {self.symbol}: "
+                        f"本地持仓={self.local_pos_size:.4f}，保留开仓状态"
                     )
         except Exception as e:
             logger.error(f"处理订单成交事件失败: {e}", exc_info=True)
@@ -1151,28 +1183,43 @@ class ScalperV1(BaseStrategy):
             )
 
             if success:
-                # 🔥 修复2: 平仓完全成交时，物理归零
+                # 🔥 [Fix 2: 精确状态跟踪] 使用增量更新，避免盲目重置
+                # 🔥 修复2: 平仓完全成交时，增量减少持仓
                 if reason in ['take_profit', 'stop_loss', 'time_stop']:
-                    logger.info(
-                        f"✅ [成交归零] {self.symbol}: 平仓单完全成交，持仓物理归零"
-                    )
-                    self.local_pos_size = 0.0
-                    self._position_opened = False
-                    self._entry_price = 0.0
-                    self._entry_time = 0.0
-
-                    # 🔥 修复：重置 Maker 挂单状态
-                    self._maker_order_id = None
-                    self._maker_order_time = 0.0
-                    self._maker_order_price = 0.0
-                    self._maker_order_initial_price = 0.0
-                    self._is_pending_open = False  # 确保开仓锁被清除
+                    # 🔥 [Fix 2] 增量更新：使用 -= 而不是 =
+                    self.local_pos_size -= real_pos_size
 
                     logger.info(
-                        f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
-                        f"reason={reason}, 数量={real_pos_size:.4f}, "
-                        f"状态已完全重置"
+                        f"✅ [成交归零] {self.symbol}: 平仓单完全成交，"
+                        f"本地持仓={self.local_pos_size:.4f}"
                     )
+
+                    # 🔥 [Fix 2] 只在持仓接近0时重置标志
+                    if abs(self.local_pos_size) < 0.001:
+                        self._position_opened = False
+                        self._entry_price = 0.0
+                        self._entry_time = 0.0
+
+                        # 🔥 修复：重置 Maker 挂单状态
+                        self._maker_order_id = None
+                        self._maker_order_time = 0.0
+                        self._maker_order_price = 0.0
+                        self._maker_order_initial_price = 0.0
+                        self._is_pending_open = False  # 确保开仓锁被清除
+
+                        # 🔥 [Fix 1: 交易冷却] 更新平仓时间，启动60秒冷却
+                        self.last_exit_time = now
+
+                        logger.info(
+                            f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
+                            f"reason={reason}, 数量={real_pos_size:.4f}, "
+                            f"状态已完全重置, 冷却60秒开始"
+                        )
+                    else:
+                        logger.debug(
+                            f"⚠️  [持仓未归零] {self.symbol}: "
+                            f"本地持仓={self.local_pos_size:.4f}，保留开仓状态"
+                        )
                 else:
                     # 其他原因的平仓（如异常），不完全重置
                     logger.info(

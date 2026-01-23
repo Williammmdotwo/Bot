@@ -511,10 +511,19 @@ class OrderManager:
         try:
             # 检查是否提供了止损价格
             stop_loss_price = fill_data.get('stop_loss_price')
+
+            # 🔥 [Fix 3: 止损传播] 抑制平仓订单的警告
+            # 平仓订单不需要止损，这是正常行为
             if not stop_loss_price or stop_loss_price <= 0:
-                logger.warning(
-                    f"订单 {open_order.order_id} 未提供止损价格，跳过止损"
-                )
+                # 只有开仓订单（buy）才需要警告，平仓订单（sell）是正常的
+                if open_order.side == 'buy':
+                    logger.warning(
+                        f"订单 {open_order.order_id} 未提供止损价格，跳过止损"
+                    )
+                else:
+                    logger.debug(
+                        f"订单 {open_order.order_id} 是平仓订单，无需止损"
+                    )
                 return
 
             # 计算止损方向
