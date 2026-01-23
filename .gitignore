@@ -23,7 +23,8 @@ secrets/
 .secrets/
 
 # Test files
-tests/unit/
+tests/
+tests_legacy_archive_*/
 
 # Maintenance reports (local only)
 reports/MAINTENANCE_*.md
