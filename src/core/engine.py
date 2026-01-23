@@ -457,6 +457,15 @@ class Engine:
             except Exception as e:
                 logger.warning(f"设置杠杆失败 {symbol}: {e}（继续运行）")
 
+        # 🛡️ [Layer 1: 启动清理] 取消所有挂单，防止遗留订单
+        logger.info("🧹 清理遗留订单...")
+        try:
+            cancelled_count = await self._order_manager.cancel_all_orders()
+            logger.info(f"✅ 启动清理完成: 已取消 {cancelled_count} 个遗留订单")
+        except Exception as e:
+            logger.error(f"❌ 启动清理失败: {e}", exc_info=True)
+            logger.warning("继续启动，但请注意可能有遗留订单")
+
         # 3. 启动 Strategies
         logger.info("启动 Strategies...")
         for strategy in self._strategies:

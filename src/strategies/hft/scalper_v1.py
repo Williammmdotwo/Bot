@@ -400,6 +400,113 @@ class ScalperV1(BaseStrategy):
                     self.local_pos_size = 0.0
                     self._position_opened = False
 
+            # 🛡️ [Layer 3: 订单 TTL] 10秒安全网 - 强制取消超时未确认的订单
+            # 防止系统冻结导致订单挂在交易所1小时后被幽灵成交
+            if (self._maker_order_id is not None and
+                self._maker_order_id != "pending" and
+                self._maker_order_time is not None and
+                self._maker_order_time > 0):
+
+                order_age = now - self._maker_order_time
+
+                # 10秒安全网：如果订单挂了10秒还未成交/取消，强制查询并取消
+                if order_age > 10.0:
+                    logger.warning(
+                        f"🚨 [订单 TTL 触发] {self.symbol}: "
+                        f"订单 {self._maker_order_id} 已超时 {order_age:.1f}s，"
+                        f"可能系统冻结，强制执行安全措施！"
+                    )
+
+                    # 1. 先通过 REST API 查询订单真实状态
+                    try:
+                        if (self._order_manager and
+                            hasattr(self._order_manager, '_rest_gateway')):
+                            rest_gateway = self._order_manager._rest_gateway
+                            if hasattr(rest_gateway, 'get_order_status'):
+                                order_status = await rest_gateway.get_order_status(
+                                    order_id=self._maker_order_id,
+                                    symbol=self.symbol
+                                )
+
+                                if order_status:
+                                    state = order_status.get('state', '').lower()
+
+                                    if state == 'filled':
+                                        # 订单已成交，手动触发成交回调
+                                        logger.warning(
+                                            f"⚠️  [幽灵成交] {self.symbol}: "
+                                            f"订单 {self._maker_order_id} 在超时后实际已成交！"
+                                        )
+
+                                        # 构造成交事件数据
+                                        fill_event_data = {
+                                            'order_id': self._maker_order_id,
+                                            'symbol': self.symbol,
+                                            'filled_size': float(order_status.get('fillSz', 0)),
+                                            'price': float(order_status.get('avgPx', 0)),
+                                            'side': 'buy',
+                                            'stop_loss_price': self._maker_order_price
+                                        }
+
+                                        # 创建并发送事件
+                                        from ...core.event_types import Event, EventType
+                                        fill_event = Event(
+                                            type=EventType.ORDER_FILLED,
+                                            data=fill_event_data,
+                                            source="strategy_ttl_check"
+                                        )
+
+                                        # 手动调用成交处理
+                                        await self.on_order_filled(fill_event)
+
+                                    elif state in ['live', 'partially_filled']:
+                                        # 订单还活着，强制取消
+                                        logger.error(
+                                            f"🚨 [强制取消] {self.symbol}: "
+                                            f"订单 {self._maker_order_id} 状态={state}，"
+                                            f"强制取消防止幽灵成交！"
+                                        )
+
+                                        # 通过 REST API 取消
+                                        await rest_gateway.cancel_order(
+                                            order_id=self._maker_order_id,
+                                            symbol=self.symbol
+                                        )
+
+                                        # 手动触发取消事件
+                                        from ...core.event_types import Event, EventType
+                                        cancel_event = Event(
+                                            type=EventType.ORDER_CANCELLED,
+                                            data={
+                                                'order_id': self._maker_order_id,
+                                                'symbol': self.symbol,
+                                                'reason': 'ttl_force_cancel'
+                                            },
+                                            source="strategy_ttl_check"
+                                        )
+                                        await self.on_order_cancelled(cancel_event)
+
+                                    else:
+                                        # 订单已取消/拒绝，清理本地状态
+                                        logger.info(
+                                            f"🧹 [订单清理] {self.symbol}: "
+                                            f"订单 {self._maker_order_id} 状态={state}，"
+                                            f"清理本地状态"
+                                        )
+                                        self._is_pending_open = False
+                                        self._maker_order_id = None
+                                        self._maker_order_time = 0.0
+
+                    except Exception as ttl_error:
+                        logger.error(
+                            f"❌ [TTL 检查失败] {self.symbol}: "
+                            f"{str(ttl_error)}，强制重置状态"
+                        )
+                        # 查询失败，强制重置状态
+                        self._is_pending_open = False
+                        self._maker_order_id = None
+                        self._maker_order_time = 0.0
+
             # 1. 检查挂单超时（Maker 挂单管理）
             if self._maker_order_id is not None:
                 if now - self._maker_order_time >= self.config.maker_timeout_seconds:
