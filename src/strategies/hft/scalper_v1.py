@@ -286,15 +286,83 @@ class ScalperV1(BaseStrategy):
                 )
                 self.local_pos_size = 0.0
 
-            # 🔥 修复：定时同步机制（防止仓位漂移）
+            # 🔥 修复2: 实现 REST API 强制同步（The Ultimate Sync）
             if now - self._last_sync_time > self._sync_interval:
                 self._last_sync_time = now
-                logger.info(
-                    f"🔍 [持仓监控] {self.symbol}: "
-                    f"Local={self.local_pos_size:.4f}, "
-                    f"Status={'开仓' if self._position_opened else '空仓'}, "
-                    f"HasOrder={'是' if self._maker_order_id else '否'}"
-                )
+
+                # 🔥 关键修复：调用 REST API 获取真实持仓
+                real_position = 0.0
+                try:
+                    # 通过 OrderManager 调用 Gateway 的 get_positions 方法
+                    if self._order_manager and hasattr(self._order_manager, '_rest_gateway'):
+                        rest_gateway = self._order_manager._rest_gateway
+                        if hasattr(rest_gateway, 'get_positions'):
+                            # 获取指定交易对的持仓
+                            positions = await rest_gateway.get_positions(symbol=self.symbol)
+
+                            # 提取持仓数量（net 模式下只有一个持仓）
+                            if positions and len(positions) > 0:
+                                # OKX 返回的是净持仓（net），取 size 即可
+                                pos = positions[0]
+                                real_position = float(pos.get('size', 0))
+                                logger.debug(
+                                    f"📊 [REST API 持仓] {self.symbol}: "
+                                    f"size={real_position:.4f}, "
+                                    f"entry={pos.get('entry_price', 0):.2f}, "
+                                    f"pnl={pos.get('unrealized_pnl', 0):.2f}"
+                                )
+                except Exception as sync_error:
+                    logger.error(
+                        f"❌ [持仓同步失败] {self.symbol}: "
+                        f"{str(sync_error)}"
+                    )
+
+                # 🔥 关键修复：如果偏差过大，强制覆盖本地状态
+                position_diff = abs(real_position - self.local_pos_size)
+                if position_diff > 0.1:
+                    logger.error(
+                        f"⚠️ [账本偏差] {self.symbol}: "
+                        f"发现偏差！本地={self.local_pos_size:.4f}, "
+                        f"交易所={real_position:.4f}, "
+                        f"偏差={position_diff:.4f}。强制同步..."
+                    )
+
+                    # 强制覆盖本地持仓
+                    self.local_pos_size = real_position
+
+                    # 更新开仓状态
+                    self._position_opened = (abs(self.local_pos_size) > 0.001)
+
+                    # 如果交易所显示空仓，重置所有状态
+                    if abs(self.local_pos_size) < 0.001:
+                        logger.warning(
+                            f"🔄 [强制重置] {self.symbol}: "
+                            f"交易所显示空仓，强制重置所有状态"
+                        )
+                        self._position_opened = False
+                        self._entry_price = 0.0
+                        self._entry_time = 0.0
+                        self._maker_order_id = None
+                        self._maker_order_time = 0.0
+                        self._maker_order_price = 0.0
+                        self._maker_order_initial_price = 0.0
+                        self._is_pending_open = False
+
+                    logger.info(
+                        f"✅ [同步完成] {self.symbol}: "
+                        f"Local已强制更新为 {self.local_pos_size:.4f}, "
+                        f"Status={'开仓' if self._position_opened else '空仓'}"
+                    )
+                else:
+                    # 正常日志：无偏差
+                    logger.info(
+                        f"🔍 [持仓监控] {self.symbol}: "
+                        f"Local={self.local_pos_size:.4f}, "
+                        f"REST={real_position:.4f}, "
+                        f"偏差={position_diff:.4f}, "
+                        f"Status={'开仓' if self._position_opened else '空仓'}, "
+                        f"HasOrder={'是' if self._maker_order_id else '否'}"
+                    )
 
             # 🔥 修复：强制对账逻辑 - 检查本地持仓是否异常
             # 假设每次开仓是2.0手，超过4.0肯定不对
@@ -730,14 +798,71 @@ class ScalperV1(BaseStrategy):
         """
         撤销 Maker 挂单
 
-        注意：由于我们没有记录真实的订单 ID，这里只能通过 CancelAll 实现
+        🔥 修复：撤单失败时查询订单真实状态，防止幽灵仓位
         """
         try:
             logger.info(f"🔄 撤销 Maker 挂单: {self.symbol}")
 
             # 撤销所有挂单（简化处理）
             if self._order_manager:
-                await self._order_manager.cancel_all_orders(symbol=self.symbol)
+                try:
+                    await self._order_manager.cancel_all_orders(symbol=self.symbol)
+                except Exception as cancel_error:
+                    # 🔥 关键修复：撤单失败时，必须查询订单真实状态
+                    error_msg = str(cancel_error)
+                    logger.warning(
+                        f"⚠️ [撤单异常] {self.symbol}: "
+                        f"{error_msg}，正在核实订单真实状态..."
+                    )
+
+                    # 检查是否有我们挂单 ID（如果是 "pending"，说明还没拿到真实ID）
+                    if self._maker_order_id and self._maker_order_id != "pending":
+                        # 🔥 尝试通过 REST API 查询订单状态
+                        try:
+                            # 通过 OrderManager 调用 Gateway
+                            if hasattr(self._order_manager, '_rest_gateway'):
+                                rest_gateway = self._order_manager._rest_gateway
+                                if hasattr(rest_gateway, 'get_order_status'):
+                                    order_status = await rest_gateway.get_order_status(
+                                        order_id=self._maker_order_id,
+                                        symbol=self.symbol
+                                    )
+
+                                    # 检查订单是否实际已成交
+                                    if order_status:
+                                        state = order_status.get('state', '').lower()
+                                        if state == 'filled':
+                                            logger.warning(
+                                                f"🚨 [订单实际已成交] {self.symbol}: "
+                                                f"订单 {self._maker_order_id} 在撤单失败后实际已成交！"
+                                            )
+                                            # 🔥 手动触发成交回调，防止遗漏
+                                            # 构造成交事件数据
+                                            fill_event_data = {
+                                                'order_id': self._maker_order_id,
+                                                'symbol': self.symbol,
+                                                'filled_size': float(order_status.get('fillSz', 0)),
+                                                'price': float(order_status.get('avgPx', 0)),
+                                                'side': 'buy',
+                                                'stop_loss_price': self._maker_order_price  # 使用挂单价格
+                                            }
+
+                                            # 创建并发送事件
+                                            from ...core.event_types import Event, EventType
+                                            fill_event = Event(
+                                                type=EventType.ORDER_FILLED,
+                                                data=fill_event_data,
+                                                source="strategy_manual_sync"
+                                            )
+
+                                            # 手动调用成交处理
+                                            await self.on_order_filled(fill_event)
+                                            return
+                        except Exception as sync_error:
+                            logger.error(
+                                f"❌ [订单状态查询失败] {self.symbol}: "
+                                f"{str(sync_error)}"
+                            )
 
             # 重置挂单状态
             self._maker_order_id = None
