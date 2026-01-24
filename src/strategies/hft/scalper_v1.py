@@ -132,6 +132,7 @@ class ScalperV1(BaseStrategy):
         )
 
         # 策略配置
+        # 🔥 [Fix 2: 连接冷却配置] 使用参数中的 cooldown_seconds，不强制设为 0
         self.config = ScalperV1Config(
             symbol=symbol,
             imbalance_ratio=imbalance_ratio,
@@ -140,7 +141,7 @@ class ScalperV1(BaseStrategy):
             stop_loss_pct=stop_loss_pct,
             time_limit_seconds=time_limit_seconds,
             position_size=position_size,
-            cooldown_seconds=0,  # [FIX] HFT 策略强制无冷却
+            cooldown_seconds=cooldown_seconds,  # 🔥 [Fix 2] 使用传入的冷却时间
             maker_timeout_seconds=2.0  # 默认2秒超时
         )
 
@@ -236,15 +237,15 @@ class ScalperV1(BaseStrategy):
     async def start(self):
         """
         策略启动
-
-        [FIX] 强制重置冷却时间，确保 HFT 逻辑不被拦截
         """
         # 调用基类的 start 方法
         await super().start()
 
-        # [FIX] 强制移除冷却，确保 HFT 逻辑不被拦截
-        self.config.cooldown_seconds = 0
-        logger.info("🚀 [HFT 模式] ScalperV1 冷却时间已强制设为 0s")
+        # 🔥 [Fix 2: 连接冷却配置] 使用配置中的冷却时间
+        logger.info(
+            f"🚀 ScalperV1 启动: symbol={self.symbol}, "
+            f"cooldown={self.config.cooldown_seconds}s"
+        )
 
     def _is_cooling_down(self) -> bool:
         """
@@ -280,9 +281,9 @@ class ScalperV1(BaseStrategy):
 
             now = time.time()
 
-            # 🔥 [Fix 1: 交易冷却] 60秒冷却防止频繁交易（Churning）
-            # 如果上次平仓后未满60秒，禁止开仓
-            if now - self.last_exit_time < 60.0:
+            # 🔥 [Fix 2: 连接冷却配置] 使用配置的冷却时间
+            # 如果上次平仓后未满冷却时间，禁止开仓
+            if now - self.last_exit_time < self.config.cooldown_seconds:
                 return
 
             # 🔥 修复1: 强制状态对齐（防止幽灵仓位累积）
@@ -637,12 +638,19 @@ class ScalperV1(BaseStrategy):
                     f"本地持仓={self.local_pos_size:.4f}"
                 )
 
+                # 🔥 [Fix 3: 精确成交处理] 浮点数精度安全检查
+                if abs(self.local_pos_size) < 0.0001:
+                    self.local_pos_size = 0.0
+
                 # 🔥 [Fix 2] 只在持仓接近0时重置标志
                 if abs(self.local_pos_size) < 0.001:
                     logger.info(f"✅ [持仓归零] {self.symbol}: 平仓完成，重置状态")
                     self._position_opened = False
                     self._entry_price = 0.0
                     self._entry_time = 0.0
+
+                    # 🔥 [Fix 3: 精确成交处理] 只在平仓成交时更新冷却时间
+                    self.last_exit_time = time.time()
                 else:
                     logger.debug(
                         f"⚠️  [持仓未归零] {self.symbol}: "
@@ -1183,49 +1191,14 @@ class ScalperV1(BaseStrategy):
             )
 
             if success:
-                # 🔥 [Fix 2: 精确状态跟踪] 使用增量更新，避免盲目重置
-                # 🔥 修复2: 平仓完全成交时，增量减少持仓
-                if reason in ['take_profit', 'stop_loss', 'time_stop']:
-                    # 🔥 [Fix 2] 增量更新：使用 -= 而不是 =
-                    self.local_pos_size -= real_pos_size
-
-                    logger.info(
-                        f"✅ [成交归零] {self.symbol}: 平仓单完全成交，"
-                        f"本地持仓={self.local_pos_size:.4f}"
-                    )
-
-                    # 🔥 [Fix 2] 只在持仓接近0时重置标志
-                    if abs(self.local_pos_size) < 0.001:
-                        self._position_opened = False
-                        self._entry_price = 0.0
-                        self._entry_time = 0.0
-
-                        # 🔥 修复：重置 Maker 挂单状态
-                        self._maker_order_id = None
-                        self._maker_order_time = 0.0
-                        self._maker_order_price = 0.0
-                        self._maker_order_initial_price = 0.0
-                        self._is_pending_open = False  # 确保开仓锁被清除
-
-                        # 🔥 [Fix 1: 交易冷却] 更新平仓时间，启动60秒冷却
-                        self.last_exit_time = now
-
-                        logger.info(
-                            f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
-                            f"reason={reason}, 数量={real_pos_size:.4f}, "
-                            f"状态已完全重置, 冷却60秒开始"
-                        )
-                    else:
-                        logger.debug(
-                            f"⚠️  [持仓未归零] {self.symbol}: "
-                            f"本地持仓={self.local_pos_size:.4f}，保留开仓状态"
-                        )
-                else:
-                    # 其他原因的平仓（如异常），不完全重置
-                    logger.info(
-                        f"🔄 [平仓完成] {self.symbol} @ {price:.2f}, "
-                        f"reason={reason}, 数量={real_pos_size:.4f}"
-                    )
+                # 🔥 [Fix 1: 移除提前状态重置] 不在这里更新 local_pos_size
+                # 状态更新必须只依赖 on_order_filled
+                # 下单成功不代表成交，提前更新会导致负持仓问题
+                logger.info(
+                    f"🔄 [平仓下单成功] {self.symbol} @ {price:.2f}, "
+                    f"reason={reason}, 数量={real_pos_size:.4f}, "
+                    f"等待成交事件更新状态"
+                )
         except Exception as e:
             # 🔥 4. 异常处理：立即释放锁，防止死锁
             logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}", exc_info=True)
