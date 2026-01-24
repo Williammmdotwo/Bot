@@ -184,22 +184,33 @@ def load_config_from_env() -> dict:
                 'type': 'scalper_v1',
                 'capital': float(os.getenv('SCALPER_CAPITAL', 10000.0)),
                 'params': {
-                    'symbol': os.getenv('SCALPER_SYMBOL', 'SOL-USDT-SWAP'),
-                    'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 6.0)),
-                    'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 100000.0)),
+                    'symbol': os.getenv('SCALPER_SYMBOL', 'DOGE-USDT-SWAP'),
+                    'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 5.0)),  # V2: 5.0
+                    'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 5000.0)),  # V2: 5000
                     'take_profit_pct': float(os.getenv('SCALPER_TAKE_PROFIT_PCT', 0.002)),
                     'stop_loss_pct': float(os.getenv('SCALPER_STOP_LOSS_PCT', 0.01)),
-                    'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 5)),
-                    'cooldown_seconds': float(os.getenv('SCALPER_COOLDOWN', 0.0)),  # [FIX] HFT 策略强制无冷却
-                    'position_size': position_size_value  # 只在显式设置时才传值
+                    'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 30)),  # V2: 30s
+                    'cooldown_seconds': float(os.getenv('SCALPER_COOLDOWN', 0.1)),  # V2: HFT mode
+                    'position_size': position_size_value,  # 只在显式设置时才传值
+                    # ✨ V2 新增参数（有默认值，可通过环境变量覆盖）
+                    'trailing_stop_activation_pct': float(os.getenv('SCALPER_TRAILING_STOP_ACTIVATION_PCT', 0.001)),  # 0.1%
+                    'trailing_stop_callback_pct': float(os.getenv('SCALPER_TRAILING_STOP_CALLBACK_PCT', 0.0005)),  # 0.05%
+                    'ema_period': int(os.getenv('SCALPER_EMA_PERIOD', 50)),  # 50 ticks
+                    'spread_threshold_pct': float(os.getenv('SCALPER_SPREAD_THRESHOLD_PCT', 0.0005))  # 0.05%
                 }
             }
 
-            # [新增] 打印 ScalperV1 配置，验证环境变量透传
+            # [新增] 打印 ScalperV1 V2 配置，验证环境变量透传
             params_dict = scalper_config.get('params', {})
-            logger.info(f"🔧 ScalperV1 Config Loaded: min_flow={params_dict.get('min_flow_usdt', 'N/A')}, "
-                       f"ratio={params_dict.get('imbalance_ratio', 'N/A')}, "
-                       f"cooldown={params_dict.get('cooldown_seconds', 'N/A')}s")
+            logger.info(
+                f"🔧 ScalperV1 V2 Config Loaded: "
+                f"symbol={params_dict.get('symbol', 'N/A')}, "
+                f"min_flow={params_dict.get('min_flow_usdt', 'N/A')}, "
+                f"ratio={params_dict.get('imbalance_ratio', 'N/A')}, "
+                f"time_limit={params_dict.get('time_limit_seconds', 'N/A')}s, "
+                f"cooldown={params_dict.get('cooldown_seconds', 'N/A')}s, "
+                f"trailing_stop={params_dict.get('trailing_stop_activation_pct', 'N/A')}%"
+            )
 
             # 更新或追加策略配置
             existing = False

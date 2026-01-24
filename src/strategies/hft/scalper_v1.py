@@ -64,7 +64,7 @@ class ScalperV1Config:
     take_profit_pct: float = 0.002       # 止盈 0.2%（V2: 使用追踪止损）
     stop_loss_pct: float = 0.01          # 硬止损 1%
     time_limit_seconds: int = 30         # 时间止损 30 秒（V2: 提高到 30 秒）
-    cooldown_seconds: int = 10          # 交易冷却（秒）
+    cooldown_seconds: float = 10.0       # 交易冷却（秒）
     position_size: Optional[float] = None  # 仓位大小（None=基于风险计算）
     maker_timeout_seconds: float = 2.0    # Maker 挂单超时时间（秒）
     # ✨ 追踪止损配置（V2 新增）
@@ -73,6 +73,10 @@ class ScalperV1Config:
     # ✨ 趋势过滤配置（V2 新增）
     ema_period: int = 50                 # EMA 周期（ticks）
     spread_threshold_pct: float = 0.0005  # 点差阈值 0.05%
+    # ✨ 其他配置
+    tick_size: float = 0.0001             # Tick 大小（用于追单计算）
+    enable_chasing: bool = False           # 是否启用追单（V2 默认禁用）
+    max_chase_distance_pct: float = 0.001  # 最大追单距离 0.1%
 
 
 class ScalperV1(BaseStrategy):
@@ -429,7 +433,7 @@ class ScalperV1(BaseStrategy):
             # 🔥 [保留] 强制对账逻辑
             if abs(self.local_pos_size) > 4.0:
                 logger.warning(
-                    f"⚠️  [持仓异常] {self.symbol}: "
+                    f"⚠️ [持仓异常] {self.symbol}: "
                     f"本地持仓异常 ({self.local_pos_size:.2f})，强制重置为 0"
                 )
                 self.local_pos_size = 0.0
@@ -483,7 +487,7 @@ class ScalperV1(BaseStrategy):
 
                                     if state == 'filled':
                                         logger.warning(
-                                            f"⚠️  [幽灵成交] {self.symbol}: "
+                                            f"⚠️ [幽灵成交] {self.symbol}: "
                                             f"订单 {self._maker_order_id} 在超时后实际已成交！"
                                         )
 
@@ -569,7 +573,7 @@ class ScalperV1(BaseStrategy):
             price = float(data.get('price', 0))
             size = float(data.get('size', 0))
             side = data.get('side', '').lower()
-            usdt_val = price * size
+            usdt_val = float(data.get('usdt_value', price * size))
 
             # 检查交易对是否匹配
             if symbol != self.symbol:
@@ -690,7 +694,7 @@ class ScalperV1(BaseStrategy):
                     self.last_exit_time = time.time()
                 else:
                     logger.debug(
-                        f"⚠️  [持仓未归零] {self.symbol}: "
+                        f"⚠️ [持仓未归零] {self.symbol}: "
                         f"本地持仓={self.local_pos_size:.4f}，保留开仓状态"
                     )
         except Exception as e:
@@ -746,6 +750,7 @@ class ScalperV1(BaseStrategy):
         # 3. 检查买卖失衡
         if self.buy_vol > self.sell_vol * self.config.imbalance_ratio:
             # 记录最大失衡比
+            imbalance = 0.0
             if self.sell_vol > 0:
                 imbalance = self.buy_vol / self.sell_vol
                 self._max_imbalance_seen = max(self._max_imbalance_seen, imbalance)
@@ -793,7 +798,7 @@ class ScalperV1(BaseStrategy):
             stop_loss_price = self._calculate_stop_loss(price)
 
             logger.debug(
-                f"🛡️  [止损计算] entry={price:.6f}, "
+                f"🛡️ [止损计算] entry={price:.6f}, "
                 f"stop={stop_loss_price:.6f}, "
                 f"距离={abs(price - stop_loss_price):.6f}"
             )
@@ -1133,7 +1138,7 @@ class ScalperV1(BaseStrategy):
         # 🔥 保留：检查 _entry_time 不为 None
         if self._entry_time is None or self._entry_time <= 0:
             logger.warning(
-                f"⚠️  [时间检查异常] {self.symbol}: "
+                f"⚠️ [时间检查异常] {self.symbol}: "
                 f"_entry_time={self._entry_time}, 跳过时间止损"
             )
             return
@@ -1141,7 +1146,7 @@ class ScalperV1(BaseStrategy):
         time_elapsed = now - self._entry_time
         if time_elapsed >= self.config.time_limit_seconds:
             logger.info(
-                f"⏱️  [时间止损] {self.symbol}: "
+                f"⏱️ [时间止损] {self.symbol}: "
                 f"entry={self._entry_price:.6f}, "
                 f"current={current_price:.6f}, "
                 f"耗时={time_elapsed:.2f}s, "
@@ -1378,12 +1383,14 @@ class ScalperV1(BaseStrategy):
 
     def reset_statistics(self):
         """重置统计信息"""
-        super().reset_statistics()
-
+        # 重置 V2 统计信息
         self._total_trades = 0
         self._win_trades = 0
         self._loss_trades = 0
         self._max_imbalance_seen = 0.0
+
+        # ✨ V2 新增：重置追踪止损
+        self.highest_pnl_pct = 0.0
 
         logger.info(
             f"ScalperV1 V2 统计信息已重置 "
@@ -1392,8 +1399,6 @@ class ScalperV1(BaseStrategy):
 
     def reset_state(self):
         """重置策略状态（包括持仓）"""
-        super().reset_state()
-
         # 重置成交量窗口
         self.vol_window_start = 0.0
         self.buy_vol = 0.0
