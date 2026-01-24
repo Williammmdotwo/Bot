@@ -217,6 +217,11 @@ class ScalperV1(BaseStrategy):
         # ✨ [V2 新增] 追踪止损状态
         self.highest_pnl_pct = 0.0  # 最高未实现收益率
 
+        # ✨ [新增] 合约面值（Contract Value）
+        # 用于正确计算交易价值：trade_value = size * price * contract_val
+        # 默认 1.0（适用于大多数币种），但某些币种如 DOGE 需要调整
+        self.contract_val = 1.0
+
         # 波动率估算器（用于动态止损）
         self._volatility_estimator = VolatilityEstimator(
             alpha=0.2,
@@ -268,12 +273,84 @@ class ScalperV1(BaseStrategy):
         # 调用基类的 start 方法
         await super().start()
 
+        # ✨ [新增] 同步合约面值（Contract Value）
+        # 使用 asyncio.create_task 后台执行，不阻塞策略启动
+        asyncio.create_task(self._sync_contract_value())
+
         logger.info(
             f"🚀 ScalperV1 V2 启动: symbol={self.symbol}, "
             f"cooldown={self.config.cooldown_seconds}s, "
             f"mode=Sniper, "
             f"direction=LongOnly"
         )
+
+    async def _sync_contract_value(self):
+        """
+        同步合约面值（Contract Value）
+
+        从交易所获取交易对详情，提取 ctVal 字段。
+        ctVal 用于正确计算交易价值：
+        trade_value = size * price * ctVal
+
+        错误处理：
+        - 如果 API 调用失败，fallback 到 1.0
+        - 如果 ctVal 缺失，fallback 到 1.0
+        - 记录 WARN 级别日志
+        """
+        try:
+            # 检查是否有 REST gateway
+            if not self._order_manager or not hasattr(self._order_manager, '_rest_gateway'):
+                logger.warning(
+                    f"⚠️ [Contract Value] {self.symbol}: "
+                    f"无法访问 REST gateway，使用默认值 1.0"
+                )
+                self.contract_val = 1.0
+                return
+
+            rest_gateway = self._order_manager._rest_gateway
+
+            # 检查是否有 get_instrument_details 方法
+            if not hasattr(rest_gateway, 'get_instrument_details'):
+                logger.warning(
+                    f"⚠️ [Contract Value] {self.symbol}: "
+                    f"REST gateway 不支持 get_instrument_details，使用默认值 1.0"
+                )
+                self.contract_val = 1.0
+                return
+
+            # 获取交易对详情
+            instrument_details = await rest_gateway.get_instrument_details(self.symbol)
+
+            if instrument_details is None:
+                logger.warning(
+                    f"⚠️ [Contract Value] {self.symbol}: "
+                    f"无法获取交易对详情，使用默认值 1.0"
+                )
+                self.contract_val = 1.0
+                return
+
+            # 提取 ctVal（合约面值）
+            ct_val = instrument_details.get('ctVal', 1.0)
+
+            # 验证 ctVal 有效性
+            if ct_val is None or ct_val <= 0:
+                logger.warning(
+                    f"⚠️ [Contract Value] {self.symbol}: "
+                    f"ctVal 无效或缺失 ({ct_val})，使用默认值 1.0"
+                )
+                self.contract_val = 1.0
+            else:
+                self.contract_val = ct_val
+                logger.info(
+                    f"🔍 [Metadata] Synced Contract Value for {self.symbol}: {ct_val}"
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"⚠️ [Contract Value] {self.symbol}: "
+                f"同步失败 ({str(e)})，使用默认值 1.0"
+            )
+            self.contract_val = 1.0
 
     def _is_cooling_down(self) -> bool:
         """
@@ -573,7 +650,11 @@ class ScalperV1(BaseStrategy):
             price = float(data.get('price', 0))
             size = float(data.get('size', 0))
             side = data.get('side', '').lower()
-            usdt_val = float(data.get('usdt_value', price * size))
+
+            # ✨ [新增] 使用合约面值计算交易价值
+            # trade_value = size * price * contract_val
+            # 对于 DOGE 等币种，1 contract != 1 coin，需要使用 ctVal 修正
+            usdt_val = float(data.get('usdt_value', price * size * self.contract_val))
 
             # 检查交易对是否匹配
             if symbol != self.symbol:
@@ -585,8 +666,18 @@ class ScalperV1(BaseStrategy):
             # 累加成交量
             if side == 'buy':
                 self.buy_vol += usdt_val
+                logger.debug(
+                    f"💰 [Tick Buy] {self.symbol}: "
+                    f"size={size}, price={price:.6f}, "
+                    f"ctVal={self.contract_val}, value={usdt_val:.2f} USDT"
+                )
             elif side == 'sell':
                 self.sell_vol += usdt_val
+                logger.debug(
+                    f"💰 [Tick Sell] {self.symbol}: "
+                    f"size={size}, price={price:.6f}, "
+                    f"ctVal={self.contract_val}, value={usdt_val:.2f} USDT"
+                )
 
             # 更新波动率估算器
             if self._previous_price > 0:

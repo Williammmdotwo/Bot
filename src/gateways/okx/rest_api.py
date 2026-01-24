@@ -679,6 +679,7 @@ class OkxRestGateway(RestGateway):
                 - minSz: 最小下单数量
                 - tickSz: 价格精度
                 - state: 交易状态（live, suspend, etc.）
+                - ctVal: 合约面值（Contract Value，用于计算交易价值）
         """
         try:
             # 构造请求参数
@@ -705,6 +706,7 @@ class OkxRestGateway(RestGateway):
                     'minSz': float(raw.get('minSz', 0)) if raw.get('minSz') else 0.0,
                     'tickSz': float(raw.get('tickSz', 0)) if raw.get('tickSz') else 0.0,
                     'state': state,
+                    'ctVal': float(raw.get('ctVal', 1.0)) if raw.get('ctVal') else 1.0,
                     'raw': raw
                 }
                 parsed_instruments.append(instrument)
@@ -719,6 +721,62 @@ class OkxRestGateway(RestGateway):
         except Exception as e:
             logger.error(f"获取交易对信息失败: {e}", exc_info=True)
             return []
+
+    async def get_instrument_details(
+        self,
+        inst_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        获取单个交易对详细信息
+
+        Args:
+            inst_id (str): 交易对 ID（如 "DOGE-USDT-SWAP"）
+
+        Returns:
+            dict: 交易对详细信息，包含：
+                - instId: 交易对 ID
+                - lotSz: 数量精度
+                - minSz: 最小下单数量
+                - tickSz: 价格精度
+                - state: 交易状态
+                - ctVal: 合约面值（Contract Value）
+            如果获取失败返回 None
+        """
+        try:
+            response = await self._request(
+                "GET",
+                "/api/v5/public/instruments",
+                params={'instType': 'SWAP', 'instId': inst_id}
+            )
+
+            raw_instruments = response.get('data', [])
+
+            if not raw_instruments:
+                logger.warning(f"未找到交易对: {inst_id}")
+                return None
+
+            raw = raw_instruments[0]
+
+            # 解析交易对信息
+            instrument = {
+                'instId': raw.get('instId'),
+                'lotSz': float(raw.get('lotSz', 0)) if raw.get('lotSz') else 0.0,
+                'minSz': float(raw.get('minSz', 0)) if raw.get('minSz') else 0.0,
+                'tickSz': float(raw.get('tickSz', 0)) if raw.get('tickSz') else 0.0,
+                'state': raw.get('state', ''),
+                'ctVal': float(raw.get('ctVal', 1.0)) if raw.get('ctVal') else 1.0,
+                'raw': raw
+            }
+
+            logger.debug(
+                f"获取交易对详情: {inst_id}, ctVal={instrument.get('ctVal', 1.0)}"
+            )
+
+            return instrument
+
+        except Exception as e:
+            logger.error(f"获取交易对详情失败 ({inst_id}): {e}", exc_info=True)
+            return None
 
     async def set_leverage(
         self,
