@@ -1421,6 +1421,22 @@ class ScalperV1(BaseStrategy):
             entry_price=entry_price,
             atr_multiplier=1.5
         )
+
+        # 🔥 [新增] 验证止损距离是否合理
+        stop_distance = abs(entry_price - stop_loss)
+        stop_distance_pct = stop_distance / entry_price
+
+        # 如果止损距离小于 0.5%，强制使用硬止损（1%）
+        if stop_distance_pct < 0.005:  # 0.5%
+            logger.warning(
+                f"🚨 [止损距离过小] {self.symbol}: "
+                f"entry={entry_price:.6f}, "
+                f"stop={stop_loss:.6f}, "
+                f"distance={stop_distance_pct*100:.3f}% < 0.5%，"
+                f"强制使用硬止损 1%"
+            )
+            stop_loss = entry_price * (1 - self.config.stop_loss_pct)  # 使用硬止损 1%
+
         return stop_loss
 
     def update_config(self, **kwargs):
