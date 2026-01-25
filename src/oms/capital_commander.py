@@ -459,7 +459,8 @@ class CapitalCommander:
             )
 
             # 6. 检查2：名义价值检查（杠杆限制）
-            nominal_value = base_quantity * entry_price
+            # 🔥 [严重修复] 必须乘以 contract_val，否则名义价值计算错误
+            nominal_value = base_quantity * entry_price * contract_val
             current_exposure = 0.0
 
             # 获取当前总持仓价值
@@ -473,7 +474,8 @@ class CapitalCommander:
                 f"杠杆检查: current_exposure={current_exposure:.2f}, "
                 f"new_exposure={nominal_value:.2f}, "
                 f"total={total_exposure:.2f}, "
-                f"leverage={real_leverage:.2f}x"
+                f"leverage={real_leverage:.2f}x, "
+                f"contract_val={contract_val}"
             )
 
             # 如果超过杠杆上限，缩减仓位
@@ -483,7 +485,8 @@ class CapitalCommander:
                 max_new_exposure = max_exposure - current_exposure
 
                 if max_new_exposure > 0:
-                    adjusted_quantity = max_new_exposure / entry_price
+                    # 🔥 [严重修复] 必须除以 contract_val，否则 quantity 计算错误
+                    adjusted_quantity = max_new_exposure / (entry_price * contract_val)
                     logger.warning(
                         f"⚠️  杠杆限制触发: 削减仓位 "
                         f"from {base_quantity:.4f} to {adjusted_quantity:.4f} "
@@ -555,7 +558,8 @@ class CapitalCommander:
                     return 0.0
 
                 # 8c. 检查 min_notional（最小金额）
-                final_notional = base_quantity * entry_price
+                # 🔥 [严重修复] 必须乘以 contract_val，否则 notional 计算错误
+                final_notional = base_quantity * entry_price * contract_val
                 if final_notional < instrument.min_notional:
                     logger.warning(
                         f"🛑 订单金额过小: {final_notional:.2f} USDT < "
@@ -566,9 +570,19 @@ class CapitalCommander:
             else:
                 logger.warning(f"未找到交易对 {symbol} 的精度配置，跳过精度控制")
 
+            # 🔥 [严重修复] 打印校准日志
+            real_value = base_quantity * entry_price * contract_val
+            logger.info(
+                f"💰 [仓位校准] {symbol}: "
+                f"计算quantity={base_quantity:.2f} 张, "
+                f"实际价值={real_value:.2f} USDT, "
+                f"ctVal={contract_val}, "
+                f"杠杆={real_leverage:.2f}x"
+            )
+
             logger.info(
                 f"✅ 安全仓位计算完成: {symbol} quantity={base_quantity:.4f}, "
-                f"nominal_value={base_quantity * entry_price:.2f} USDT, "
+                f"nominal_value={real_value:.2f} USDT, "
                 f"leverage={real_leverage:.2f}x, "
                 f"contract_val={contract_val}"  # 🔥 [修复] 显示使用的合约面值
             )
