@@ -920,6 +920,16 @@ class ScalperV1(BaseStrategy):
                 trade_size = max(1, int(self.config.position_size))
                 logger.debug(f"使用固定仓位: {trade_size}")
             else:
+                # 🔥 [修复] 开仓前检查 contract_val 是否正确初始化
+                # 如果 contract_val 仍然是默认值 1.0，拒绝开仓并打印错误
+                if self.contract_val <= 1.0:
+                    logger.error(
+                        f"🚨 [合约面值异常] {self.symbol}: "
+                        f"contract_val={self.contract_val}（疑似未正确初始化），"
+                        f"拒绝开仓！可能导致仓位计算错误（2437张≈30万USDT）"
+                    )
+                    return
+
                 # 🔥 [修复] 基于风险计算仓位，显式传递 contract_val
                 trade_size = self._capital_commander.calculate_safe_quantity(
                     symbol=self.symbol,

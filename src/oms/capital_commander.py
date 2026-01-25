@@ -39,6 +39,7 @@ class ExchangeInstrument:
     lot_size: float        # 数量精度（例如 0.01）
     min_order_size: float  # 最小下单数量
     min_notional: float   # 最小下单金额（USDT）
+    ct_val: float = 1.0   # 🔥 [修复] 合约面值（1 contract = ctVal coins）
 
 
 @dataclass
@@ -129,7 +130,8 @@ class CapitalCommander:
         symbol: str,
         lot_size: float,
         min_order_size: float,
-        min_notional: float
+        min_notional: float,
+        ct_val: float = 1.0  # 🔥 [修复] 添加合约面值参数
     ):
         """
         注册交易所交易对配置
@@ -139,17 +141,20 @@ class CapitalCommander:
             lot_size (float): 数量精度
             min_order_size (float): 最小下单数量
             min_notional (float): 最小下单金额（USDT）
+            ct_val (float): 合约面值（1 contract = ctVal coins）  # 🔥 [修复]
         """
         self._instruments[symbol] = ExchangeInstrument(
             symbol=symbol,
             lot_size=lot_size,
             min_order_size=min_order_size,
-            min_notional=min_notional
+            min_notional=min_notional,
+            ct_val=ct_val  # 🔥 [修复] 保存合约面值
         )
         logger.info(
             f"注册交易对配置: {symbol} lot_size={lot_size}, "
             f"min_order_size={min_order_size}, "
-            f"min_notional={min_notional:.2f} USDT"
+            f"min_notional={min_notional:.2f} USDT, "
+            f"ctVal={ct_val}"  # 🔥 [修复] 显示合约面值
         )
 
     def allocate_strategy(
@@ -328,7 +333,7 @@ class CapitalCommander:
         entry_price: float,
         stop_loss_price: float,
         strategy_id: str,
-        contract_val: float = 1.0  # 🔥 [修复] 添加合约面值参数
+        contract_val: float = None  # 🔥 [修复] 改为 None，默认值从 instrument_info 获取
     ) -> float:
         """
         基于风险计算安全仓位大小（机构级风控核心）
@@ -363,7 +368,42 @@ class CapitalCommander:
             float: 安全仓位数量（如果触发风控则返回 0）
         """
         try:
-            # 0. 基本验证
+            # 0. 🔥 [修复] 确定合约面值
+            # 优先使用传入的值，否则从 instrument_info 获取
+            if contract_val is None or contract_val <= 0:
+                instrument = self._instruments.get(symbol)
+                if instrument and hasattr(instrument, 'ct_val'):
+                    contract_val = instrument.ct_val
+                    logger.info(
+                        f"💰 [合约面值] {symbol}: "
+                        f"从 instrument_info 获取 ctVal={contract_val}"
+                    )
+                else:
+                    contract_val = 1.0
+                    logger.warning(
+                        f"⚠️  [合约面值] {symbol}: "
+                        f"未找到 ctVal，使用默认值 1.0（可能导致仓位计算错误！）"
+                    )
+            else:
+                # 🔥 [修复] 验证传入的 contract_val
+                instrument = self._instruments.get(symbol)
+                if instrument and hasattr(instrument, 'ct_val'):
+                    if abs(contract_val - instrument.ct_val) > 0.1:
+                        logger.warning(
+                            f"⚠️  [合约面值不一致] {symbol}: "
+                            f"传入 ctVal={contract_val}, "
+                            f"instrument_info ctVal={instrument.ct_val}, "
+                            f"使用传入值"
+                        )
+
+            # 🔥 [修复] 打印最终使用的合约面值
+            logger.info(
+                f"💰 [仓位计算] {symbol}: "
+                f"使用 ctVal={contract_val}, "
+                f"entry_price={entry_price:.6f}"
+            )
+
+            # 0.5 基本验证
             if entry_price <= 0 or stop_loss_price <= 0:
                 logger.error(f"价格参数无效: entry={entry_price}, stop={stop_loss_price}")
                 return 0.0
@@ -410,7 +450,13 @@ class CapitalCommander:
             # 5. 计算基础仓位
             # 🔥 [修复] 考虑合约面值：quantity = risk / (price_distance * contract_val)
             base_quantity = max_risk_amount / (price_distance * contract_val)
-            logger.debug(f"基础仓位: {base_quantity:.4f} (ctVal={contract_val})")
+            logger.debug(
+                f"💰 [基础仓位] {symbol}: "
+                f"quantity={base_quantity:.4f}, "
+                f"risk={max_risk_amount:.2f} USDT, "
+                f"price_distance={price_distance:.6f}, "
+                f"ctVal={contract_val}"
+            )
 
             # 6. 检查2：名义价值检查（杠杆限制）
             nominal_value = base_quantity * entry_price

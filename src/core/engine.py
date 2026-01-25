@@ -352,19 +352,23 @@ class Engine:
                     min_order_size = inst.get('minSz', 0)
                     # min_notional 通常是 10 USDT（OKX 默认）
                     min_notional = 10.0
+                    # 🔥 [修复] 获取合约面值（ctVal）
+                    ct_val = inst.get('ctVal', 1.0)
 
                     self._capital_commander.register_instrument(
                         symbol=symbol,
                         lot_size=lot_size,
                         min_order_size=min_order_size,
-                        min_notional=min_notional
+                        min_notional=min_notional,
+                        ct_val=ct_val  # 🔥 [修复] 传递合约面值
                     )
                     registered_count += 1
 
                     logger.info(
                         f"✅ 交易对已注册: {symbol} "
                         f"lot_size={lot_size}, min_order_size={min_order_size}, "
-                        f"min_notional={min_notional:.2f} USDT"
+                        f"min_notional={min_notional:.2f} USDT, "
+                        f"ctVal={ct_val}"  # 🔥 [修复] 显示合约面值
                     )
 
             logger.info(
