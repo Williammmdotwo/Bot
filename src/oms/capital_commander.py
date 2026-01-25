@@ -408,8 +408,9 @@ class CapitalCommander:
             )
 
             # 5. 计算基础仓位
-            base_quantity = max_risk_amount / price_distance
-            logger.debug(f"基础仓位: {base_quantity:.4f}")
+            # 🔥 [修复] 考虑合约面值：quantity = risk / (price_distance * contract_val)
+            base_quantity = max_risk_amount / (price_distance * contract_val)
+            logger.debug(f"基础仓位: {base_quantity:.4f} (ctVal={contract_val})")
 
             # 6. 检查2：名义价值检查（杠杆限制）
             nominal_value = base_quantity * entry_price

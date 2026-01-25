@@ -848,14 +848,25 @@ class ScalperV1(BaseStrategy):
             )
             return
 
-        # 3. 检查买卖失衡
-        if self.buy_vol > self.sell_vol * self.config.imbalance_ratio:
-            # 记录最大失衡比
-            imbalance = 0.0
-            if self.sell_vol > 0:
-                imbalance = self.buy_vol / self.sell_vol
-                self._max_imbalance_seen = max(self._max_imbalance_seen, imbalance)
+        # 3. 🔥 [修复] 检查买卖失衡（处理极端行情）
+        # 当一侧流动性为0时，应视为极度失衡
+        imbalance = 0.0
+        if self.sell_vol > 0:
+            imbalance = self.buy_vol / self.sell_vol
+        elif self.buy_vol > 0:
+            # 卖量为0，买量>0 → 极度看多
+            imbalance = 9999.0
+            logger.warning(
+                f"🚨 [极端失衡] {self.symbol}: "
+                f"卖={self.sell_vol:.0f} USDT, 买={self.buy_vol:.0f} USDT, "
+                f"失衡比=∞ (极度看多)"
+            )
 
+        # 更新最大失衡比
+        self._max_imbalance_seen = max(self._max_imbalance_seen, imbalance)
+
+        # 检查是否满足失衡阈值
+        if imbalance >= self.config.imbalance_ratio:
             logger.info(
                 f"🎯 [失衡触发] {self.symbol}: "
                 f"买={self.buy_vol:.0f} USDT, "
@@ -909,15 +920,17 @@ class ScalperV1(BaseStrategy):
                 trade_size = max(1, int(self.config.position_size))
                 logger.debug(f"使用固定仓位: {trade_size}")
             else:
-                # 基于风险计算仓位，但确保至少为 1
-                risk_amount = (self._capital_commander.get_total_equity() *
-                             self._capital_commander._risk_config.RISK_PER_TRADE_PCT)
-                price_distance = abs(maker_price - stop_loss_price)
-                base_quantity = risk_amount / price_distance
-                trade_size = max(1, int(base_quantity))
-                logger.debug(f"基于风险计算仓位: {trade_size} (base: {base_quantity:.4f})")
+                # 🔥 [修复] 基于风险计算仓位，显式传递 contract_val
+                trade_size = self._capital_commander.calculate_safe_quantity(
+                    symbol=self.symbol,
+                    entry_price=maker_price,
+                    stop_loss_price=stop_loss_price,
+                    strategy_id=self.strategy_id,
+                    contract_val=self.contract_val  # 🔥 [修复] 显式传递合约面值
+                )
+                trade_size = max(1, int(trade_size))
+                logger.debug(f"基于风险计算仓位: {trade_size}")
 
-            # 🔥 [修复] 传递 contract_val 参数给资金计算
             # 9. Maker 挂单（限价单）
             success = await self._place_maker_order(
                 symbol=self.symbol,
