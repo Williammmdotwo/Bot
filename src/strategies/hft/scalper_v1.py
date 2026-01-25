@@ -938,6 +938,15 @@ class ScalperV1(BaseStrategy):
                     strategy_id=self.strategy_id,
                     contract_val=self.contract_val  # 🔥 [修复] 显式传递合约面值
                 )
+
+                # 🔥 [严重修复] 如果风控返回 0 或负数，直接跳过开仓
+                if trade_size <= 0:
+                    logger.warning(
+                        f"🚫 [风控拒绝] {self.symbol}: "
+                        f"计算仓位={trade_size:.4f} ≤ 0，跳过本次开仓"
+                    )
+                    return
+
                 trade_size = max(1, int(trade_size))
                 logger.debug(f"基于风险计算仓位: {trade_size}")
 
@@ -1012,7 +1021,12 @@ class ScalperV1(BaseStrategy):
                 self._maker_order_price = price
                 self._maker_order_initial_price = price
             else:
+                # 🔥 [严重修复] 确保失败时重置开仓锁
                 self._is_pending_open = False
+                logger.warning(
+                    f"🚫 [开仓失败] {self.symbol}: "
+                    f"下单失败，已重置开仓锁"
+                )
 
             return success
         except Exception as e:
