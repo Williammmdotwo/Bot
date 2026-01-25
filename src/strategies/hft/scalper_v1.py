@@ -918,10 +918,33 @@ class ScalperV1(BaseStrategy):
             # 7. 计算止损价格（基于波动率）
             stop_loss_price = self._calculate_stop_loss(price)
 
+            # 🔥 [严重修复] 强制最小止损距离（0.5%）
+            # 确保止损距离至少为 0.5%，防止杠杆过高
+            min_stop_distance_pct = 0.005  # 0.5%
+            actual_stop_distance = abs(maker_price - stop_loss_price)
+            actual_stop_distance_pct = actual_stop_distance / maker_price
+
+            if actual_stop_distance_pct < min_stop_distance_pct:
+                logger.warning(
+                    f"🚨 [强制最小止损] {self.symbol}: "
+                    f"entry={maker_price:.6f}, "
+                    f"stop={stop_loss_price:.6f}, "
+                    f"当前距离={actual_stop_distance_pct*100:.3f}% < 0.5%，"
+                    f"强制修正为 0.5%"
+                )
+                # 重新计算止损价格，确保距离至少 0.5%
+                stop_loss_price = maker_price * (1 - min_stop_distance_pct)
+                logger.info(
+                    f"✅ [止损已修正] {self.symbol}: "
+                    f"entry={maker_price:.6f}, "
+                    f"新stop={stop_loss_price:.6f}, "
+                    f"新距离={min_stop_distance_pct*100:.3f}%"
+                )
+
             logger.debug(
-                f"🛡️ [止损计算] entry={price:.6f}, "
+                f"🛡️ [止损计算] entry={maker_price:.6f}, "
                 f"stop={stop_loss_price:.6f}, "
-                f"距离={abs(price - stop_loss_price):.6f}"
+                f"距离={abs(maker_price - stop_loss_price):.6f}"
             )
 
             # 8. 计算交易数量（强制整数，至少 1）

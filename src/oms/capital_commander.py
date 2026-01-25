@@ -494,6 +494,10 @@ class CapitalCommander:
                         f"{self._risk_config.MAX_GLOBAL_LEVERAGE}x)"
                     )
                     base_quantity = adjusted_quantity
+
+                    # 🔥 [严重修复] 重新计算削减后的 nominal_value
+                    # 必须使用削减后的 base_quantity，否则敞口检查会误报
+                    nominal_value = base_quantity * entry_price * contract_val
                 else:
                     logger.warning(
                         f"🛑 杠杆已达上限: {real_leverage:.2f}x > "
@@ -510,6 +514,7 @@ class CapitalCommander:
                 )
 
             # 7. 检查3：单一币种敞口限制
+            # 🔥 [严重修复] 使用削减后的 nominal_value 进行检查
             symbol_exposure = 0.0
             if self._position_manager:
                 symbol_exposure = self._position_manager.get_symbol_exposure(symbol)
