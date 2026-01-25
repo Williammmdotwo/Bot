@@ -940,16 +940,20 @@ class ScalperV1(BaseStrategy):
         symbol: str,
         price: float,
         stop_loss_price: float,
-        size: float
+        size: float,
+        contract_val: float = 1.0
     ) -> bool:
         """
         下 Maker 挂单（限价单）
+
+        🔥 [修复] 增加 contract_val 参数以匹配调用签名，并用于计算准确的日志价值
 
         Args:
             symbol (str): 交易对
             price (float): 挂单价格（Best Bid）
             stop_loss_price (float): 止损价格
             size (float): 数量
+            contract_val (float): 合约面值（默认 1.0）
 
         Returns:
             bool: 下单是否成功
@@ -961,6 +965,14 @@ class ScalperV1(BaseStrategy):
             return False
 
         try:
+            # 🔥 [修复] 计算实际下单价值 (USDT)
+            order_value = price * size * contract_val
+
+            self.logger.info(
+                f"🚀 [尝试下单] {symbol} buy {size} 张 @ {price} "
+                f"(价值: {order_value:.2f} USDT, ctVal={contract_val})"
+            )
+
             self._is_pending_open = True
 
             success = await self.buy(
@@ -982,7 +994,7 @@ class ScalperV1(BaseStrategy):
             return success
         except Exception as e:
             self._is_pending_open = False
-            logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
+            self.logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
             return False
 
     async def _check_chasing_conditions(self, current_price: float, now: float):
