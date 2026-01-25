@@ -652,10 +652,10 @@ class ScalperV1(BaseStrategy):
             size = float(data.get('size', 0))
             side = data.get('side', '').lower()
 
-            # ✨ [新增] 使用合约面值计算交易价值
+            # 🔥 [CRITICAL 修复] 强制使用自己的计算，忽略 tick 中的 usdt_value
             # trade_value = size * price * contract_val
             # 对于 DOGE 等币种，1 contract != 1 coin，需要使用 ctVal 修正
-            usdt_val = float(data.get('usdt_value', price * size * self.contract_val))
+            usdt_val = price * size * self.contract_val  # 🔥 [修复] 直接计算，不使用 data.get()
 
             # 检查交易对是否匹配
             if symbol != self.symbol:
