@@ -987,7 +987,7 @@ class ScalperV1(BaseStrategy):
 
     async def _check_chasing_conditions(self, current_price: float, now: float):
         """
-        检查追单条件（V2: 暂时保留，但可能不使用）
+        检查追单条件（V2: 插队追单模式）
 
         Args:
             current_price (float): 当前价格
@@ -1033,11 +1033,12 @@ class ScalperV1(BaseStrategy):
             new_price = min(aggressive_bid, conservative_ask)
 
             logger.info(
-                f"🔄 [追单触发] {self.symbol}: "
+                f"🔄 [插队触发] {self.symbol}: "  # 🔥 [修复] 更新日志描述
                 f"原价格={self._maker_order_price:.6f}, "
                 f"新Best Bid={best_bid:.6f}, "
-                f"新价格={new_price:.6f} "
-                f"(追单距离={chase_distance*100:.2f}%)"
+                f"新价格={new_price:.6f}, "
+                f"插队距离={chase_distance*100:.2f}%, "
+                f"合约面值={self.contract_val}"  # 🔥 [修复] 显示合约面值
             )
 
             await self._cancel_maker_order()
@@ -1046,7 +1047,7 @@ class ScalperV1(BaseStrategy):
             # 🔥 保留 Double-Check
             if self._position_opened or abs(self.local_pos_size) > 0.001:
                 logger.warning(
-                    f"🛑 [追单拦截] {self.symbol}: "
+                    f"🛑 [插队拦截] {self.symbol}: "
                     f"撤单期间订单已成交 (持仓={self.local_pos_size:.4f})，取消发送新单"
                 )
                 return
@@ -1070,8 +1071,8 @@ class ScalperV1(BaseStrategy):
 
             if success:
                 logger.info(
-                    f"✅ [追单成功] {self.symbol} @ {new_price:.6f}, "
-                    f"数量={trade_size}"
+                    f"✅ [插队成功] {self.symbol} @ {new_price:.6f}, "
+                    f"数量={trade_size}, 合约面值={self.contract_val}"  # 🔥 [修复] 显示合约面值
                 )
 
     async def _cancel_maker_order(self):
