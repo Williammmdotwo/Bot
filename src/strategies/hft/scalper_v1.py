@@ -968,7 +968,7 @@ class ScalperV1(BaseStrategy):
             # 🔥 [修复] 计算实际下单价值 (USDT)
             order_value = price * size * contract_val
 
-            self.logger.info(
+            logger.info(
                 f"🚀 [尝试下单] {symbol} buy {size} 张 @ {price} "
                 f"(价值: {order_value:.2f} USDT, ctVal={contract_val})"
             )
@@ -994,7 +994,7 @@ class ScalperV1(BaseStrategy):
             return success
         except Exception as e:
             self._is_pending_open = False
-            self.logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
+            logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
             return False
 
     async def _check_chasing_conditions(self, current_price: float, now: float):
