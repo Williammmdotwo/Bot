@@ -310,7 +310,7 @@ class ScalperV1(BaseStrategy):
 
             rest_gateway = self._order_manager._rest_gateway
 
-            # 检查是否有 get_instrument_details 方法
+            # 🔥 [修复] 检查是否有 get_instrument_details 方法（修正拼写）
             if not hasattr(rest_gateway, 'get_instrument_details'):
                 logger.warning(
                     f"⚠️ [Contract Value] {self.symbol}: "
