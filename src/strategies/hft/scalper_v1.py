@@ -75,7 +75,7 @@ class ScalperV1Config:
     spread_threshold_pct: float = 0.0005  # 点差阈值 0.05%
     # ✨ 其他配置
     tick_size: float = 0.0001             # Tick 大小（用于追单计算）
-    enable_chasing: bool = False           # 是否启用追单（V2 默认禁用）
+    enable_chasing: bool = True            # 是否启用追单（🔥 [启用] 插队/追单模式）
     max_chase_distance_pct: float = 0.001  # 最大追单距离 0.1%
 
 
