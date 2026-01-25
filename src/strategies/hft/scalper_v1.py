@@ -917,12 +917,14 @@ class ScalperV1(BaseStrategy):
                 trade_size = max(1, int(base_quantity))
                 logger.debug(f"基于风险计算仓位: {trade_size} (base: {base_quantity:.4f})")
 
+            # 🔥 [修复] 传递 contract_val 参数给资金计算
             # 9. Maker 挂单（限价单）
             success = await self._place_maker_order(
                 symbol=self.symbol,
                 price=maker_price,
                 stop_loss_price=stop_loss_price,
-                size=trade_size
+                size=trade_size,
+                contract_val=self.contract_val  # 🔥 [修复] 传递合约面值
             )
 
             if success:
@@ -1056,7 +1058,7 @@ class ScalperV1(BaseStrategy):
                 risk_amount = (self._capital_commander.get_total_equity() *
                              self._capital_commander._risk_config.RISK_PER_TRADE_PCT)
                 price_distance = abs(new_price - stop_loss_price)
-                base_quantity = risk_amount / price_distance
+                base_quantity = risk_amount / (price_distance * self.contract_val)  # 🔥 [修复] 考虑合约面值
                 trade_size = max(1, int(base_quantity))
 
             success = await self._place_maker_order(

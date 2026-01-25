@@ -327,7 +327,8 @@ class CapitalCommander:
         symbol: str,
         entry_price: float,
         stop_loss_price: float,
-        strategy_id: str
+        strategy_id: str,
+        contract_val: float = 1.0  # 🔥 [修复] 添加合约面值参数
     ) -> float:
         """
         基于风险计算安全仓位大小（机构级风控核心）
@@ -340,7 +341,8 @@ class CapitalCommander:
            price_distance = abs(entry_price - stop_loss_price)
 
         3. 计算基础仓位
-           quantity = risk_amount / price_distance
+           [FIX] quantity = risk_amount / (price_distance * contract_val)
+           考虑合约面值，确保计算正确
 
         4. 双重熔断检查：
            a. 名义价值检查：防止真实杠杆超过上限
@@ -355,6 +357,7 @@ class CapitalCommander:
             entry_price (float): 入场价格
             stop_loss_price (float): 止损价格
             strategy_id (str): 策略 ID
+            contract_val (float): 合约面值 (1 contract = ctVal coins)  # 🔥 [修复]
 
         Returns:
             float: 安全仓位数量（如果触发风控则返回 0）
@@ -519,7 +522,8 @@ class CapitalCommander:
             logger.info(
                 f"✅ 安全仓位计算完成: {symbol} quantity={base_quantity:.4f}, "
                 f"nominal_value={base_quantity * entry_price:.2f} USDT, "
-                f"leverage={real_leverage:.2f}x"
+                f"leverage={real_leverage:.2f}x, "
+                f"contract_val={contract_val}"  # 🔥 [修复] 显示使用的合约面值
             )
 
             return base_quantity
