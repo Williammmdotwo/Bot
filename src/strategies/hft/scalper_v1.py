@@ -274,8 +274,9 @@ class ScalperV1(BaseStrategy):
         await super().start()
 
         # ✨ [新增] 同步合约面值（Contract Value）
-        # 使用 asyncio.create_task 后台执行，不阻塞策略启动
-        asyncio.create_task(self._sync_contract_value())
+        # 🔥 [修复] 改为 await，确保策略等待同步完成后再处理 tick
+        # 避免竞态条件：使用默认值 1.0 计算交易价值
+        await self._sync_contract_value()
 
         logger.info(
             f"🚀 ScalperV1 V2 启动: symbol={self.symbol}, "
@@ -662,6 +663,15 @@ class ScalperV1(BaseStrategy):
 
             # 增加 Tick 计数
             self._increment_ticks()
+
+            # 🔥 [新增] 检查是否仍在使用默认值（同步失败）
+            # 如果 ctVal 仍然是 1.0，说明同步可能失败或未完成
+            # 添加 WARNING 日志提醒开发者
+            if self.contract_val == 1.0:
+                logger.warning(
+                    f"⚠️ [Contract Value] {self.symbol}: "
+                    f"仍在使用默认 ctVal=1.0，可能导致交易价值计算错误！"
+                )
 
             # 累加成交量
             if side == 'buy':
