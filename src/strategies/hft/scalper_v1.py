@@ -190,6 +190,10 @@ class ScalperV1(BaseStrategy):
         # [保留] 交易冷却：全局冷却
         self.last_exit_time = 0.0  # 上次平仓时间戳（全局冷却）
 
+        # 🔥 [新增] 风控拒绝冷却：防止死循环重复计算
+        self._last_rejection_time = 0.0  # 上次风控拒绝时间戳
+        self._rejection_cooldown = 1.0  # 拒绝冷却时间（秒）
+
         # [保留] 开仓锁机制：防止重复开仓
         self._is_pending_open = False  # 是否有在途的开仓请求
 
@@ -431,6 +435,11 @@ class ScalperV1(BaseStrategy):
             # 🔥 [保留] 使用配置的冷却时间
             # 如果上次平仓后未满冷却时间，禁止开仓
             if now - self.last_exit_time < self.config.cooldown_seconds:
+                return
+
+            # 🔥 [新增] 风控拒绝冷却：防止死循环
+            # 如果上次风控拒绝后未满冷却时间，禁止重新计算
+            if now - self._last_rejection_time < self._rejection_cooldown:
                 return
 
             # 🔥 [保留] 强制状态对齐（防止幽灵仓位累积）
@@ -943,8 +952,10 @@ class ScalperV1(BaseStrategy):
                 if trade_size <= 0:
                     logger.warning(
                         f"🚫 [风控拒绝] {self.symbol}: "
-                        f"计算仓位={trade_size:.4f} ≤ 0，跳过本次开仓"
+                        f"计算仓位={trade_size:.4f} ≤ 0，跳过本次开仓（冷却{self._rejection_cooldown}秒）"
                     )
+                    # 🔥 [新增] 更新风控拒绝时间，防止死循环
+                    self._last_rejection_time = now
                     return
 
                 trade_size = max(1, int(trade_size))
