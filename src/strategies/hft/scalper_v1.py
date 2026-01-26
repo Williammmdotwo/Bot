@@ -501,6 +501,29 @@ class ScalperV1(BaseStrategy):
                         self._maker_order_price = 0.0
                         self._maker_order_initial_price = 0.0
                         self._is_pending_open = False
+                    else:
+                        # 🔥 [Fix 38] 僵尸持仓激活逻辑
+                        # 如果同步后发现有持仓，但没有入场价格/时间，说明这是"遗失的订单"
+                        # 我们必须给它赋一个值，否则平仓逻辑(_check_exit_conditions)会因为 None 而跳过
+                        if self._entry_price is None or self._entry_price <= 0:
+                            # 尝试从订单簿获取当前市价
+                            best_bid, best_ask = self._get_order_book_best_prices()
+
+                            # 根据持仓方向选择合适的价格
+                            if real_position > 0:
+                                # 多头持仓，使用 Ask 价格（卖出价）
+                                temp_price = best_ask if best_ask > 0 else price
+                            else:
+                                # 空头持仓，使用 Bid 价格（买入价）
+                                temp_price = best_bid if best_bid > 0 else price
+
+                            self._entry_price = temp_price
+                            self._entry_time = now
+                            logger.warning(
+                                f"🧟 [僵尸激活] {self.symbol}: "
+                                f"同步了持仓 {real_position:.4f} 但丢失入场信息。"
+                                f"临时赋值 EntryPrice={self._entry_price:.6f}, EntryTime=Now"
+                            )
 
                     logger.info(
                         f"✅ [同步完成] {self.symbol}: "
