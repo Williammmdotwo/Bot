@@ -430,6 +430,18 @@ class ScalperV1(BaseStrategy):
                 }
         """
         try:
+            # 🔥 [Fix 42] 提前定义基准价格，供全函数使用
+            # 优先使用 Last Price，如果没有则用 Mid Price，再没有用 0.0
+            tick = event.data
+            best_bid = float(tick.get('bid', 0)) if 'bid' in tick else 0.0
+            best_ask = float(tick.get('ask', 0)) if 'ask' in tick else 0.0
+            last_price = float(tick.get('price', 0))
+
+            # 定义一个通用的当前价格 (current_price)
+            current_price = last_price
+            if current_price <= 0:
+                current_price = (best_bid + best_ask) / 2.0 if (best_bid > 0 and best_ask > 0) else 0.0
+
             # 0. 🔥 [Fix 41] 同步 Instrument 详情（仅一次）
             if not self._instrument_synced:
                 await self._sync_instrument_details()
@@ -751,21 +763,21 @@ class ScalperV1(BaseStrategy):
             self._previous_price = price
 
             # ✨ [V2 新增] 更新 EMA（趋势过滤）
-            self._update_ema(price)
+            self._update_ema(current_price)
 
             # 🔥 [保留] 单向模式 - 有持仓时绝对禁止开新仓
             if abs(self.local_pos_size) > 0.001:
                 # 只有平仓逻辑能继续执行
                 if self._position_opened:
-                    await self._check_exit_conditions(price, now)
+                    await self._check_exit_conditions(current_price, now)
 
                 # 检查追单条件（V2 暂时保留，但可能不使用）
                 if self._maker_order_id is not None:
-                    await self._check_chasing_conditions(price, now)
+                    await self._check_chasing_conditions(current_price, now)
             else:
                 # ✨ [V2 新增] 只有空仓时才允许检查开仓信号
                 if not self._position_opened and self._maker_order_id is None:
-                    await self._check_entry_conditions(price, now)
+                    await self._check_entry_conditions(current_price, now)
 
         except Exception as e:
             logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
