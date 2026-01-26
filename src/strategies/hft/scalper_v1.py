@@ -1099,11 +1099,21 @@ class ScalperV1(BaseStrategy):
             current_price (float): 当前价格
             now (float): 当前时间戳
         """
+        # 🔥 [新增 DEBUG] 日志 1: 检查是否启用追单
+        logger.debug(
+            f"🔍 [追单检查 1] {self.symbol}: "
+            f"enable_chasing={self.config.enable_chasing}, "
+            f"maker_order_id={self._maker_order_id}, "
+            f"maker_price={self._maker_order_price:.6f}"
+        )
+
         # V2 暂时禁用追单机制
         if not self.config.enable_chasing:
+            logger.debug(f"🛑 [追单禁用] {self.symbol}: 追单功能已禁用")
             return
 
         if self._maker_order_id is None or self._maker_order_price <= 0:
+            logger.debug(f"🛑 [追单跳过] {self.symbol}: 无有效挂单")
             return
 
         # 🔥 保留 Pre-Check
@@ -1118,11 +1128,28 @@ class ScalperV1(BaseStrategy):
 
         best_bid, best_ask = self._get_order_book_best_prices()
 
+        # 🔥 [新增 DEBUG] 日志 2: 订单簿状态
+        logger.debug(
+            f"🔍 [追单检查 2] {self.symbol}: "
+            f"best_bid={best_bid:.6f}, best_ask={best_ask:.6f}, "
+            f"current_price={current_price:.6f}, "
+            f"maker_price={self._maker_order_price:.6f}"
+        )
+
         if best_bid <= 0:
+            logger.debug(f"🛑 [追单跳过] {self.symbol}: 订单簿数据无效")
             return
 
+        # 🔥 [新增 DEBUG] 日志 3: 检查是否需要插队
         if best_bid > self._maker_order_price:
             chase_distance = abs(best_bid - self._maker_order_initial_price) / self._maker_order_initial_price
+
+            logger.debug(
+                f"🔍 [追单检查 3] {self.symbol}: "
+                f"best_bid > maker_price, 需要插队. "
+                f"chase_distance={chase_distance*100:.3f}%, "
+                f"max_limit={self.config.max_chase_distance_pct*100:.2f}%"
+            )
 
             if chase_distance > self.config.max_chase_distance_pct:
                 logger.warning(
@@ -1137,6 +1164,14 @@ class ScalperV1(BaseStrategy):
             aggressive_bid = best_bid + self.config.tick_size
             conservative_ask = best_ask - self.config.tick_size
             new_price = min(aggressive_bid, conservative_ask)
+
+            logger.debug(
+                f"🔍 [追单计算] {self.symbol}: "
+                f"aggressive_bid={aggressive_bid:.6f}, "
+                f"conservative_ask={conservative_ask:.6f}, "
+                f"new_price={new_price:.6f}, "
+                f"tick_size={self.config.tick_size}"
+            )
 
             logger.info(
                 f"🔄 [插队触发] {self.symbol}: "  # 🔥 [修复] 更新日志描述
@@ -1180,6 +1215,14 @@ class ScalperV1(BaseStrategy):
                     f"✅ [插队成功] {self.symbol} @ {new_price:.6f}, "
                     f"数量={trade_size}, 合约面值={self.contract_val}"  # 🔥 [修复] 显示合约面值
                 )
+        else:
+            # 🔥 [新增 DEBUG] 日志 4: 不需要插队
+            logger.debug(
+                f"🔍 [追单检查 3] {self.symbol}: "
+                f"best_bid <= maker_price, 不需要插队. "
+                f"best_bid={best_bid:.6f}, maker_price={self._maker_order_price:.6f}"
+            )
+            return
 
     async def _cancel_maker_order(self):
         """
