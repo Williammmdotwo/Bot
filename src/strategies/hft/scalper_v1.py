@@ -371,15 +371,15 @@ class ScalperV1(BaseStrategy):
         now = time.time()
         return now - self._last_close_time < self.config.cooldown_seconds
 
-    def _update_ema(self, current_price: float):
+    def _update_ema(self, price: float):
         """
         更新 EMA 值（V2 新增）
 
         Args:
-            current_price (float): 当前价格
+            price (float): 当前价格
         """
         # 添加到价格历史
-        self.price_history.append(current_price)
+        self.price_history.append(price)
 
         # 计算简单移动平均（SMA）作为 EMA 的近似
         # 使用最后 N 个价格的平均值
@@ -392,7 +392,7 @@ class ScalperV1(BaseStrategy):
             self.ema_value = sum(self.price_history) / len(self.price_history)
         else:
             # 初始化
-            self.ema_value = current_price
+            self.ema_value = price
 
     def _get_trend_bias(self) -> str:
         """
@@ -430,17 +430,27 @@ class ScalperV1(BaseStrategy):
                 }
         """
         try:
-            # 🔥 [Fix 42] 提前定义基准价格，供全函数使用
-            # 优先使用 Last Price，如果没有则用 Mid Price，再没有用 0.0
+            # 🔥 [Fix 42 - Final] 绝对优先定义全局 price 变量（在 try 块的第一行）
             tick = event.data
+            now = time.time()
+
+            # 定义基准价格（无条件定义，任何逻辑分支都无法跳过）
             best_bid = float(tick.get('bid', 0)) if 'bid' in tick else 0.0
             best_ask = float(tick.get('ask', 0)) if 'ask' in tick else 0.0
             last_price = float(tick.get('price', 0))
 
             # 定义一个通用的当前价格 (current_price)
-            current_price = last_price
-            if current_price <= 0:
-                current_price = (best_bid + best_ask) / 2.0 if (best_bid > 0 and best_ask > 0) else 0.0
+            if last_price > 0:
+                current_price = last_price
+            elif best_bid > 0 and best_ask > 0:
+                current_price = (best_bid + best_ask) / 2.0
+            elif best_bid > 0:
+                current_price = best_bid
+            else:
+                current_price = 0.0
+
+            # 为了兼容旧代码，也定义 price 变量
+            price = current_price
 
             # 0. 🔥 [Fix 41] 同步 Instrument 详情（仅一次）
             if not self._instrument_synced:
@@ -450,8 +460,6 @@ class ScalperV1(BaseStrategy):
             # 1. 检查策略是否启用
             if not self.is_enabled():
                 return
-
-            now = time.time()
 
             # 🔥 [保留] 使用配置的冷却时间
             # 如果上次平仓后未满冷却时间，禁止开仓
@@ -693,7 +701,7 @@ class ScalperV1(BaseStrategy):
                     f"🔍 [插队检查] {self.symbol}: "
                     f"检查是否需要插队，订单ID={self._maker_order_id}"
                 )
-                await self._check_chasing_conditions(price, now)
+                await self._check_chasing_conditions(current_price, now)
 
             # [保留] 检查挂单超时 (仅当 ID 依然存在时)
             if self._maker_order_id is not None:
@@ -763,21 +771,21 @@ class ScalperV1(BaseStrategy):
             self._previous_price = price
 
             # ✨ [V2 新增] 更新 EMA（趋势过滤）
-            self._update_ema(current_price)
+            self._update_ema(price)
 
             # 🔥 [保留] 单向模式 - 有持仓时绝对禁止开新仓
             if abs(self.local_pos_size) > 0.001:
                 # 只有平仓逻辑能继续执行
                 if self._position_opened:
-                    await self._check_exit_conditions(current_price, now)
+                    await self._check_exit_conditions(price, now)
 
                 # 检查追单条件（V2 暂时保留，但可能不使用）
                 if self._maker_order_id is not None:
-                    await self._check_chasing_conditions(current_price, now)
+                    await self._check_chasing_conditions(price, now)
             else:
                 # ✨ [V2 新增] 只有空仓时才允许检查开仓信号
                 if not self._position_opened and self._maker_order_id is None:
-                    await self._check_entry_conditions(current_price, now)
+                    await self._check_entry_conditions(price, now)
 
         except Exception as e:
             logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
@@ -1445,12 +1453,12 @@ class ScalperV1(BaseStrategy):
         """
         平仓（市价单）
 
-        🔥 保留：
+        🔥 [保留]：
         - 从 OMS 获取真实持仓数量
         - 添加平仓锁机制（超时锁）
         - 添加异常保护
 
-        🔥 保留 Negative Position Fix：不在 _check_exit_conditions 中重置 local_pos_size
+        🔥 [保留 Negative Position Fix：不在 _check_exit_conditions 中重置 local_pos_size
         状态更新只依赖 on_order_filled
 
         Args:
@@ -1459,7 +1467,7 @@ class ScalperV1(BaseStrategy):
         """
         now = time.time()
 
-        # 🔥 保留：超时锁机制
+        # 🔥 [保留] 超时锁机制
         if now - self._last_close_time < self._close_lock_timeout:
             remaining = self._close_lock_timeout - (now - self._last_close_time)
             logger.warning(
@@ -1471,7 +1479,7 @@ class ScalperV1(BaseStrategy):
         if not self._position_opened:
             return
 
-        # 🔥 保留：更新上锁时间
+        # 🔥 [保留] 更新上锁时间
         self._last_close_time = now
 
         # 计算盈亏
@@ -1486,7 +1494,7 @@ class ScalperV1(BaseStrategy):
                 self._loss_trades += 1
 
         try:
-            # 🔥 保留：使用 BaseStrategy 提供的 get_position 方法
+            # 🔥 [保留]：使用 BaseStrategy 提供的 get_position 方法
             real_position = self.get_position(self.symbol)
 
             if real_position:
@@ -1502,7 +1510,7 @@ class ScalperV1(BaseStrategy):
                     f"使用本地记录={real_pos_size:.4f}"
                 )
 
-            # 🔥 保留：平仓（市价单，确保快速退出）
+            # 🔥 [保留]：平仓（市价单，确保快速退出）
             success = await self.sell(
                 symbol=self.symbol,
                 entry_price=price,
@@ -1521,7 +1529,7 @@ class ScalperV1(BaseStrategy):
                     f"等待成交事件更新状态"
                 )
         except Exception as e:
-            # 🔥 保留：异常处理：立即释放锁，防止死锁
+            # 🔥 [保留]：异常处理：立即释放锁，防止死锁
             logger.error(f"❌ [平仓失败] {self.symbol}: 下单失败: {str(e)}", exc_info=True)
 
             self._last_close_time = 0.0
