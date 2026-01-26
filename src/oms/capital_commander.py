@@ -40,6 +40,7 @@ class ExchangeInstrument:
     min_order_size: float  # 最小下单数量
     min_notional: float   # 最小下单金额（USDT）
     ct_val: float = 1.0   # 🔥 [修复] 合约面值（1 contract = ctVal coins）
+    tick_size: float = 0.0001   # 🔥 [Fix 41] 最小价格变动单位
 
 
 @dataclass
@@ -131,7 +132,8 @@ class CapitalCommander:
         lot_size: float,
         min_order_size: float,
         min_notional: float,
-        ct_val: float = 1.0  # 🔥 [修复] 添加合约面值参数
+        ct_val: float = 1.0,  # 🔥 [修复] 添加合约面值参数
+        tick_size: float = 0.0001  # 🔥 [Fix 41] 添加 tick_size 参数
     ):
         """
         注册交易所交易对配置
@@ -142,19 +144,22 @@ class CapitalCommander:
             min_order_size (float): 最小下单数量
             min_notional (float): 最小下单金额（USDT）
             ct_val (float): 合约面值（1 contract = ctVal coins）  # 🔥 [修复]
+            tick_size (float): 最小价格变动单位  # 🔥 [Fix 41]
         """
         self._instruments[symbol] = ExchangeInstrument(
             symbol=symbol,
             lot_size=lot_size,
             min_order_size=min_order_size,
             min_notional=min_notional,
-            ct_val=ct_val  # 🔥 [修复] 保存合约面值
+            ct_val=ct_val,  # 🔥 [修复] 保存合约面值
+            tick_size=tick_size  # 🔥 [Fix 41] 保存 tick_size
         )
         logger.info(
             f"注册交易对配置: {symbol} lot_size={lot_size}, "
             f"min_order_size={min_order_size}, "
             f"min_notional={min_notional:.2f} USDT, "
-            f"ctVal={ct_val}"  # 🔥 [修复] 显示合约面值
+            f"ctVal={ct_val}, "  # 🔥 [修复] 显示合约面值
+            f"tickSize={tick_size}"  # 🔥 [Fix 41] 显示 tick_size
         )
 
     def allocate_strategy(

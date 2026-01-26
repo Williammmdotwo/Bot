@@ -198,6 +198,7 @@ def load_config_from_env() -> dict:
                     'ema_period': int(os.getenv('SCALPER_EMA_PERIOD', 50)),  # 50 ticks
                     'spread_threshold_pct': float(os.getenv('SCALPER_SPREAD_THRESHOLD_PCT', 0.0005)),  # 0.05%
                     # 🔥 [修复] 插队和追单配置
+                    'maker_timeout_seconds': float(os.getenv('SCALPER_MAKER_TIMEOUT', 3.0)),  # 🔥 [修复] Maker 挂单超时时间（默认 3 秒）
                     'enable_chasing': os.getenv('SCALPER_ENABLE_CHASING', 'true').lower() == 'true',  # 是否启用追单
                     'tick_size': float(os.getenv('SCALPER_TICK_SIZE', 0.01)),  # 最小价格跳动
                     'max_chase_distance_pct': float(os.getenv('SCALPER_MAX_CHASE_DISTANCE', 0.001))  # 最大追单距离 0.1%

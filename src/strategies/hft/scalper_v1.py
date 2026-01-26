@@ -115,6 +115,8 @@ class ScalperV1(BaseStrategy):
         strategy_id: Optional[str] = None,
         # ✨ HFT 策略应默认为极短冷却
         cooldown_seconds: float = 0.1,
+        # 🔥 [新增] Maker 挂单超时时间
+        maker_timeout_seconds: float = 3.0,
         # ✨ 容错参数（吃掉所有未定义的参数，防止崩溃）
         **kwargs
     ):
@@ -156,7 +158,7 @@ class ScalperV1(BaseStrategy):
             time_limit_seconds=time_limit_seconds,
             position_size=position_size,
             cooldown_seconds=cooldown_seconds,
-            maker_timeout_seconds=2.0,
+            maker_timeout_seconds=maker_timeout_seconds,  # 🔥 [修复] 使用传入的参数
             trailing_stop_activation_pct=0.001,  # V2: 0.1%
             trailing_stop_callback_pct=0.0005,   # V2: 0.05%
             ema_period=50,                        # V2: 50 ticks
@@ -168,6 +170,9 @@ class ScalperV1(BaseStrategy):
             logger.warning(
                 f"策略 {strategy_id} 收到未识别的参数: {list(kwargs.keys())}"
             )
+
+        # 🔥 [Fix 41] 初始化标志位
+        self._instrument_synced = False
 
         # ========== 极简状态变量（O(1) 访问）==========
         # 成交量窗口（1秒滑动窗口）
@@ -255,7 +260,7 @@ class ScalperV1(BaseStrategy):
             f"min_flow={min_flow_usdt} USDT, "
             f"take_profit={take_profit_pct*100:.2f}%, "
             f"time_stop={time_limit_seconds}s, "
-            f"maker_timeout={2.0}s, "
+            f"maker_timeout={maker_timeout_seconds}s, "  # 🔥 [修复] 使用传入的参数
             f"ema_period=50, "
             f"trailing_stop=0.1%/0.05%"
         )
@@ -277,10 +282,8 @@ class ScalperV1(BaseStrategy):
         # 调用基类的 start 方法
         await super().start()
 
-        # ✨ [新增] 同步合约面值（Contract Value）
-        # 🔥 [修复] 改为 await，确保策略等待同步完成后再处理 tick
-        # 避免竞态条件：使用默认值 1.0 计算交易价值
-        await self._sync_contract_value()
+        # 🔥 [Fix 41] 同步 Instrument 详情（合约面值 + Tick Size + 智能点差）
+        await self._sync_instrument_details()
 
         logger.info(
             f"🚀 ScalperV1 V2 启动: symbol={self.symbol}, "
@@ -289,73 +292,74 @@ class ScalperV1(BaseStrategy):
             f"direction=LongOnly"
         )
 
-    async def _sync_contract_value(self):
-        """
-        同步合约面值（Contract Value）
-
-        从交易所获取交易对详情，提取 ctVal 字段。
-        ctVal 用于正确计算交易价值：
-        trade_value = size * price * ctVal
-
-        错误处理：
-        - 如果 API 调用失败，fallback 到 1.0
-        - 如果 ctVal 缺失，fallback 到 1.0
-        - 记录 WARN 级别日志
-        """
+    async def _sync_instrument_details(self):
+        """🔥 [Fix 41] 全自动同步：合约面值 + Tick Size + 智能点差"""
         try:
-            # 检查是否有 REST gateway
+            # 1. 检查是否有 REST gateway
             if not self._order_manager or not hasattr(self._order_manager, '_rest_gateway'):
-                logger.warning(
-                    f"⚠️ [Contract Value] {self.symbol}: "
-                    f"无法访问 REST gateway，使用默认值 1.0"
+                logger.error(
+                    f"❌ [初始化] {self.symbol}: "
+                    f"无法访问 REST gateway"
                 )
-                self.contract_val = 1.0
                 return
 
             rest_gateway = self._order_manager._rest_gateway
 
             # 🔥 [修复] 检查是否有 get_instrument_details 方法（修正拼写）
             if not hasattr(rest_gateway, 'get_instrument_details'):
-                logger.warning(
-                    f"⚠️ [Contract Value] {self.symbol}: "
-                    f"REST gateway 不支持 get_instrument_details，使用默认值 1.0"
+                logger.error(
+                    f"❌ [初始化] {self.symbol}: "
+                    f"REST gateway 不支持 get_instrument_details"
                 )
-                self.contract_val = 1.0
                 return
 
-            # 获取交易对详情
-            instrument_details = await rest_gateway.get_instrument_details(self.symbol)
-
-            if instrument_details is None:
-                logger.warning(
-                    f"⚠️ [Contract Value] {self.symbol}: "
-                    f"无法获取交易对详情，使用默认值 1.0"
-                )
-                self.contract_val = 1.0
+            # 2. 调用 Gateway 获取最新 Instrument 信息
+            instrument = await rest_gateway.get_instrument_details(self.symbol)
+            if not instrument:
+                logger.error(f"❌ [初始化] {self.symbol}: 无法获取 Instrument 信息")
                 return
 
-            # 提取 ctVal（合约面值）
-            ct_val = instrument_details.get('ctVal', 1.0)
+            # OKX 返回的是列表或字典，兼容两种格式
+            inst_data = instrument[0] if isinstance(instrument, list) else instrument
 
-            # 验证 ctVal 有效性
-            if ct_val is None or ct_val <= 0:
-                logger.warning(
-                    f"⚠️ [Contract Value] {self.symbol}: "
-                    f"ctVal 无效或缺失 ({ct_val})，使用默认值 1.0"
-                )
-                self.contract_val = 1.0
-            else:
-                self.contract_val = ct_val
-                logger.info(
-                    f"🔍 [Metadata] Synced Contract Value for {self.symbol}: {ct_val}"
-                )
+            # 3. 同步 Contract Value (之前的 Fix 30/34)
+            self.contract_val = float(inst_data.get('ctVal', 1.0))
+
+            # 4. 🔥 同步 Tick Size (最小价格变动)
+            self.tick_size = float(inst_data.get('tickSz', 0.01))
+
+            # 5. 🔥 智能计算点差阈值 (Auto Spread Threshold)
+            # 如果配置文件里是 0 或默认值，我们动态计算
+            # 逻辑：允许最大 15 个 tick 的点差 (对于 DOGE 0.00001 * 15 = 0.00015，约 0.12%)
+            # 或者保留 config 的值，如果它看起来像是个默认值 (0.0005) 且显然不合理
+
+            current_price = float(inst_data.get('last', 0.0) or 1.0)
+            auto_spread = self.tick_size * 20  # 允许 20 跳的价差
+            auto_spread_pct = auto_spread / current_price if current_price > 0 else 0.001
+
+            # 混合策略：取 Config 和 Auto 的最大值，防止 Config 设太死
+            # 比如 Config=0.05% (0.0005), 但 DOGE 20跳可能是 0.15% (0.0015)
+            # 我们取较大者，确保不开不了单
+            final_spread = max(self.config.spread_threshold_pct, auto_spread_pct)
+
+            # 更新 Config (仅内存中更新)
+            self.config.tick_size = self.tick_size
+            self.config.spread_threshold_pct = final_spread
+
+            logger.info(
+                f"✅ [智能配置] {self.symbol}: "
+                f"ctVal={self.contract_val}, "
+                f"TickSize={self.tick_size:.6f}, "
+                f"AutoSpread={final_spread:.4%} (允许 {final_spread/self.tick_size/current_price*current_price if current_price > 0 else 0:.1f} 跳)"
+            )
 
         except Exception as e:
-            logger.warning(
-                f"⚠️ [Contract Value] {self.symbol}: "
-                f"同步失败 ({str(e)})，使用默认值 1.0"
+            logger.error(
+                f"❌ [初始化失败] 同步 Instrument 详情出错: {e}", exc_info=True
             )
+            # 出错时的保守回退
             self.contract_val = 1.0
+            self.tick_size = 0.01
 
     def _is_cooling_down(self) -> bool:
         """
@@ -426,7 +430,12 @@ class ScalperV1(BaseStrategy):
                 }
         """
         try:
-            # 0. 检查策略是否启用
+            # 0. 🔥 [Fix 41] 同步 Instrument 详情（仅一次）
+            if not self._instrument_synced:
+                await self._sync_instrument_details()
+                self._instrument_synced = True
+
+            # 1. 检查策略是否启用
             if not self.is_enabled():
                 return
 
@@ -662,7 +671,19 @@ class ScalperV1(BaseStrategy):
                         self._maker_order_id = None
                         self._maker_order_time = 0.0
 
-            # [保留] 检查挂单超时
+            # 🔥 [Fix 39] 优先级反转：先检查插队，再检查超时
+            # 只有在没有触发插队的情况下，才去检查超时
+            if self._maker_order_id is not None and self.config.enable_chasing:
+                # 注意：插队逻辑可能修改 _maker_order_id
+                # 如果插队逻辑执行了撤单重挂，ID 会变化
+                # 此时不应该再执行超时检查
+                logger.debug(
+                    f"🔍 [插队检查] {self.symbol}: "
+                    f"检查是否需要插队，订单ID={self._maker_order_id}"
+                )
+                await self._check_chasing_conditions(price, now)
+
+            # [保留] 检查挂单超时 (仅当 ID 依然存在时)
             if self._maker_order_id is not None:
                 if now - self._maker_order_time >= self.config.maker_timeout_seconds:
                     logger.warning(

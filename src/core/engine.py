@@ -354,13 +354,16 @@ class Engine:
                     min_notional = 10.0
                     # 🔥 [修复] 获取合约面值（ctVal）
                     ct_val = inst.get('ctVal', 1.0)
+                    # 🔥 [Fix 41] 获取 tick_size
+                    tick_size = inst.get('tickSz', 0.01)
 
                     self._capital_commander.register_instrument(
                         symbol=symbol,
                         lot_size=lot_size,
                         min_order_size=min_order_size,
                         min_notional=min_notional,
-                        ct_val=ct_val  # 🔥 [修复] 传递合约面值
+                        ct_val=ct_val,  # 🔥 [修复] 传递合约面值
+                        tick_size=tick_size  # 🔥 [Fix 41] 传递 tick_size
                     )
                     registered_count += 1
 
@@ -368,7 +371,8 @@ class Engine:
                         f"✅ 交易对已注册: {symbol} "
                         f"lot_size={lot_size}, min_order_size={min_order_size}, "
                         f"min_notional={min_notional:.2f} USDT, "
-                        f"ctVal={ct_val}"  # 🔥 [修复] 显示合约面值
+                        f"ctVal={ct_val}, "  # 🔥 [修复] 显示合约面值
+                        f"tickSize={tick_size}"  # 🔥 [Fix 41] 显示 tick_size
                     )
 
             logger.info(
