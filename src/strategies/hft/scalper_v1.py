@@ -460,6 +460,11 @@ class ScalperV1(BaseStrategy):
                     'timestamp': int
                 }
         """
+        # 🔥 [Fix 50-1 - 先定义变量，防止 NameError]
+        # 必须在 try 外部定义，确保 finally 块能访问
+        original_spread_threshold = self.config.spread_threshold_pct
+        original_chase_threshold = self.config.min_chasing_distance_pct
+
         try:
             # 🔥 [Fix 42 - Final] 绝对优先定义全局 price 变量（在 try 块的第一行）
             tick = event.data
@@ -474,9 +479,6 @@ class ScalperV1(BaseStrategy):
             # 🔥 [Fix 50 - Auto-Relaxation] 模拟盘风控放宽（只在内存中动态覆盖）
             # 注意：不要修改配置文件，只在本次 tick 中临时覆盖
             # 模拟盘流动性差且撮合机制迟钝，需要放宽风控限制
-            original_spread_threshold = self.config.spread_threshold_pct
-            original_chase_threshold = self.config.min_chasing_distance_pct
-
             if self.config.is_paper_trading:
                 # 模拟盘：临时放宽限制
                 self.config.spread_threshold_pct = 0.05  # 5% 点差（防止 2.0% 价差被拦截）
@@ -485,13 +487,13 @@ class ScalperV1(BaseStrategy):
                     f"🧪 [模拟盘风控] {self.symbol}: "
                     f"临时放宽限制: spread_threshold=5%, "
                     f"min_chasing_distance=2% "
-                    f"(原始值: spread={original_spread_threshold_pct*100:.2f}%, "
-                    f"chase={original_chase_threshold_pct*100:.2f}%)"
+                    f"(原始值: spread={original_spread_threshold*100:.2f}%, "
+                    f"chase={original_chase_threshold*100:.2f}%)"
                 )
             else:
-                # 实盘：恢复原始限制
-                self.config.spread_threshold_pct = original_spread_threshold_pct
-                self.config.min_chasing_distance_pct = original_chase_threshold_pct
+                # 实盘：恢复原始限制（通过赋值覆盖可能被修改的值）
+                self.config.spread_threshold_pct = original_spread_threshold
+                self.config.min_chasing_distance_pct = original_chase_threshold
 
             # 定义基准价格（无条件定义，任何逻辑分支都无法跳过）
             best_bid = float(tick.get('bid', 0)) if 'bid' in tick else 0.0
