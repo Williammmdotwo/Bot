@@ -5,5 +5,10 @@
 """
 
 from .pre_trade import PreTradeCheck
+from .risk_guardian import RiskGuardian, RiskValidationResult
 
-__all__ = ['PreTradeCheck']
+__all__ = [
+    'PreTradeCheck',
+    'RiskGuardian',
+    'RiskValidationResult'
+]

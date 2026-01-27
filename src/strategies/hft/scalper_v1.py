@@ -77,6 +77,15 @@ class ScalperV1Config:
     tick_size: float = 0.0001             # Tick 大小（用于追单计算）
     enable_chasing: bool = True            # 是否启用追单（🔥 [启用] 插队/追单模式）
     max_chase_distance_pct: float = 0.001  # 最大追单距离 0.1%
+    # 🔥 [配置化] 新增配置参数
+    ttl_order_seconds: float = 10.0      # 订单 TTL 检查间隔（秒）
+    max_position_size: float = 4.0         # 最大持仓限制（防止异常）
+    sync_interval_seconds: float = 15.0      # 持仓同步间隔（秒）
+    close_lock_timeout_seconds: float = 10.0  # 平仓锁超时（秒）
+    pending_open_timeout_seconds: float = 60.0  # 开仓请求超时（秒）
+    min_stop_distance_pct: float = 0.005   # 最小止损距离 0.5%（强制修正）
+    rejection_cooldown_seconds: float = 1.0   # 风控拒绝冷却（秒）
+    volatility_atr_multiplier: float = 1.5    # ATR 止损倍数
 
 
 class ScalperV1(BaseStrategy):
@@ -531,27 +540,76 @@ class ScalperV1(BaseStrategy):
                         self._maker_order_initial_price = 0.0
                         self._is_pending_open = False
                     else:
-                        # 🔥 [Fix 38] 僵尸持仓激活逻辑
+                        # 🔥 [Fix 38] 僵尸持仓激活逻辑（优化版：多重降级策略）
                         # 如果同步后发现有持仓，但没有入场价格/时间，说明这是"遗失的订单"
                         # 我们必须给它赋一个值，否则平仓逻辑(_check_exit_conditions)会因为 None 而跳过
+
+                        # 🔥 [优化] 多重降级策略：
+                        # 1. 优先使用订单簿数据（Best Bid/Ask）
+                        # 2. 降级使用 Last Price（Tick 价格）
+                        # 3. 兜底使用上次价格历史（EMA）
+                        # 4. 最后兜底：使用默认价格（1.0，至少不会崩溃）
+
                         if self._entry_price is None or self._entry_price <= 0:
-                            # 尝试从订单簿获取当前市价
-                            best_bid, best_ask = self._get_order_book_best_prices()
+                            temp_price = None
+
+                            # 🔥 [降级策略 1] 尝试从订单簿获取最优价格
+                            best_bid, best_ask = self._get_order_book_best_prices(price)
 
                             # 根据持仓方向选择合适的价格
                             if real_position > 0:
-                                # 多头持仓，使用 Ask 价格（卖出价）
-                                temp_price = best_ask if best_ask > 0 else price
+                                # 多头持仓，优先使用 Ask 价格（卖出价）
+                                if best_ask > 0:
+                                    temp_price = best_ask
+                                    logger.info(
+                                        f"🧟 [僵尸激活-订单簿] {self.symbol}: "
+                                        f"使用 Ask={best_ask:.6f} (多头持仓)"
+                                    )
                             else:
-                                # 空头持仓，使用 Bid 价格（买入价）
-                                temp_price = best_bid if best_bid > 0 else price
+                                # 空头持仓，优先使用 Bid 价格（买入价）
+                                if best_bid > 0:
+                                    temp_price = best_bid
+                                    logger.info(
+                                        f"🧟 [僵尸激活-订单簿] {self.symbol}: "
+                                        f"使用 Bid={best_bid:.6f} (空头持仓)"
+                                    )
 
+                            # 🔥 [降级策略 2] 订单簿无效时，使用当前价格
+                            if temp_price is None or temp_price <= 0:
+                                if price > 0:
+                                    temp_price = price
+                                    logger.info(
+                                        f"🧟 [僵尸激活-降级1] {self.symbol}: "
+                                        f"订单簿不可用，使用 Last Price={price:.6f}"
+                                    )
+
+                            # 🔥 [降级策略 3] 还没有价格时，使用 EMA
+                            if temp_price is None or temp_price <= 0:
+                                if self.ema_value > 0:
+                                    temp_price = self.ema_value
+                                    logger.info(
+                                        f"🧟 [僵尸激活-降级2] {self.symbol}: "
+                                        f"EMA={self.ema_value:.6f} (订单簿和Last Price都不可用)"
+                                    )
+
+                            # 🔥 [降级策略 4] 最后兜底：使用默认价格 1.0
+                            if temp_price is None or temp_price <= 0:
+                                temp_price = 1.0
+                                logger.error(
+                                    f"🚨 [僵尸激活-兜底] {self.symbol}: "
+                                    f"所有降级策略失败，使用默认价格 1.0！"
+                                    f"这可能影响止损失算，请检查订单簿数据源"
+                                )
+
+                            # 应用计算出的价格
                             self._entry_price = temp_price
                             self._entry_time = now
+
                             logger.warning(
-                                f"🧟 [僵尸激活] {self.symbol}: "
-                                f"同步了持仓 {real_position:.4f} 但丢失入场信息。"
-                                f"临时赋值 EntryPrice={self._entry_price:.6f}, EntryTime=Now"
+                                f"🧟 [僵尸激活完成] {self.symbol}: "
+                                f"同步持仓 {real_position:.4f}, "
+                                f"临时赋值 EntryPrice={self._entry_price:.6f}, EntryTime=Now, "
+                                f"价格来源={'订单簿' if best_ask > 0 or best_bid > 0 else '降级'}"
                             )
 
                     logger.info(
@@ -809,70 +867,129 @@ class ScalperV1(BaseStrategy):
             event (Event): ORDER_FILLED 事件
         """
         try:
-            data = event.data
-            symbol = data.get('symbol', '')
-
-            if symbol != self.symbol:
+            # 🔥 [重构] 步骤 1：验证订单
+            if not self._validate_order_event(event):
                 return
 
+            data = event.data
             side = data.get('side', '').lower()
             filled_size = float(data.get('filled_size', 0))
 
-            # 🔥 [保留] 处理开仓订单成交（买入）
+            # 🔥 [重构] 步骤 2：根据订单类型分发处理
             if self._is_pending_open and side == 'buy':
-                logger.info(f"✅ [开仓成交] {self.symbol}: 解锁开仓锁")
-                self._is_pending_open = False
-                self._maker_order_id = None
-
-                # 🔥 [保留] 增量更新：使用 +=
-                self.local_pos_size += filled_size
-
-                self._position_opened = True
-                self._entry_price = float(data.get('price', 0))
-                self._entry_time = time.time()
-
-                # ✨ [V2 新增] 重置追踪止损
-                self.highest_pnl_pct = 0.0
-
-                logger.info(
-                    f"📊 [开仓成功] {self.symbol} @ {self._entry_price:.2f}, "
-                    f"数量={filled_size:.4f}, 本地持仓={self.local_pos_size:.4f}, "
-                    f"追踪止损已重置"
-                )
-
-            # 🔥 [保留] 处理平仓订单成交（卖出）
+                await self._handle_open_order_filled(data, filled_size)
             elif side == 'sell':
-                # 🔥 [保留] 增量更新：使用 -=
-                self.local_pos_size -= filled_size
-
-                logger.info(
-                    f"📊 [平仓成交] {self.symbol}: 数量={filled_size:.4f}, "
-                    f"本地持仓={self.local_pos_size:.4f}"
-                )
-
-                # 🔥 [保留] 浮点数精度安全检查
-                if abs(self.local_pos_size) < 0.0001:
-                    self.local_pos_size = 0.0
-
-                # 🔥 [保留] 只在持仓接近0时重置标志
-                if abs(self.local_pos_size) < 0.001:
-                    logger.info(f"✅ [持仓归零] {self.symbol}: 平仓完成，重置状态")
-                    self._position_opened = False
-                    self._entry_price = 0.0
-                    self._entry_time = 0.0
-
-                    # ✨ [V2 新增] 重置追踪止损
-                    self.highest_pnl_pct = 0.0
-
-                    # 🔥 [保留] 只在平仓成交时更新冷却时间
-                    self.last_exit_time = time.time()
-                else:
-                    logger.debug(
-                        f"⚠️ [持仓未归零] {self.symbol}: "
-                        f"本地持仓={self.local_pos_size:.4f}，保留开仓状态"
-                    )
+                await self._handle_close_order_filled(data, filled_size)
         except Exception as e:
             logger.error(f"处理订单成交事件失败: {e}", exc_info=True)
+
+    def _validate_order_event(self, event: Event) -> bool:
+        """
+        验证订单事件有效性
+
+        Args:
+            event (Event): ORDER_FILLED 事件
+
+        Returns:
+            bool: 事件是否有效
+        """
+        data = event.data
+        symbol = data.get('symbol', '')
+
+        if symbol != self.symbol:
+            return False
+
+        return True
+
+    async def _handle_open_order_filled(self, data: dict, filled_size: float):
+        """
+        处理开仓订单成交（买入）
+
+        Args:
+            data (dict): 订单数据
+            filled_size (float): 成交数量
+        """
+        logger.info(f"✅ [开仓成交] {self.symbol}: 解锁开仓锁")
+
+        # 🔥 [重构] 步骤 1：更新状态标志
+        self._update_open_status_unlock()
+
+        # 🔥 [重构] 步骤 2：更新持仓数量
+        self._update_position_increment(filled_size)
+
+        # 🔥 [重构] 步骤 3：记录入场信息
+        self._record_entry_info(data, filled_size)
+
+        # 🔥 [重构] 步骤 4：重置追踪止损
+        self._reset_trailing_stop()
+
+    def _update_open_status_unlock(self):
+        """更新开仓状态并解锁"""
+        self._is_pending_open = False
+        self._maker_order_id = None
+
+    def _update_position_increment(self, size: float):
+        """增量更新持仓"""
+        self.local_pos_size += size
+        self._position_opened = True
+
+    def _record_entry_info(self, data: dict, size: float):
+        """记录入场信息"""
+        self._entry_price = float(data.get('price', 0))
+        self._entry_time = time.time()
+
+        logger.info(
+            f"📊 [开仓成功] {self.symbol} @ {self._entry_price:.2f}, "
+            f"数量={size:.4f}, 本地持仓={self.local_pos_size:.4f}, "
+            f"追踪止损已重置"
+        )
+
+    def _reset_trailing_stop(self):
+        """重置追踪止损"""
+        self.highest_pnl_pct = 0.0
+
+    async def _handle_close_order_filled(self, data: dict, filled_size: float):
+        """
+        处理平仓订单成交（卖出）
+
+        Args:
+            data (dict): 订单数据
+            filled_size (float): 成交数量
+        """
+        # 🔥 [重构] 步骤 1：更新持仓数量
+        self.local_pos_size -= filled_size
+
+        logger.info(
+            f"📊 [平仓成交] {self.symbol}: 数量={filled_size:.4f}, "
+            f"本地持仓={self.local_pos_size:.4f}"
+        )
+
+        # 🔥 [重构] 步骤 2：检查是否完全平仓
+        if self._is_position_closed():
+            await self._reset_position_state()
+
+    def _is_position_closed(self) -> bool:
+        """检查持仓是否归零"""
+        # 浮点数精度安全检查
+        if abs(self.local_pos_size) < 0.0001:
+            self.local_pos_size = 0.0
+
+        return abs(self.local_pos_size) < 0.001
+
+    async def _reset_position_state(self):
+        """重置持仓状态（平仓后）"""
+        logger.info(f"✅ [持仓归零] {self.symbol}: 平仓完成，重置状态")
+
+        # 重置标志
+        self._position_opened = False
+        self._entry_price = 0.0
+        self._entry_time = 0.0
+
+        # 重置追踪止损
+        self._reset_trailing_stop()
+
+        # 更新冷却时间
+        self.last_exit_time = time.time()
 
     async def on_order_cancelled(self, event: Event):
         """

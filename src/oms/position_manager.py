@@ -94,24 +94,31 @@ class PositionManager:
         self._sync_threshold = sync_threshold_pct
         self._sync_cooldown = cooldown_seconds
 
+        # 🔥 [P0 修复] 引入异步锁，防止竞态条件
+        # 防止 WebSocket 回调和 REST 同步任务同时修改同一个 symbol 的仓位数据
+        self._position_locks: Dict[str, asyncio.Lock] = {}
+        self._global_lock = asyncio.Lock()  # 用于管理 position_locks 字典本身
+
         logger.info(
             f"PositionManager 初始化: sync_threshold={sync_threshold_pct*100}%, "
-            f"cooldown={cooldown_seconds}s"
+            f"cooldown={cooldown_seconds}s (已启用竞态保护)"
         )
 
-    def update_from_event(self, event: Event):
+    async def update_from_event(self, event: Event):
         """
         根据事件更新持仓
+
+        🔥 [P0 修复] 改为异步方法，支持锁机制
 
         Args:
             event (Event): POSITION_UPDATE 或 ORDER_FILLED 事件
         """
         try:
             if event.type == EventType.POSITION_UPDATE:
-                self._update_position(event.data)
+                await self._update_position(event.data)
 
             elif event.type == EventType.ORDER_FILLED:
-                self._update_position_from_order(event.data)
+                await self._update_position_from_order(event.data)
 
             else:
                 logger.warning(f"不支持的事件类型: {event.type}")
@@ -119,9 +126,12 @@ class PositionManager:
         except Exception as e:
             logger.error(f"更新持仓失败: {e}")
 
-    def _update_position(self, api_position: dict):
+    async def _update_position(self, api_position: dict):
         """
         从 API 持仓更新本地状态（对账逻辑）
+
+        🔥 [P0 修复] 使用异步锁防止竞态条件
+        确保 WebSocket 回调和 REST 同步任务不会同时修改同一个 symbol 的仓位数据
 
         Args:
             api_position (dict): API 返回的持仓数据
@@ -130,50 +140,65 @@ class PositionManager:
         if not symbol:
             return
 
-        size = api_position.get('size', 0)
-        entry_price = api_position.get('entry_price', 0)
-        unrealized_pnl = api_position.get('unrealized_pnl', 0)
-        leverage = api_position.get('leverage', 1)
+        # 🔥 获取或创建 symbol 级别的锁
+        async with self._global_lock:
+            if symbol not in self._position_locks:
+                self._position_locks[symbol] = asyncio.Lock()
+            symbol_lock = self._position_locks[symbol]
 
-        # 判断持仓方向
-        if size > 0:
-            side = 'long'
-        elif size < 0:
-            side = 'short'
-        else:
-            # 持仓为 0，移除
-            if symbol in self._positions:
-                logger.info(f"持仓已平仓: {symbol}")
-                del self._positions[symbol]
+        # 🔥 使用 symbol 级别的锁保护更新操作
+        async with symbol_lock:
+            size = api_position.get('size', 0)
+            entry_price = api_position.get('entry_price', 0)
+            unrealized_pnl = api_position.get('unrealized_pnl', 0)
+            leverage = api_position.get('leverage', 1)
 
-                # 幽灵单防护：撤销所有止损单
-                # 当持仓归零时，如果还有挂着的止损单，可能会变成反向开仓单
-                if self._order_manager:
-                    asyncio.create_task(
-                        self._cancel_stop_loss_orders(symbol)
-                    )
+            # 判断持仓方向
+            if size > 0:
+                side = 'long'
+            elif size < 0:
+                side = 'short'
+            else:
+                # 持仓为 0，移除
+                if symbol in self._positions:
+                    logger.info(f"持仓已平仓: {symbol}")
+                    del self._positions[symbol]
 
-            return
+                    # 幽灵单防护：撤销所有止损单
+                    # 当持仓归零时，如果还有挂着的止损单，可能会变成反向开仓单
+                    if self._order_manager:
+                        asyncio.create_task(
+                            self._cancel_stop_loss_orders(symbol)
+                        )
 
-        # 更新持仓
-        self._positions[symbol] = Position(
-            symbol=symbol,
-            side=side,
-            size=abs(size),
-            entry_price=entry_price,
-            unrealized_pnl=unrealized_pnl,
-            leverage=leverage,
-            raw=api_position
-        )
+                    # 清理锁（可选，防止无限增长）
+                    async with self._global_lock:
+                        if symbol in self._position_locks:
+                            del self._position_locks[symbol]
 
-        logger.debug(
-            f"持仓更新: {symbol} {side} {abs(size):.4f} @ {entry_price:.2f}, "
-            f"PnL: {unrealized_pnl:+.2f}"
-        )
+                return
 
-    def _update_position_from_order(self, order_filled: dict):
+            # 更新持仓
+            self._positions[symbol] = Position(
+                symbol=symbol,
+                side=side,
+                size=abs(size),
+                entry_price=entry_price,
+                unrealized_pnl=unrealized_pnl,
+                leverage=leverage,
+                raw=api_position
+            )
+
+            logger.debug(
+                f"持仓更新: {symbol} {side} {abs(size):.4f} @ {entry_price:.2f}, "
+                f"PnL: {unrealized_pnl:+.2f}"
+            )
+
+    async def _update_position_from_order(self, order_filled: dict):
         """
         从订单成交更新持仓（本地预计算）
+
+        🔥 [P0 修复] 改为异步方法，使用异步锁防止竞态条件
 
         Args:
             order_filled (dict): 订单成交数据
@@ -186,80 +211,96 @@ class PositionManager:
         if not symbol or filled_size <= 0:
             return
 
-        # 获取当前持仓
-        current_pos = self._positions.get(symbol)
+        # 🔥 获取或创建 symbol 级别的锁
+        async with self._global_lock:
+            if symbol not in self._position_locks:
+                self._position_locks[symbol] = asyncio.Lock()
+            symbol_lock = self._position_locks[symbol]
 
-        if side == 'buy':
-            # 买入：增加多头持仓或减少空头持仓
-            if current_pos:
-                if current_pos.side == 'short':
-                    # 减少空头
-                    current_pos.size -= filled_size
-                    current_pos.unrealized_pnl = self._calculate_pnl(
-                        current_pos, price
-                    )
-                    if current_pos.size <= 0:
-                        del self._positions[symbol]
-                else:
-                    # 增加多头，重新计算均价
-                    total_value = (current_pos.size * current_pos.entry_price +
-                                filled_size * price)
-                    current_pos.size += filled_size
-                    current_pos.entry_price = total_value / current_pos.size
-                    current_pos.unrealized_pnl = self._calculate_pnl(
-                        current_pos, price
-                    )
-            else:
-                # 新开多头
-                self._positions[symbol] = Position(
-                    symbol=symbol,
-                    side='long',
-                    size=filled_size,
-                    entry_price=price,
-                    unrealized_pnl=0.0
-                )
+        # 🔥 使用 symbol 级别的锁保护更新操作
+        async with symbol_lock:
+            # 获取当前持仓
+            current_pos = self._positions.get(symbol)
 
-        elif side == 'sell':
-            # 卖出：增加空头持仓或减少多头持仓
-            if current_pos:
-                if current_pos.side == 'long':
-                    # 减少多头
-                    current_pos.size -= filled_size
-                    current_pos.unrealized_pnl = self._calculate_pnl(
-                        current_pos, price
-                    )
-                    if current_pos.size <= 0:
-                        # 计算已实现盈亏
-                        realized_pnl = self._calculate_pnl(current_pos, price)
-                        del self._positions[symbol]
-                        logger.info(
-                            f"平仓已实现盈亏: {symbol} {realized_pnl:+.2f} USDT"
+            if side == 'buy':
+                # 买入：增加多头持仓或减少空头持仓
+                if current_pos:
+                    if current_pos.side == 'short':
+                        # 减少空头
+                        current_pos.size -= filled_size
+                        current_pos.unrealized_pnl = self._calculate_pnl(
+                            current_pos, price
                         )
-                        # TODO: 推送 REALIZED_PNL 事件
+                        if current_pos.size <= 0:
+                            del self._positions[symbol]
+                            # 清理锁
+                            async with self._global_lock:
+                                if symbol in self._position_locks:
+                                    del self._position_locks[symbol]
+                    else:
+                        # 增加多头，重新计算均价
+                        total_value = (current_pos.size * current_pos.entry_price +
+                                    filled_size * price)
+                        current_pos.size += filled_size
+                        current_pos.entry_price = total_value / current_pos.size
+                        current_pos.unrealized_pnl = self._calculate_pnl(
+                            current_pos, price
+                        )
                 else:
-                    # 增加空头，重新计算均价
-                    total_value = (current_pos.size * current_pos.entry_price +
-                                filled_size * price)
-                    current_pos.size += filled_size
-                    current_pos.entry_price = total_value / current_pos.size
-                    current_pos.unrealized_pnl = self._calculate_pnl(
-                        current_pos, price
+                    # 新开多头
+                    self._positions[symbol] = Position(
+                        symbol=symbol,
+                        side='long',
+                        size=filled_size,
+                        entry_price=price,
+                        unrealized_pnl=0.0
                     )
-            else:
-                # 新开空头
-                self._positions[symbol] = Position(
-                    symbol=symbol,
-                    side='short',
-                    size=filled_size,
-                    entry_price=price,
-                    unrealized_pnl=0.0
-                )
 
-        # 🔧 修复 price=None 格式化错误：处理市价单
-        price_str = f"{price:.2f}" if price is not None else "MARKET"
-        logger.debug(
-            f"订单成交更新持仓: {symbol} {side} {filled_size:.4f} @ {price_str}"
-        )
+            elif side == 'sell':
+                # 卖出：增加空头持仓或减少多头持仓
+                if current_pos:
+                    if current_pos.side == 'long':
+                        # 减少多头
+                        current_pos.size -= filled_size
+                        current_pos.unrealized_pnl = self._calculate_pnl(
+                            current_pos, price
+                        )
+                        if current_pos.size <= 0:
+                            # 计算已实现盈亏
+                            realized_pnl = self._calculate_pnl(current_pos, price)
+                            del self._positions[symbol]
+                            logger.info(
+                                f"平仓已实现盈亏: {symbol} {realized_pnl:+.2f} USDT"
+                            )
+                            # TODO: 推送 REALIZED_PNL 事件
+                            # 清理锁
+                            async with self._global_lock:
+                                if symbol in self._position_locks:
+                                    del self._position_locks[symbol]
+                    else:
+                        # 增加空头，重新计算均价
+                        total_value = (current_pos.size * current_pos.entry_price +
+                                    filled_size * price)
+                        current_pos.size += filled_size
+                        current_pos.entry_price = total_value / current_pos.size
+                        current_pos.unrealized_pnl = self._calculate_pnl(
+                            current_pos, price
+                        )
+                else:
+                    # 新开空头
+                    self._positions[symbol] = Position(
+                        symbol=symbol,
+                        side='short',
+                        size=filled_size,
+                        entry_price=price,
+                        unrealized_pnl=0.0
+                    )
+
+            # 🔧 修复 price=None 格式化错误：处理市价单
+            price_str = f"{price:.2f}" if price is not None else "MARKET"
+            logger.debug(
+                f"订单成交更新持仓: {symbol} {side} {filled_size:.4f} @ {price_str}"
+            )
 
     def _calculate_pnl(self, position: Position, current_price: float) -> float:
         """

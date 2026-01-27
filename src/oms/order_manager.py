@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from ..core.event_types import Event, EventType
 from ..gateways.base_gateway import RestGateway
 from ..risk.pre_trade import PreTradeCheck
+from ..risk.risk_guardian import RiskGuardian
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ class OrderManager:
         rest_gateway: RestGateway,
         event_bus=None,
         pre_trade_check: Optional[PreTradeCheck] = None,
-        capital_commander=None
+        capital_commander=None,
+        risk_guardian: Optional[RiskGuardian] = None
     ):
         """
         初始化订单管理器
@@ -51,13 +53,15 @@ class OrderManager:
         Args:
             rest_gateway (RestGateway): REST API 网关
             event_bus: 事件总线实例
-            pre_trade_check (PreTradeCheck): 交易前检查器
+            pre_trade_check (PreTradeCheck): 交易前检查器（已弃用，使用 risk_guardian）
             capital_commander: 资金指挥官（用于购买力检查）
+            risk_guardian (RiskGuardian): 风控守卫（统一风控入口）
         """
         self._rest_gateway = rest_gateway
         self._event_bus = event_bus
-        self._pre_trade_check = pre_trade_check or PreTradeCheck()
+        self._pre_trade_check = pre_trade_check or PreTradeCheck()  # 保留兼容性
         self._capital_commander = capital_commander
+        self._risk_guardian = risk_guardian  # 🔥 新增：统一风控入口
 
         # 本地订单 {order_id: Order}
         self._orders: Dict[str, Order] = {}
@@ -122,51 +126,87 @@ class OrderManager:
                 price_str = f"{calc_price:.5f}"
             except:
                 price_str = str(calc_price)
-        if amount_usdt > 0:
-            # 🔥 修复：判断是否为紧急平仓（市价单），传递bypass参数
-            is_emergency_close = (order_type == 'market' or
-                                  kwargs.get('is_emergency_close', False))
 
-            risk_passed, risk_reason = self._pre_trade_check.check({
-                'symbol': symbol,
-                'side': side,
-                'size': size,
-                'price': price if price else 0,
-                'amount_usdt': amount_usdt,
-                'order_id': f"{symbol}_{time.time()}",
-                'bypass': is_emergency_close  # 🔥 传递bypass参数
-            })
+        # 🔥 [P0 修复] 使用 RiskGuardian 统一风控入口
+        if self._risk_guardian:
+            # 判断是否为紧急平仓
+            is_emergency_close = (
+                order_type == 'market' or
+                kwargs.get('is_emergency_close', False)
+            )
 
-            if not risk_passed:
+            # 统一风控验证
+            validation_result = self._risk_guardian.validate_order(
+                symbol=symbol,
+                side=side,
+                size=size,
+                price=price if price else calc_price,
+                strategy_id=strategy_id,
+                stop_loss_price=stop_loss_price,
+                bypass=is_emergency_close
+            )
+
+            if not validation_result.is_passed:
                 # 🔥 降级：风控拦截是正常行为，改为 DEBUG
-                logger.debug(f"风控拒绝下单: {risk_reason}")
+                logger.debug(
+                    f"🛑 [RiskGuardian] 风控拒绝下单: {validation_result.reason}"
+                )
                 return None
 
-        # 2. 🔥 [修复] 资金检查（CapitalCommander：购买力）
-        # 在调用 Gateway 之前检查资金，避免订单被交易所拒绝
-        if self._capital_commander and amount_usdt > 0:
-            try:
-                # 注意：需要传入 symbol 和 side 以支持平仓检测
-                has_power = self._capital_commander.check_buying_power(
-                    strategy_id=strategy_id,
-                    amount_usdt=amount_usdt,
-                    symbol=symbol,
-                    side=side
+            # 🎉 风控通过，使用建议仓位（如果有调整）
+            suggested_size = validation_result.suggested_size
+            if suggested_size != size:
+                logger.info(
+                    f"💡 [RiskGuardian] 仓位调整: {size:.4f} -> {suggested_size:.4f}"
                 )
+                size = suggested_size
+        else:
+            # 🔥 兼容性：如果没有 RiskGuardian，使用旧的 PreTradeCheck
+            if amount_usdt > 0:
+                # 🔥 修复：判断是否为紧急平仓（市价单），传递bypass参数
+                is_emergency_close = (order_type == 'market' or
+                                      kwargs.get('is_emergency_close', False))
 
-                if not has_power:
-                    logger.warning(
-                        f"🚫 资金检查未通过 [{strategy_id}]: "
-                        f"{symbol} {side} {size:.4f}, "
-                        f"amount={amount_usdt:.2f} USDT"
-                    )
+                risk_passed, risk_reason = self._pre_trade_check.check({
+                    'symbol': symbol,
+                    'side': side,
+                    'size': size,
+                    'price': price if price else 0,
+                    'amount_usdt': amount_usdt,
+                    'order_id': f"{symbol}_{time.time()}",
+                    'bypass': is_emergency_close  # 🔥 传递bypass参数
+                })
+
+                if not risk_passed:
+                    # 🔥 降级：风控拦截是正常行为，改为 DEBUG
+                    logger.debug(f"风控拒绝下单: {risk_reason}")
                     return None
-            except Exception as e:
-                # 资金检查失败时，记录警告但继续尝试
-                logger.warning(
-                    f"⚠️  资金检查异常，继续下单: {e} "
-                    f"(strategy={strategy_id}, symbol={symbol})"
-                )
+
+            # 2. 🔥 [修复] 资金检查（CapitalCommander：购买力）
+            # 在调用 Gateway 之前检查资金，避免订单被交易所拒绝
+            if self._capital_commander and amount_usdt > 0:
+                try:
+                    # 注意：需要传入 symbol 和 side 以支持平仓检测
+                    has_power = self._capital_commander.check_buying_power(
+                        strategy_id=strategy_id,
+                        amount_usdt=amount_usdt,
+                        symbol=symbol,
+                        side=side
+                    )
+
+                    if not has_power:
+                        logger.warning(
+                            f"🚫 资金检查未通过 [{strategy_id}]: "
+                            f"{symbol} {side} {size:.4f}, "
+                            f"amount={amount_usdt:.2f} USDT"
+                        )
+                        return None
+                except Exception as e:
+                    # 资金检查失败时，记录警告但继续尝试
+                    logger.warning(
+                        f"⚠️  资金检查异常，继续下单: {e} "
+                        f"(strategy={strategy_id}, symbol={symbol})"
+                    )
 
         # 3. 其他风控检查（待实现）
         # - 检查持仓限制
