@@ -82,10 +82,15 @@ class ScalperV1Config:
     max_position_size: float = 4.0         # 最大持仓限制（防止异常）
     sync_interval_seconds: float = 15.0      # 持仓同步间隔（秒）
     close_lock_timeout_seconds: float = 10.0  # 平仓锁超时（秒）
-    pending_open_timeout_seconds: float = 60.0  # 开仓请求超时（秒）
+    pending_open_timeout_seconds: float = 5.0   # 🔥 [修复] 开仓请求超时（秒）- 降低到5秒
     min_stop_distance_pct: float = 0.005   # 最小止损距离 0.5%（强制修正）
     rejection_cooldown_seconds: float = 1.0   # 风控拒绝冷却（秒）
     volatility_atr_multiplier: float = 1.5    # ATR 止损倍数
+    # 🔥 [新增] 插队防抖动配置
+    min_order_life_seconds: float = 2.0     # 🔥 最小挂单存活时间（秒）- 防止频繁撤单重挂
+    min_chasing_distance_pct: float = 0.0005  # 🔥 最小插队距离 0.05%（tick_size * 5）
+    # 🔥 [新增] 模拟盘配置
+    is_paper_trading: bool = False       # 🔥 是否为模拟盘（模拟盘时降低检测频率）
 
 
 class ScalperV1(BaseStrategy):
@@ -212,7 +217,8 @@ class ScalperV1(BaseStrategy):
         self._is_pending_open = False  # 是否有在途的开仓请求
 
         # [保留] 开仓锁超时保护（防止事件丢失导致死锁）
-        self._pending_open_timeout = 60.0  # 60秒无响应则强制解锁
+        # 🔥 [修复] 使用配置值，默认 5 秒
+        self._pending_open_timeout = self.config.pending_open_timeout_seconds if hasattr(self.config, 'pending_open_timeout_seconds') else 5.0
 
         # [保留] 平仓锁机制（防止"机枪平仓"重复下单）- 升级为超时锁
         self._last_close_time = 0.0  # 上次平仓时间戳（用于防止连发）
@@ -443,6 +449,12 @@ class ScalperV1(BaseStrategy):
             tick = event.data
             now = time.time()
 
+            # 🔥 [新增] 模拟盘优化：降低检测频率
+            # 如果是模拟盘，降低同步频率为 30 秒（避免频繁查询）
+            sync_interval = self._sync_interval
+            if self.config.is_paper_trading:
+                sync_interval = 30.0  # 模拟盘降低检测频率
+
             # 定义基准价格（无条件定义，任何逻辑分支都无法跳过）
             best_bid = float(tick.get('bid', 0)) if 'bid' in tick else 0.0
             best_ask = float(tick.get('ask', 0)) if 'ask' in tick else 0.0
@@ -489,7 +501,7 @@ class ScalperV1(BaseStrategy):
                 self.local_pos_size = 0.0
 
             # 🔥 [保留] 实现 REST API 强制同步
-            if now - self._last_sync_time > self._sync_interval:
+            if now - self._last_sync_time > sync_interval:
                 self._last_sync_time = now
 
                 real_position = 0.0
@@ -1205,8 +1217,9 @@ class ScalperV1(BaseStrategy):
         Returns:
             bool: 下单是否成功
         """
+        # 🔥 [修复] 改为 debug 级别日志，防止 I/O 拥塞
         if self._is_pending_open:
-            logger.warning(
+            logger.debug(
                 f"🚫 [风控拦截] {self.symbol}: 上一个开仓请求尚未结束，拒绝重复开仓"
             )
             return False
@@ -1251,7 +1264,7 @@ class ScalperV1(BaseStrategy):
 
     async def _check_chasing_conditions(self, current_price: float, now: float):
         """
-        检查追单条件（V2: 插队追单模式）
+        🔥 [新增] 检查追单条件（V2: 插队追单模式）- 优化防抖动
 
         Args:
             current_price (float): 当前价格
@@ -1272,6 +1285,17 @@ class ScalperV1(BaseStrategy):
 
         if self._maker_order_id is None or self._maker_order_price <= 0:
             logger.debug(f"🛑 [追单跳过] {self.symbol}: 无有效挂单")
+            return
+
+        # 🔥 [新增] 最小挂单存活时间检查（防抖动）
+        # 如果订单存活时间 < 最小值（2秒），禁止撤单重挂
+        order_age = now - self._maker_order_time if self._maker_order_time else 0
+        if order_age < self.config.min_order_life_seconds:
+            logger.debug(
+                f"🛑 [追单跳过] {self.symbol}: "
+                f"订单存活时间={order_age:.2f}s < 最小值 {self.config.min_order_life_seconds}s，"
+                f"禁止频繁撤单重挂"
+            )
             return
 
         # 🔥 保留 Pre-Check
@@ -1298,9 +1322,21 @@ class ScalperV1(BaseStrategy):
             logger.debug(f"🛑 [追单跳过] {self.symbol}: 订单簿数据无效")
             return
 
-        # 🔥 [新增 DEBUG] 日志 3: 检查是否需要插队
+        # 🔥 [新增] 最小插队距离检查（防抖动）
+        # 只在价格偏差 > tick_size * 5 时才触发插队
+        min_chasing_distance = self.config.tick_size * 5
         if best_bid > self._maker_order_price:
             chase_distance = abs(best_bid - self._maker_order_initial_price) / self._maker_order_initial_price
+
+            # 如果距离太小（< tick_size * 5），跳过插队
+            if chase_distance < self.config.min_chasing_distance_pct:
+                logger.debug(
+                    f"🛑 [追单跳过] {self.symbol}: "
+                    f"价格偏差={chase_distance*100:.3f}% "
+                    f"< 最小阈值 {self.config.min_chasing_distance_pct*100:.3f}%，"
+                    f"避免微小波动无效撤单重挂"
+                )
+                return
 
             logger.debug(
                 f"🔍 [追单检查 3] {self.symbol}: "
