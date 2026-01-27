@@ -83,7 +83,7 @@ class WsBaseGateway:
 
         # 🔥 新增：看门狗（Watchdog）- 防止假死
         self._last_msg_time = 0  # 最后收到消息的时间（包括 ping、pong 和数据推送）
-        self._watchdog_timeout = 30  # 看门狗超时时间（秒）
+        self._watchdog_timeout = 60  # 🔥 [不坏金身] 看门狗超时时间提高到 60 秒（更宽松）
 
         self._logger.info(f"WebSocket 基类初始化: {name}, url={ws_url}")
 
@@ -254,117 +254,183 @@ class WsBaseGateway:
 
     async def _message_loop(self):
         """
-        消息接收循环（修复阻塞问题）
+        🔥 [不坏金身] 消息接收循环（无限递归）
 
-        🔥 关键修复：
-        - 使用 try...finally 结构
-        - 在 finally 块中，不直接调用 connect()，而是通过 _reconnect() 触发重连
-        - 避免阻塞消息循环
+        核心特性：
+        - 持续接收 WebSocket 消息，直到系统主动关闭
+        - 更新看门狗时间戳（每次收到消息都更新）
         - 拦截心跳响应 "pong"，避免 JSON 解析错误
+        - 任何异常都触发重连，但接收循环永不停止
+        - 无限递归：使用 while True + 异常捕获 + 触发重连
+
+        修复内容：
+        - 连接错误时自动触发重连，而不是停止循环
+        - 超时错误时也触发重连
+        - 任何未捕获异常都记录完整堆栈并触发重连
+        - 消息接收循环永不停止，除非系统主动关闭
         """
-        try:
-            self._logger.info("消息接收循环已启动")
+        self._logger.info("📨 [消息接收循环] 已启动（不坏金身模式）")
 
-            while self._running and self._connected:
-                try:
-                    msg = await asyncio.wait_for(
-                        self._ws.receive(),
-                        timeout=30.0
-                    )
-
-                    # 🔥 修复：更新看门狗时间戳（每次收到消息都更新）
-                    # 包括 ping、pong 和数据推送
-                    self._last_msg_time = time.time()
-
-                    # 更新最后心跳时间（兼容旧代码）
-                    self._last_heartbeat = time.time()
-
-                    # 🔥 修复：拦截心跳响应 "pong"
-                    # OKX 服务器回复的心跳响应是纯文本字符串 "pong"，而不是 JSON 格式
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        data = msg.data
-                        if data == 'pong':
-                            self._logger.debug("💓 收到心跳响应 (pong)")
-                            continue  # 直接跳过，不进行 JSON 解析和子类处理
-
-                    # 处理消息
-                    await self._on_message(msg)
-
-                except asyncio.TimeoutError:
-                    self._logger.warning("接收消息超时，可能连接已断开")
-                    self._connected = False
+        # 🔥 无限递归消息接收循环（永不停止）
+        while True:
+            try:
+                # 检查系统是否正在关闭
+                if not self._running:
+                    self._logger.info("📨 [消息接收循环] 系统正在关闭，退出接收循环")
                     break
-                except asyncio.CancelledError:
-                    self._logger.info("消息接收循环被取消")
-                    break
-                except (ClientError, aiohttp.ClientConnectionError, aiohttp.ServerDisconnectedError) as e:
-                    # 🛡️ [Layer 2: 健壮循环] 记录完整 traceback，防止静默失败
-                    self._logger.error(f"❌ WebSocket 连接错误: {e}", exc_info=True)
-                    self._connected = False
-                    break  # ✅ 强制退出接收循环，触发重连
-                except Exception as e:
-                    # 🛡️ [Layer 2: 健壮循环] 记录完整 traceback，防止静默失败
-                    self._logger.error(f"❌ 消息循环异常: {e}", exc_info=True)
-                    self._connected = False
-                    await asyncio.sleep(1)  # 🔥 防止未知错误导致瞬间日志爆炸
-                    break  # ✅ 遇到未知错误也强制退出，触发重连
 
-        finally:
-            self._logger.info("消息接收循环已停止")
+                # 检查 WebSocket 是否有效
+                if self._ws is None or self._ws.closed:
+                    self._logger.warning("📨 [消息接收循环] WebSocket 未连接，等待重连...")
+                    await asyncio.sleep(5)
+                    continue
 
-            # 🔥 关键修复：连接断开后，触发重连（非阻塞）
-            if self._running:
-                # 不直接调用 connect()，而是创建任务触发重连
-                # 这样不会阻塞 finally 块
-                asyncio.create_task(self._reconnect())
+                # 🔥 接收消息（带超时）
+                msg = await asyncio.wait_for(
+                    self._ws.receive(),
+                    timeout=30.0
+                )
+
+                # 🔥 更新看门狗时间戳（每次收到消息都更新）
+                # 包括 ping、pong 和数据推送
+                self._last_msg_time = time.time()
+
+                # 更新最后心跳时间（兼容旧代码）
+                self._last_heartbeat = time.time()
+
+                # 🔥 拦截心跳响应 "pong"
+                # OKX 服务器回复的心跳响应是纯文本字符串 "pong"，而不是 JSON 格式
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = msg.data
+                    if data == 'pong':
+                        self._logger.debug("💓 [心跳响应] 收到 pong")
+                        continue  # 直接跳过，不进行 JSON 解析和子类处理
+
+                # 处理消息
+                await self._on_message(msg)
+
+            except asyncio.TimeoutError:
+                self._logger.warning("📨 [超时] 接收消息超时 30 秒，触发重连")
+                # 超时触发重连，但消息接收循环继续运行
+                await self.disconnect()
+                await asyncio.sleep(5)
+                continue
+
+            except asyncio.CancelledError:
+                self._logger.info("📨 [消息接收循环] 任务被取消（系统关闭），退出")
+                break
+
+            except (ClientError, aiohttp.ClientConnectionError, aiohttp.ServerDisconnectedError) as e:
+                # 🔥 [关键修复] 记录完整 traceback，防止静默失败
+                self._logger.error(
+                    f"📨 [连接错误] {type(e).__name__}: {e}",
+                    exc_info=True
+                )
+                # 连接错误触发重连，但消息接收循环继续运行
+                await self.disconnect()
+                await asyncio.sleep(5)
+                continue
+
+            except Exception as e:
+                # 🔥 [关键修复] 捕获所有未处理异常，记录完整堆栈
+                self._logger.error(
+                    f"📨 [未捕获异常] {type(e).__name__}: {e}",
+                    exc_info=True
+                )
+                # 任何异常都触发重连，但消息接收循环永不停止
+                await self.disconnect()
+                await asyncio.sleep(5)
+                continue
+
+        self._logger.info("📨 [消息接收循环] 已停止")
 
     async def _heartbeat_loop(self):
         """
-        心跳发送循环（带看门狗机制）
+        🔥 [不坏金身] 心跳发送循环（无限递归）
 
-        每隔一定时间发送心跳包，保持连接活跃。
-        同时检查看门狗，如果超时未收到任何消息，强制重连。
+        核心特性：
+        - 每隔一定时间发送心跳包，保持连接活跃
+        - 看门狗检查：如果超过 60 秒未收到任何消息，强制重连
+        - 心跳发送失败：触发重连，而不是停止任务
+        - 无限递归：心跳任务永远不会停止，除非系统主动关闭
+
+        修复内容：
+        - 心跳发送失败时自动触发重连，而不是停止循环
+        - 看门狗超时从 30 秒提高到 60 秒（更宽松）
+        - 无限递归连接：使用 while True + 异常捕获 + 延迟重连
         """
-        try:
-            self._logger.info("心跳循环已启动")
+        self._logger.info("💓 [心跳循环] 已启动（不坏金身模式）")
 
-            while self._running and self._ws is not None and not self._ws.closed:
-                # 🔥 修复：看门狗检查（防止假死）
-                # 如果超过 30 秒没有收到任何消息（包括 ping、pong 和数据推送），强制重连
+        # 🔥 无限递归心跳循环（永不停止）
+        while True:
+            try:
+                # 检查系统是否正在关闭
+                if not self._running:
+                    self._logger.info("💓 [心跳循环] 系统正在关闭，退出心跳循环")
+                    break
+
+                # 检查 WebSocket 是否有效
+                if self._ws is None or self._ws.closed:
+                    self._logger.warning("💓 [心跳循环] WebSocket 未连接，等待重连...")
+                    await asyncio.sleep(5)
+                    continue
+
+                # 🔥 [看门狗] 检查最后收到消息的时间
+                # 如果超过 60 秒没有收到任何消息（包括 ping、pong 和数据推送），强制重连
                 time_since_last_msg = time.time() - self._last_msg_time
                 if time_since_last_msg > self._watchdog_timeout:
                     self._logger.error(
-                        f"❌ [看门狗超时] {time_since_last_msg:.1f}秒未收到数据，"
+                        f"💓 [看门狗触发] {time_since_last_msg:.1f}秒未收到任何数据，"
                         f"连接可能已假死，强制重连..."
                     )
-                    # 强制断开，触发重连
+                    # 强制断开，触发重连（心跳循环继续运行）
                     await self.disconnect()
-                    break
+                    # 等待重连完成
+                    await asyncio.sleep(5)
+                    continue
 
+                # 心跳间隔等待
                 await asyncio.sleep(self._heartbeat_interval)
 
+                # 再次检查（等待期间可能连接已断开）
                 if not self._running or self._ws is None or self._ws.closed:
-                    break
+                    self._logger.debug("💓 [心跳循环] 连接状态变化，跳过本次心跳")
+                    continue
 
+                # 🔥 发送心跳（使用 aiohttp 的 send_str）
                 try:
-                    # 发送心跳（aiohttp 使用 send_str）
                     await self._ws.send_str("ping")
-                    self._logger.debug("心跳已发送")
+                    self._logger.debug("💓 [心跳] ping 已发送")
 
                 except ClientError as e:
-                    self._logger.error(f"心跳发送失败: {e}")
-                    # 心跳发送失败，触发重连
-                    break
-                except Exception as e:
-                    self._logger.error(f"心跳发送失败: {e}")
-                    break
+                    self._logger.error(f"💓 [心跳失败] {type(e).__name__}: {e}")
+                    # 心跳发送失败，触发重连，但心跳循环继续运行
+                    await self.disconnect()
+                    await asyncio.sleep(5)
+                    continue
 
-        except asyncio.CancelledError:
-            self._logger.info("心跳循环被取消")
-        except Exception as e:
-            self._logger.error(f"心跳循环异常: {e}", exc_info=True)
-        finally:
-            self._logger.info("心跳循环已停止")
+                except Exception as e:
+                    self._logger.error(f"💓 [心跳失败] 未捕获异常: {e}", exc_info=True)
+                    # 任何异常都触发重连，但心跳循环继续运行
+                    await self.disconnect()
+                    await asyncio.sleep(5)
+                    continue
+
+            except asyncio.CancelledError:
+                self._logger.info("💓 [心跳循环] 任务被取消（系统关闭），退出")
+                break
+
+            except Exception as e:
+                # 🔥 [关键修复] 捕获所有未处理异常，记录完整堆栈
+                self._logger.error(
+                    f"💓 [心跳循环] 未捕获异常，继续运行: {e}",
+                    exc_info=True
+                )
+                # 等待 5 秒后继续（心跳循环永不停止）
+                await asyncio.sleep(5)
+                continue
+
+        self._logger.info("💓 [心跳循环] 已停止")
 
     async def _reconnect(self):
         """

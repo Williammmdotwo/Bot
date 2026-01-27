@@ -91,6 +91,8 @@ class ScalperV1Config:
     min_chasing_distance_pct: float = 0.0005  # 🔥 最小插队距离 0.05%（tick_size * 5）
     # 🔥 [新增] 模拟盘配置
     is_paper_trading: bool = False       # 🔥 是否为模拟盘（模拟盘时降低检测频率）
+    aggressive_maker_spread_ticks: float = 2.0  # 🔥 [新增] Aggressive Maker 触发阈值（2 Ticks）
+    aggressive_maker_price_offset: float = 1.0  # 🔥 [新增] Aggressive Maker 价格偏移（1 Tick）
 
 
 class ScalperV1(BaseStrategy):
@@ -1097,15 +1099,48 @@ class ScalperV1(BaseStrategy):
                 )
                 return
 
-            # 6. 计算 Maker 挂单价格（插队机制）
-            # 使用 Best Bid（V2: 更激进，直接在 Best Bid 挂单）
-            maker_price = best_bid
+            # 6. 🔥 [优化] Aggressive Maker 模式：根据 Spread 动态调整挂单价格
+            # 逻辑：
+            # - 模拟盘（is_paper_trading）：挂中间价（Mid Price），确保快速撮合
+            # - 实盘 Spread > 2 Ticks：挂在 Best Bid + 1 Tick（Aggressive），获得更高优先权
+            # - 实盘 Spread <= 2 Ticks：挂在 Best Bid（Conservative），减少无效撤单
 
-            logger.info(
-                f"📊 [狙击挂单] {self.symbol}: "
+            if self.config.is_paper_trading:
+                # 🔥 [模拟盘喂单] 挂中间价（Mid Price）
+                maker_price = (best_bid + best_ask) / 2.0
+                logger.info(
+                    f"🎯 [模拟盘喂单] {self.symbol}: "
+                    f"挂中间价={maker_price:.6f}, "
+                    f"Best Bid={best_bid:.6f}, Best Ask={best_ask:.6f}"
+                )
+            else:
+                # 🔥 [Aggressive Maker] 检查 Spread 是否 > 2 Ticks
+                spread_ticks = (best_ask - best_bid) / self.tick_size
+
+                if spread_ticks > 2.0:
+                    # Spread 较大，使用 Aggressive 策略：Best Bid + 1 Tick
+                    maker_price = best_bid + self.tick_size
+                    logger.info(
+                        f"⚡ [Aggressive Maker] {self.symbol}: "
+                        f"Spread={spread_ticks:.1f} Ticks > 2, "
+                        f"挂在 Best Bid+1={maker_price:.6f} "
+                        f"(原 Best Bid={best_bid:.6f})"
+                    )
+                else:
+                    # Spread 较小，使用 Conservative 策略：Best Bid
+                    maker_price = best_bid
+                    logger.info(
+                        f"🛡️ [Conservative Maker] {self.symbol}: "
+                        f"Spread={spread_ticks:.1f} Ticks <= 2, "
+                        f"挂在 Best Bid={maker_price:.6f}"
+                    )
+
+            logger.debug(
+                f"📊 [挂单详情] {self.symbol}: "
                 f"Best Bid={best_bid:.6f}, Best Ask={best_ask:.6f}, "
                 f"Spread={spread_pct*100:.4f}%, "
-                f"挂单价格={maker_price:.6f}"
+                f"挂单价格={maker_price:.6f}, "
+                f"模式={'模拟盘喂单' if self.config.is_paper_trading else ('Aggressive' if spread_ticks > 2.0 else 'Conservative')}"
             )
 
             # 7. 计算止损价格（基于波动率）
