@@ -605,7 +605,9 @@ class CapitalCommander:
                 symbol_exposure = self._position_manager.get_symbol_exposure(symbol)
 
             total_symbol_exposure = symbol_exposure + nominal_value
-            symbol_exposure_ratio = total_symbol_exposure / account_equity_dec.total if account_equity_dec.total > 0 else 0
+            # 🔥 [修复] 将 total_symbol_exposure 转换为 Decimal，避免类型不匹配
+            total_symbol_exposure_dec = Decimal(str(total_symbol_exposure))
+            symbol_exposure_ratio = float(total_symbol_exposure_dec / account_equity_dec) if account_equity_dec > 0 else 0
 
             # ✨ 调试日志：打印当前使用的 limit 值
             logger.debug(
