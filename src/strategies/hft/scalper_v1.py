@@ -471,6 +471,28 @@ class ScalperV1(BaseStrategy):
             if self.config.is_paper_trading:
                 sync_interval = 30.0  # 模拟盘降低检测频率
 
+            # 🔥 [Fix 50 - Auto-Relaxation] 模拟盘风控放宽（只在内存中动态覆盖）
+            # 注意：不要修改配置文件，只在本次 tick 中临时覆盖
+            # 模拟盘流动性差且撮合机制迟钝，需要放宽风控限制
+            original_spread_threshold = self.config.spread_threshold_pct
+            original_chase_threshold = self.config.min_chasing_distance_pct
+
+            if self.config.is_paper_trading:
+                # 模拟盘：临时放宽限制
+                self.config.spread_threshold_pct = 0.05  # 5% 点差（防止 2.0% 价差被拦截）
+                self.config.min_chasing_distance_pct = 0.02  # 2% 追单距离（允许更大范围追单）
+                logger.debug(
+                    f"🧪 [模拟盘风控] {self.symbol}: "
+                    f"临时放宽限制: spread_threshold=5%, "
+                    f"min_chasing_distance=2% "
+                    f"(原始值: spread={original_spread_threshold_pct*100:.2f}%, "
+                    f"chase={original_chase_threshold_pct*100:.2f}%)"
+                )
+            else:
+                # 实盘：恢复原始限制
+                self.config.spread_threshold_pct = original_spread_threshold_pct
+                self.config.min_chasing_distance_pct = original_chase_threshold_pct
+
             # 定义基准价格（无条件定义，任何逻辑分支都无法跳过）
             best_bid = float(tick.get('bid', 0)) if 'bid' in tick else 0.0
             best_ask = float(tick.get('ask', 0)) if 'ask' in tick else 0.0
@@ -1030,6 +1052,39 @@ class ScalperV1(BaseStrategy):
         # 🔥 [重构] 步骤 2：检查是否完全平仓
         if self._is_position_closed():
             await self._reset_position_state()
+
+    def _get_execution_price(self, side: str, best_bid: float, best_ask: float) -> float:
+        """
+        🔥 [Fix 50 - Execution Policy Isolation] 获取执行价格
+
+        根据模拟盘/实盘模式返回不同的挂单策略：
+
+        Args:
+            side (str): 交易方向 'buy' 或 'sell'
+            best_bid (float): 最优买价
+            best_ask (float): 最优卖价
+
+        Returns:
+            float: 执行价格
+        """
+        # 🔥 [模拟盘特权模式] 激进执行策略
+        if self.config.is_paper_trading:
+            # 模拟盘：买方挂在 BestAsk，卖方挂在 BestBid（激进吃单）
+            if side == 'buy':
+                logger.info(
+                    f"🎯 [模拟盘喂单] {self.symbol}: "
+                    f"买方激进吃单，挂 BestAsk={best_ask:.6f}"
+                )
+                return best_ask
+            else:
+                logger.info(
+                    f"🎯 [模拟盘喂单] {self.symbol}: "
+                    f"卖方激进吃单，挂 BestBid={best_bid:.6f}"
+                )
+                return best_bid
+        else:
+            # 🔥 [实盘标准模式] Maker 逻辑：买方挂 BestBid，卖方挂 BestAsk
+            return best_bid if side == 'buy' else best_ask
 
     def _is_position_closed(self) -> bool:
         """检查持仓是否归零"""
