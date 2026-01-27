@@ -15,7 +15,8 @@ import asyncio
 import logging
 from typing import Callable, Dict, List, Any, Optional
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import count
 from .event_types import Event, EventType
 
 logger = logging.getLogger(__name__)
@@ -36,15 +37,38 @@ class EventPriority:
     TICK = 10            # 行情数据（最低优先级）
 
 
-@dataclass(order=True)
+# 🔥 [修复] 引入全局计数器，确保相同优先级事件按 FIFO 顺序处理
+_event_counter = count()
+
+
+@dataclass(order=False)
 class PriorityEvent:
     """
     优先级事件包装器
 
     支持比较（__lt__），以便在 PriorityQueue 中排序
+
+    🔥 [修复] 添加计数器字段，确保相同优先级事件按 FIFO 处理
+
+    比较顺序：
+    1. priority (数值越小优先级越高)
+    2. counter (确保 FIFO 顺序)
     """
     priority: int  # 优先级（数值越小优先级越高）
     event: Event    # 实际事件对象
+    counter: int = field(default_factory=lambda: next(_event_counter))  # 🔥 [修复] 确保相同优先级按 FIFO 处理
+
+    def __lt__(self, other: 'PriorityEvent') -> bool:
+        """
+        比较方法，用于 PriorityQueue 排序
+
+        比较逻辑：
+        1. 先比较 priority（数值越小优先级越高）
+        2. 如果 priority 相同，比较 counter（数值越小越先处理，即 FIFO）
+        """
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self.counter < other.counter
 
 
 class EventBus:
@@ -213,8 +237,16 @@ class EventBus:
             except asyncio.TimeoutError:
                 continue
 
+            except asyncio.CancelledError:
+                # 🔥 [修复] 处理取消异常，正常退出循环
+                logger.debug("事件处理循环被取消")
+                break
+
             except Exception as e:
+                # 🔥 [修复] 增强异常处理，确保单个事件处理失败不会让整个循环退出
                 logger.error(f"事件处理循环错误: {e}", exc_info=True)
+                # 继续循环，不退出
+                continue
 
     async def _process_event(self, event: Event):
         """
@@ -240,8 +272,6 @@ class EventBus:
                 else:
                     handler(event)
 
-                self._stats['processed'] += 1
-
             except Exception as e:
                 logger.error(
                     f"处理器错误 ({handler.__name__}): {e}",
@@ -261,6 +291,9 @@ class EventBus:
                         source="event_bus"
                     )
                     self.put_nowait(error_event)
+
+            # 🔥 [修复] 无论成功还是失败，都增加 processed 计数
+            self._stats['processed'] += 1
 
     def get_stats(self) -> Dict[str, int]:
         """
