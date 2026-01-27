@@ -190,6 +190,11 @@ class ScalperV1(BaseStrategy):
         # 🔥 [Fix 41] 初始化标志位
         self._instrument_synced = False
 
+        # 🔥 [Fix 49] 启动缓冲期：给 BookParser 处理快照的时间
+        self._startup_buffer_seconds = 10.0  # 启动后前 10 秒静默等待
+        self._start_time = 0.0  # 策略启动时间
+        self._orderbook_received = False  # 是否已收到 OrderBook 数据
+
         # ========== 极简状态变量（O(1) 访问）==========
         # 成交量窗口（1秒滑动窗口）
         self.vol_window_start = 0.0  # 窗口开始时间
@@ -304,6 +309,9 @@ class ScalperV1(BaseStrategy):
         """
         # 调用基类的 start 方法
         await super().start()
+
+        # 🔥 [Fix 49] 记录启动时间
+        self._start_time = time.time()
 
         # 🔥 [Fix 41] 同步 Instrument 详情（合约面值 + Tick Size + 智能点差）
         await self._sync_instrument_details()
@@ -815,13 +823,48 @@ class ScalperV1(BaseStrategy):
             # 增加 Tick 计数
             self._increment_ticks()
 
-            # 🔥 [新增] 检查是否仍在使用默认值（同步失败）
-            # 如果 ctVal 仍然是 1.0，说明同步可能失败或未完成
-            # 添加 WARNING 日志提醒开发者
-            if self.contract_val == 1.0:
+            # 🔥 [Fix 48 - 智能合约面值检查] 根据交易对智能判断 ctVal 有效性
+            # 不同币种的 ctVal 差异很大：
+            # - BTC: ctVal=0.01 (1 contract = 0.01 BTC)
+            # - ETH: ctVal=0.01 (1 contract = 0.01 ETH)
+            # - DOGE: ctVal=10.0 (1 contract = 10 DOGE)
+            # - 其他小币种：ctVal 通常 >= 1.0
+            #
+            # 判断逻辑：
+            # 1. 如果是 BTC 或 ETH，任何正数 ctVal 都有效（> 0）
+            # 2. 如果是其他币种，ctVal 必须不是默认值 1.0
+            # 3. 只要 ctVal > 0 且不是默认值 1.0，就认为有效
+
+            is_valid_ctval = False
+            warning_msg = None
+
+            if self.symbol.startswith('BTC') or self.symbol.startswith('ETH'):
+                # BTC/ETH: 任何正数 ctVal 都有效
+                if self.contract_val > 0:
+                    is_valid_ctval = True
+                    logger.info(
+                        f"✅ [Contract Value] {self.symbol}: "
+                        f"ctVal={self.contract_val} (BTC/ETH 模式，所有正数值有效)"
+                    )
+                else:
+                    warning_msg = f"ctVal={self.contract_val} <= 0，无效！"
+            else:
+                # 其他币种: ctVal 不能是默认值 1.0
+                if self.contract_val != 1.0 and self.contract_val > 0:
+                    is_valid_ctval = True
+                    logger.info(
+                        f"✅ [Contract Value] {self.symbol}: "
+                        f"ctVal={self.contract_val} (非默认值，有效)"
+                    )
+                elif self.contract_val == 1.0:
+                    warning_msg = "ctVal=1.0 (疑似默认值，可能导致计算错误)"
+                else:
+                    warning_msg = f"ctVal={self.contract_val} <= 0，无效！"
+
+            if warning_msg:
                 logger.warning(
                     f"⚠️ [Contract Value] {self.symbol}: "
-                    f"仍在使用默认 ctVal=1.0，可能导致交易价值计算错误！"
+                    f"{warning_msg}"
                 )
 
             # 累加成交量
@@ -1537,11 +1580,25 @@ class ScalperV1(BaseStrategy):
             tuple: (best_bid, best_ask) 如果没有数据返回 (0.0, 0.0)
         """
         try:
+            # 🔥 [Fix 49] 启动缓冲期检查：给 BookParser 处理快照的时间
+            # 如果在启动缓冲期内，订单簿数据不可用时静默等待
+            now = time.time()
+            in_startup_buffer = (now - self._start_time) < self._startup_buffer_seconds
+
             if hasattr(self, 'public_gateway') and self.public_gateway:
                 best_bid, best_ask = self.public_gateway.get_best_bid_ask()
 
                 if best_bid is None or best_ask is None or best_bid <= 0 or best_ask <= 0:
-                    if current_price > 0:
+                    # 🔥 [Fix 49] 启动缓冲期内静默等待，不报警
+                    if in_startup_buffer:
+                        logger.debug(
+                            f"⏳ [启动缓冲] {self.symbol}: "
+                            f"订单簿数据不可用，启动缓冲期剩余 "
+                            f"{self._startup_buffer_seconds - (now - self._start_time):.1f}s，静默等待"
+                        )
+                        return (0.0, 0.0)
+                    # 启动缓冲期外，记录警告日志
+                    elif current_price > 0:
                         logger.warning(
                             f"⚠️ [降级策略] {self.symbol}: 订单簿数据不可用， "
                             f"使用 Last Price={current_price:.6f} 作为基准价格"
@@ -1550,6 +1607,14 @@ class ScalperV1(BaseStrategy):
                         best_ask = current_price + self.config.tick_size
                     else:
                         return (0.0, 0.0)
+                else:
+                    # 🔥 [Fix 49] 订单簿数据有效，标记已接收
+                    if not self._orderbook_received:
+                        self._orderbook_received = True
+                        logger.info(
+                            f"✅ [OrderBook Ready] {self.symbol}: "
+                            f"已接收到订单簿数据，可以开始交易"
+                        )
 
                 return (best_bid, best_ask)
             return (0.0, 0.0)
