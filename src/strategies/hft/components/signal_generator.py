@@ -82,8 +82,7 @@ class SignalGenerator:
         self.ema_value = 0.0
 
         logger.info(
-            f"🔧 [SignalGenerator] 初始化: "
-            f"symbol={config.symbol}, "
+            f"SignalGenerator 初始化: symbol={config.symbol}, "
             f"ema_period={config.ema_period}, "
             f"imbalance_ratio={config.imbalance_ratio}, "
             f"spread_threshold={config.spread_threshold_pct*100:.4f}%"
@@ -162,7 +161,7 @@ class SignalGenerator:
                 'current_price': price
             }
             logger.debug(
-                f"📊 [SignalGenerator] {symbol}: "
+                f"[SignalGenerator] {symbol}: "
                 f"趋势过滤: Trend={trend_bias}, "
                 f"Price={price:.6f}, EMA={self.ema_value:.6f} "
                 f"(不满足看涨条件)"
@@ -179,7 +178,7 @@ class SignalGenerator:
                 'min_flow': self.config.min_flow_usdt
             }
             logger.debug(
-                f"📊 [SignalGenerator] {symbol}: "
+                f"[SignalGenerator] {symbol}: "
                 f"流动性过滤: Volume={volume_usdt:.0f} USDT < "
                 f"MinFlow={self.config.min_flow_usdt:.0f} USDT"
             )
@@ -198,7 +197,7 @@ class SignalGenerator:
         }
 
         logger.info(
-            f"✅ [SignalGenerator] {symbol}: "
+            f"[SignalGenerator] {symbol}: "
             f"生成有效信号: Direction={signal.direction}, "
             f"Strength={signal.strength:.2f}, "
             f"Reason={signal.reason}"
@@ -245,7 +244,7 @@ class SignalGenerator:
                 'trend_bias': trend_bias
             }
             logger.debug(
-                f"📊 [SignalGenerator] {symbol}: "
+                f"[SignalGenerator] {symbol}: "
                 f"趋势过滤: Trend={trend_bias}, "
                 f"Price={price:.6f}, EMA={self.ema_value:.6f} "
                 f"(不满足看涨条件)"
@@ -262,7 +261,7 @@ class SignalGenerator:
                 'min_flow': self.config.min_flow_usdt
             }
             logger.debug(
-                f"📊 [SignalGenerator] {symbol}: "
+                f"[SignalGenerator] {symbol}: "
                 f"流动性过滤: Volume={total_vol:.0f} USDT < "
                 f"MinFlow={self.config.min_flow_usdt:.0f} USDT"
             )
@@ -273,10 +272,10 @@ class SignalGenerator:
         if sell_vol > 0:
             imbalance = buy_vol / sell_vol
         elif buy_vol > 0:
-            # 卖量为0，买量>0 → 极度看多
+            # 卖量为0，买量>0 -> 极度看多
             imbalance = 9999.0
             logger.debug(
-                f"📊 [SignalGenerator] {symbol}: "
+                f"[SignalGenerator] {symbol}: "
                 f"极端失衡: 卖={sell_vol:.0f} USDT, "
                 f"买={buy_vol:.0f} USDT, 失衡比=∞"
             )
@@ -293,7 +292,7 @@ class SignalGenerator:
                 'threshold': self.config.imbalance_ratio
             }
             logger.debug(
-                f"📊 [SignalGenerator] {symbol}: "
+                f"[SignalGenerator] {symbol}: "
                 f"失衡过滤: Imbalance={imbalance:.2f}x < "
                 f"阈值={self.config.imbalance_ratio:.2f}x"
             )
@@ -314,7 +313,7 @@ class SignalGenerator:
         }
 
         logger.info(
-            f"✅ [SignalGenerator] {symbol}: "
+            f"[SignalGenerator] {symbol}: "
             f"生成有效信号: Direction={signal.direction}, "
             f"Strength={signal.strength:.3f}, "
             f"Reason={signal.reason}, "
