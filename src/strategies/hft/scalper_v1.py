@@ -260,6 +260,12 @@ class ScalperV1(BaseStrategy):
         self._loss_trades = 0           # 亏损次数
         self._max_imbalance_seen = 0.0   # 最大买卖失衡比
 
+        # 🔥 [新增] 自愈触发器状态
+        self._consecutive_exit_failures = 0  # 连续平仓失败次数
+        self._last_exit_attempt_reason = None  # 上次平仓尝试原因
+        self._last_exit_attempt_time = 0.0  # 上次平仓尝试时间
+        self._healing_sync_threshold = 3  # 连续失败 3 次触发自愈
+
         # ========== 激进风控配置 ==========
         self.set_risk_profile(RiskProfile(
             strategy_id=self.strategy_id,
@@ -1602,6 +1608,11 @@ class ScalperV1(BaseStrategy):
                 f"最高={self.highest_pnl_pct*100:.3f}%, "
                 f"回撤={self.highest_pnl_pct*100 - unrealized_pnl_pct*100:.3f}%"
             )
+
+            # 🔥 [新增] 记录平仓尝试
+            self._last_exit_attempt_time = now
+            self._last_exit_attempt_reason = "trailing_stop"
+
             await self._close_position(current_price, "trailing_stop")
             return
 
@@ -1613,6 +1624,11 @@ class ScalperV1(BaseStrategy):
                 f"current={current_price:.6f}, "
                 f"loss={unrealized_pnl_pct*100:+.3f}%"
             )
+
+            # 🔥 [新增] 记录平仓尝试
+            self._last_exit_attempt_time = now
+            self._last_exit_attempt_reason = "stop_loss"
+
             await self._close_position(current_price, "stop_loss")
             return
 
@@ -1634,6 +1650,11 @@ class ScalperV1(BaseStrategy):
                 f"耗时={time_elapsed:.2f}s, "
                 f"pnl={unrealized_pnl_pct*100:+.3f}%"
             )
+
+            # 🔥 [新增] 记录平仓尝试
+            self._last_exit_attempt_time = now
+            self._last_exit_attempt_reason = "time_stop"
+
             await self._close_position(current_price, "time_stop")
             return
 
@@ -1641,13 +1662,18 @@ class ScalperV1(BaseStrategy):
         """
         平仓（市价单）
 
+        🔥 [修复] 平仓锁逻辑分级（Urgency Override）：
+        - 紧急平仓（Stop Loss / Trailing Stop）：彻底跳过冷却检查
+        - 常规平仓（Time Stop）：保持现有的冷却检查
+
+        🔥 [新增] 自愈触发器：
+        - 连续检测到 3 次相同的风控信号触发但未能成功发送订单
+        - 立即调用持仓同步（不等待 15 秒）
+
         🔥 [保留]：
         - 从 OMS 获取真实持仓数量
         - 添加平仓锁机制（超时锁）
         - 添加异常保护
-
-        🔥 [保留 Negative Position Fix：不在 _check_exit_conditions 中重置 local_pos_size
-        状态更新只依赖 on_order_filled
 
         Args:
             price (float): 平仓价格
@@ -1655,14 +1681,36 @@ class ScalperV1(BaseStrategy):
         """
         now = time.time()
 
-        # 🔥 [保留] 超时锁机制
-        if now - self._last_close_time < self._close_lock_timeout:
-            remaining = self._close_lock_timeout - (now - self._last_close_time)
-            logger.warning(
-                f"🚫 [平仓锁] {self.symbol}: 正在平仓冷却中 "
-                f"(剩余 {remaining:.1f}s)，拒绝重复平仓请求"
-            )
-            return
+        # 🔥 [新增] 平仓锁逻辑分级（Urgency Override）
+        # 判断是否为紧急平仓
+        is_emergency = reason in ['stop_loss', 'trailing_stop']
+
+        # 🔥 [修复] 只有非紧急情况才检查冷却
+        if not is_emergency:
+            if now - self._last_close_time < self._close_lock_timeout:
+                remaining = self._close_lock_timeout - (now - self._last_close_time)
+                logger.warning(
+                    f"🚫 [平仓锁] {self.symbol}: 正在平仓冷却中 "
+                    f"(剩余 {remaining:.1f}s)，拒绝重复平仓请求"
+                )
+                # 🔥 [新增] 记录平仓失败（非紧急情况被冷却拦截）
+                self._consecutive_exit_failures += 1
+                self._last_exit_attempt_time = now
+                self._last_exit_attempt_reason = reason
+                return
+        else:
+            # 🔥 [新增] 紧急平仓：检查是否有挂单正在进行
+            # 如果有挂单正在进行，检查是否超时
+            if self._last_exit_attempt_time > 0 and (now - self._last_exit_attempt_time) > 30.0:
+                # 如果上次平仓尝试超过 30 秒未完成，可能挂单卡住了
+                logger.error(
+                    f"🚨 [平仓挂单超时] {self.symbol}: "
+                    f"上次平仓尝试已超时 {now - self._last_exit_attempt_time:.1f}s，"
+                    f"可能挂单卡住，准备强制同步..."
+                )
+                # 触发自愈同步
+                await self._healing_sync_position()
+                return
 
         if not self._position_opened:
             return
@@ -1756,6 +1804,81 @@ class ScalperV1(BaseStrategy):
             stop_loss = entry_price * (1 - self.config.stop_loss_pct)  # 使用硬止损 1%
 
         return stop_loss
+
+    async def _healing_sync_position(self):
+        """
+        🔥 [新增] 自愈触发器：立即同步持仓
+
+        当连续检测到多次相同的风控信号触发但未能成功发送订单时，
+        立即调用持仓同步（不等待 15 秒），解决幽灵仓位循环。
+        """
+        logger.error(
+            f"🚨 [自愈触发] {self.symbol}: "
+            f"连续 {self._consecutive_exit_failures} 次平仓失败，"
+            f"立即触发持仓自愈同步！"
+        )
+
+        # 重置连续失败计数
+        self._consecutive_exit_failures = 0
+        self._last_exit_attempt_reason = None
+        self._last_exit_attempt_time = 0.0
+
+        # 立即执行持仓同步（不等待定时器）
+        try:
+            real_position = 0.0
+            if self._order_manager and hasattr(self._order_manager, '_rest_gateway'):
+                rest_gateway = self._order_manager._rest_gateway
+                if hasattr(rest_gateway, 'get_positions'):
+                    positions = await rest_gateway.get_positions(symbol=self.symbol)
+
+                    if positions and len(positions) > 0:
+                        pos = positions[0]
+                        real_position = float(pos.get('size', 0))
+                        logger.warning(
+                            f"📊 [自愈同步] {self.symbol}: "
+                            f"REST持仓={real_position:.4f}, "
+                            f"本地={self.local_pos_size:.4f}, "
+                            f"偏差={abs(real_position - self.local_pos_size):.4f}"
+                        )
+
+            # 强制同步本地持仓
+            position_diff = abs(real_position - self.local_pos_size)
+            if position_diff > 0.001:
+                logger.error(
+                    f"🔄 [自愈修正] {self.symbol}: "
+                    f"发现偏差！本地={self.local_pos_size:.4f}, "
+                    f"交易所={real_position:.4f}, "
+                    f"强制同步..."
+                )
+                self.local_pos_size = real_position
+                self._position_opened = (abs(self.local_pos_size) > 0.001)
+
+                # 如果交易所显示空仓，重置所有状态
+                if abs(self.local_pos_size) < 0.001:
+                    logger.warning(
+                        f"🔄 [自愈重置] {self.symbol}: "
+                        f"交易所显示空仓，强制重置所有状态"
+                    )
+                    self._position_opened = False
+                    self._entry_price = 0.0
+                    self._entry_time = 0.0
+                    self._maker_order_id = None
+                    self._maker_order_time = 0.0
+                    self._maker_order_price = 0.0
+                    self._maker_order_initial_price = 0.0
+                    self._is_pending_open = False
+            else:
+                logger.info(
+                    f"✅ [自愈完成] {self.symbol}: "
+                    f"持仓一致，无需修正"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"❌ [自愈失败] {self.symbol}: "
+                f"持仓同步异常: {e}",
+                exc_info=True
+            )
 
     def update_config(self, **kwargs):
         """
