@@ -6,7 +6,7 @@ Candle Parser - 处理 K线数据
 
 import logging
 from typing import Optional, Dict, Any
-from ...core.event_types import Event, EventType
+from ....core.event_types import Event, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class CandleParser:
 
                 # 推送 CANDLE_EVENT 事件到事件总线
                 if self.event_bus:
-                    from ...core.event_types import Event
+                    from ....core.event_types import Event
 
                     event = Event(
                         type=EventType.CANDLE_EVENT,

@@ -6,7 +6,7 @@ Ticker Parser - 处理 Ticker 数据
 
 import logging
 from typing import Optional, Dict, Any
-from ...core.event_types import Event, EventType
+from ....core.event_types import Event, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class TickerParser:
 
             # 推送 TICK 事件到事件总线
             if self.event_bus:
-                from ...core.event_types import Event, EventType
+                from ....core.event_types import Event, EventType
 
                 event = Event(
                     type=EventType.TICK,

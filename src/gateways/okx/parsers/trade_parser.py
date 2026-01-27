@@ -6,7 +6,7 @@ Trade Parser - 处理交易数据逻辑
 
 import logging
 from typing import Optional, Dict, Any
-from ...core.event_types import Event, EventType
+from ....core.event_types import Event, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class TradeParser:
 
                 # 推送 TICK 事件到事件总线（用于 Maker 策略的入场检测）
                 if self.event_bus:
-                    from ...core.event_types import Event, EventType
+                    from ....core.event_types import Event, EventType
 
                     event = Event(
                         type=EventType.TICK,
