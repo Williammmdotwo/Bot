@@ -89,7 +89,7 @@ class BookParser:
                     },
                     source="book_parser"
                 )
-                await self.event_bus.put_nowait(event)
+                self.event_bus.put_nowait(event)
 
         except Exception as e:
             logger.error(f"Book 处理异常: {e}, 原始数据: {data}", exc_info=True)

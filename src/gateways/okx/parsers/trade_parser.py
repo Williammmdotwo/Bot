@@ -109,7 +109,7 @@ class TradeParser:
                         },
                         source="trade_parser"
                     )
-                    await self.event_bus.put_nowait(event)
+                    self.event_bus.put_nowait(event)
 
             logger.debug(f"已处理 {len(trades_data[:50])} 笔 Trade 数据")
 

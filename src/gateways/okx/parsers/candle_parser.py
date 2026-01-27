@@ -98,7 +98,7 @@ class CandleParser:
                         },
                         source="candle_parser"
                     )
-                    await self.event_bus.put_nowait(event)
+                    self.event_bus.put_nowait(event)
 
             logger.debug(f"已处理 {len(candles_data[:50])} 根 K 线数据")
 

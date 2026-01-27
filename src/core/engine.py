@@ -151,7 +151,6 @@ class Engine:
         public_ws_config = self.config.get('public_ws', {})
         self._public_ws = OkxPublicWsGateway(
             symbol=public_ws_config.get('symbol', 'BTC-USDT-SWAP'),
-            use_demo=public_ws_config.get('use_demo', True),
             ws_url=public_ws_config.get('ws_url'),
             event_bus=self._event_bus
         )

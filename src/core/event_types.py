@@ -22,6 +22,8 @@ class EventType(Enum):
     TICK = "tick"                    # 单笔交易 Tick
     BAR = "bar"                      # K线数据（OHLCV）
     DEPTH = "depth"                   # 订单簿深度
+    BOOK_EVENT = "book_event"         # 订单簿事件
+    CANDLE_EVENT = "candle_event"     # K线事件
 
     # 账户事件
     POSITION_UPDATE = "position_update"   # 持仓更新

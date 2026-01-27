@@ -47,6 +47,9 @@ class OkxPublicWsGateway(WsBaseGateway):
     使用独立 Parser 处理数据（Trade、Ticker、Book、Candle），降低耦合度。
     """
 
+    # OKX Public WebSocket URL
+    WS_URL_PRODUCTION = "wss://ws.okx.com:8443/ws/v5/public"
+
     def __init__(self, symbol: str, ws_url: Optional[str] = None, event_bus=None):
         """
         初始化公共 WebSocket 网关

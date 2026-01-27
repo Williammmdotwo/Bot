@@ -139,7 +139,7 @@ def load_config_from_env() -> dict:
     strategies_config = []
 
     # 检查激活的策略类型
-    active_strategy = os.getenv('ACTIVE_STRATEGY', 'sniper').lower()
+    active_strategy = os.getenv('ACTIVE_STRATEGY', 'scalper_v1').lower()
 
     # 根据激活的策略类型加载配置
     if active_strategy == 'sniper':

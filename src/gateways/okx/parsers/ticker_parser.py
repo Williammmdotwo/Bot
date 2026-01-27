@@ -82,7 +82,7 @@ class TickerParser:
                     },
                     source="ticker_parser"
                 )
-                await self.event_bus.put_nowait(event)
+                self.event_bus.put_nowait(event)
 
             logger.debug(f"已处理 Ticker 数据: price={price:.4f}, volume={volume:.2f}")
 
