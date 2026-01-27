@@ -8,15 +8,43 @@
 - 异步设计，支持高并发
 - 类型安全，使用标准事件格式
 - 解耦模块间依赖
+- 🔥 [P0 修复] 支持优先级队列，确保紧急事件实时处理
 """
 
 import asyncio
 import logging
 from typing import Callable, Dict, List, Any, Optional
 from collections import defaultdict
+from dataclasses import dataclass
 from .event_types import Event, EventType
 
 logger = logging.getLogger(__name__)
+
+
+# 🔥 [P0 修复] 定义事件优先级常量
+class EventPriority:
+    """
+    事件优先级定义
+
+    数值越小，优先级越高（priority queue 默认行为）
+    """
+    EMERGENCY_CLOSE = 0  # 紧急平仓（最高优先级）
+    ORDER_FILLED = 1     # 订单成交（需立即触发止损）
+    RISK_ALERT = 2       # 风控警报
+    POSITION_UPDATE = 3    # 持仓更新
+    ORDER_UPDATE = 5      # 订单状态更新
+    TICK = 10            # 行情数据（最低优先级）
+
+
+@dataclass(order=True)
+class PriorityEvent:
+    """
+    优先级事件包装器
+
+    支持比较（__lt__），以便在 PriorityQueue 中排序
+    """
+    priority: int  # 优先级（数值越小优先级越高）
+    event: Event    # 实际事件对象
 
 
 class EventBus:
@@ -44,7 +72,8 @@ class EventBus:
     def __init__(self):
         """初始化事件总线"""
         self._handlers: Dict[EventType, List[Callable]] = defaultdict(list)
-        self._queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+        # 🔥 [P0 修复] 替换为优先级队列
+        self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=10000)
         self._running: bool = False
         self._task: Optional[asyncio.Task] = None
         self._stats = {
@@ -52,6 +81,7 @@ class EventBus:
             'processed': 0,
             'errors': 0
         }
+        logger.info("EventBus 初始化（优先级队列模式）")
 
     def register(self, event_type: EventType, handler: Callable):
         """
@@ -81,14 +111,16 @@ class EventBus:
             self._handlers[event_type].remove(handler)
             logger.debug(f"取消注册处理器: {event_type} -> {handler.__name__}")
 
-    async def put(self, event: Event):
+    async def put(self, event: Event, priority: int = EventPriority.TICK):
         """
-        发布事件（异步）
+        发布事件（异步，支持优先级）
 
-        将事件放入队列，由后台任务处理。
+        将事件放入优先级队列，由后台任务处理。
 
         Args:
             event (Event): 要发布的事件
+            priority (int): 优先级（默认 TICK 优先级）
+                        使用 EventPriority 常量，例如 EventPriority.ORDER_FILLED
 
         Example:
             >>> await event_bus.put(Event(
@@ -96,32 +128,44 @@ class EventBus:
             ...     data={'price': 50000.0},
             ...     source="test"
             ... ))
+            >>>
+            >>> # 高优先级事件（订单成交）
+            >>> await event_bus.put(Event(
+            ...     type=EventType.ORDER_FILLED,
+            ...     data={'order_id': '12345'},
+            ...     source="order_manager"
+            ... ), priority=EventPriority.ORDER_FILLED)
         """
         try:
-            await self._queue.put(event)
+            # 🔥 [P0 修复] 包装为 PriorityEvent
+            priority_event = PriorityEvent(priority=priority, event=event)
+            await self._queue.put(priority_event)
             self._stats['published'] += 1
 
             # 只在 DEBUG 级别记录详细日志
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"发布事件: {event.type.value} from {event.source}")
+                logger.debug(f"发布事件: {event.type.value} (优先级={priority}) from {event.source}")
 
         except asyncio.QueueFull:
             logger.error(f"事件队列已满，丢弃事件: {event.type}")
             self._stats['errors'] += 1
 
-    def put_nowait(self, event: Event):
+    def put_nowait(self, event: Event, priority: int = EventPriority.TICK):
         """
-        发布事件（非阻塞）
+        发布事件（非阻塞，支持优先级）
 
         Args:
             event (Event): 要发布的事件
+            priority (int): 优先级（默认 TICK 优先级）
         """
         try:
-            self._queue.put_nowait(event)
+            # 🔥 [P0 修复] 包装为 PriorityEvent
+            priority_event = PriorityEvent(priority=priority, event=event)
+            self._queue.put_nowait(priority_event)
             self._stats['published'] += 1
 
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"发布事件(非阻塞): {event.type.value} from {event.source}")
+                logger.debug(f"发布事件(非阻塞): {event.type.value} (优先级={priority}) from {event.source}")
 
         except asyncio.QueueFull:
             logger.error(f"事件队列已满，丢弃事件: {event.type}")
@@ -162,8 +206,9 @@ class EventBus:
         while self._running:
             try:
                 # 获取事件（超时 1 秒，以便检查 _running 标志）
-                event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
-                await self._process_event(event)
+                # 🔥 [P0 修复] 获取 PriorityEvent 并解包
+                priority_event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                await self._process_event(priority_event.event)
 
             except asyncio.TimeoutError:
                 continue
@@ -178,8 +223,9 @@ class EventBus:
         调用所有注册的处理器。
 
         Args:
-            event (Event): 要处理的事件
+            event (Event): 要处理的事件（已从 PriorityEvent 解包）
         """
+        # 🔥 [P0 修复] 处理的是解包后的 Event 对象
         handlers = self._handlers.get(event.type, [])
 
         if not handlers:

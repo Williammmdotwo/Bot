@@ -368,7 +368,7 @@ class OkxPrivateWsGateway(WsBaseGateway):
                                 },
                                 source="okx_ws_private"
                             )
-                            await self.publish_event(event)
+                            await self.publish_event(event, priority=3)  # POSITION_UPDATE 优先级
 
                 elif channel == "orders":
                     orders = data.get("data", [])
@@ -389,6 +389,16 @@ class OkxPrivateWsGateway(WsBaseGateway):
                             elif order.get('state') == 'canceled':
                                 event_type = EventType.ORDER_CANCELLED
 
+                            # 🔥 [P0 修复] 根据订单类型设置不同优先级
+                            # ORDER_FILLED: priority=1 (紧急，需立即触发止损)
+                            # ORDER_CANCELLED: priority=5 (普通更新)
+                            # ORDER_UPDATE: priority=5 (普通更新)
+                            priority = 5  # 默认优先级
+                            if event_type == EventType.ORDER_FILLED:
+                                priority = 1  # 订单成交，最高优先级
+                            elif event_type == EventType.ORDER_CANCELLED:
+                                priority = 5  # 撤单，普通优先级
+
                             event = Event(
                                 type=event_type,
                                 data={
@@ -404,7 +414,7 @@ class OkxPrivateWsGateway(WsBaseGateway):
                                 },
                                 source="okx_ws_private"
                             )
-                            await self.publish_event(event)
+                            await self.publish_event(event, priority=priority)
 
         except Exception as e:
             logger.error(f"❌ 数据处理异常: {e}, 原始数据: {data}", exc_info=True)

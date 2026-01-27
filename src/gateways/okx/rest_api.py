@@ -492,7 +492,7 @@ class OkxRestGateway(RestGateway):
                         },
                         source="okx_rest"
                     )
-                    await self.publish_event(event)  # ✅ 添加 await
+                    await self.publish_event(event, priority=5)  # ORDER_UPDATE 优先级
 
                 return order_data
 
@@ -538,7 +538,7 @@ class OkxRestGateway(RestGateway):
                         },
                         source="okx_rest"
                     )
-                    await self.publish_event(event)  # ✅ 添加 await
+                    await self.publish_event(event, priority=5)  # ORDER_CANCELLED 优先级
 
                 return data_list[0]
 

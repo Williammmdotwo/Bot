@@ -460,15 +460,16 @@ class WsBaseGateway:
 
     # ==================== 兼容性方法 ====================
 
-    async def publish_event(self, event):
+    async def publish_event(self, event, priority: int = 10):
         """
-        发布事件到事件总线
+        发布事件到事件总线（支持优先级）
 
         Args:
             event: 要发布的事件
+            priority (int): 优先级（默认 10 = TICK 优先级）
         """
         if self._event_bus:
-            self._event_bus.put_nowait(event)
+            self._event_bus.put_nowait(event, priority=priority)
 
     def get_status(self) -> Dict[str, Any]:
         """

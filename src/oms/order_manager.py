@@ -65,6 +65,9 @@ class OrderManager:
         # Symbol -> OrderId 映射（用于快速查找）
         self._symbol_to_orders: Dict[str, Dict[str, Order]] = {}
 
+        # 🔥 [P0 修复] clOrdId -> order_id 索引（O(1) 查找）
+        self._clord_id_to_order_id: Dict[str, str] = {}
+
         # 止损订单映射 {open_order_id: stop_loss_order_id}
         self._stop_loss_orders: Dict[str, str] = {}
 
@@ -214,6 +217,12 @@ class OrderManager:
             self._symbol_to_orders[symbol] = {}
         self._symbol_to_orders[symbol][order_id] = order
 
+        # 🔥 [P0 修复] 建立 clOrdId -> order_id 映射（O(1) 查找）
+        cl_ord_id = response.get('clOrdId')
+        if cl_ord_id:
+            self._clord_id_to_order_id[cl_ord_id] = order_id
+            logger.debug(f"建立 clOrdId 映射: {cl_ord_id} -> {order_id}")
+
         logger.info(
             f"订单提交成功: {order_id} - {symbol} {side} {size:.4f}"
         )
@@ -234,7 +243,7 @@ class OrderManager:
                 },
                 source="order_manager"
             )
-            self._event_bus.put_nowait(event)
+            self._event_bus.put_nowait(event, priority=5)  # ORDER_UPDATE 优先级
 
         return order
 
@@ -294,7 +303,7 @@ class OrderManager:
                     },
                     source="order_manager"
                 )
-                self._event_bus.put_nowait(event)
+                self._event_bus.put_nowait(event, priority=5)  # ORDER_UPDATE 优先级
 
             return True
 
@@ -446,37 +455,34 @@ class OrderManager:
         """
         监听订单成交事件（硬止损执行核心）
 
+        🔥 [P0 修复] 使用 O(1) 字典查找替代 O(n) 遍历
+
         Args:
             event (Event): ORDER_FILLED 事件
         """
         try:
             data = event.data
             order_id = data.get('order_id')
-            cl_ord_id = data.get('clOrdId')  # 🔥 修复：获取客户端订单ID
+            cl_ord_id = data.get('clOrdId')
 
             if not order_id and not cl_ord_id:
                 return
 
-            # 🔥 修复：增强查找逻辑（优先用 clOrdId，失败则用 order_id）
-            # 🔥 优化：直接遍历查找，避免ID映射延迟
+            # 🔥 [P0 修复] O(1) 查找逻辑（替代原来的 O(n) 遍历）
             local_order = None
-            if cl_ord_id:
-                # 遍历所有订单，通过 clOrdId 查找（这是关键补丁）
-                for o in self._orders.values():
-                    if o.raw and o.raw.get('clOrdId') == cl_ord_id:
-                        local_order = o
-                        # 🔥 修复：找到后，建立ID映射，方便下次查找
-                        if order_id:
-                            self._orders[order_id] = o
-                        logger.debug(
-                            f"通过 clOrdId 找到订单: {cl_ord_id} -> {order_id or 'unknown'}"
-                        )
-                        break
-            else:
-                # 如果没有 clOrdId，尝试用 order_id 查找
+
+            # 优先使用 clOrdId 索引查找（O(1)）
+            if cl_ord_id and cl_ord_id in self._clord_id_to_order_id:
+                mapped_order_id = self._clord_id_to_order_id[cl_ord_id]
+                local_order = self._orders.get(mapped_order_id)
+                logger.debug(
+                    f"通过 clOrdId 索引找到订单: {cl_ord_id} -> {mapped_order_id}"
+                )
+            # 降级到 order_id 直接查找（O(1)）
+            elif order_id:
                 local_order = self._orders.get(order_id)
 
-            # 🔥 修复：只有 local_order 存在时才执行后续逻辑
+            # 如果找到了订单，更新状态
             if local_order:
                 local_order.filled_size = data.get('filled_size', local_order.filled_size)
                 local_order.status = 'filled'
@@ -492,7 +498,7 @@ class OrderManager:
                     await self._place_stop_loss_order(local_order, data)
 
                 # 清理已完成订单
-                self._cleanup_order(order_id)
+                self._cleanup_order(local_order.order_id)
 
         except Exception as e:
             logger.error(f"处理订单成交事件失败: {e}", exc_info=True)
@@ -611,7 +617,7 @@ class OrderManager:
                                     },
                                     source="order_manager"
                                 )
-                                self._event_bus.put_nowait(event)
+                                self._event_bus.put_nowait(event, priority=5)  # ORDER_UPDATE 优先级
                             return  # 成功则退出
 
                 except Exception as e:
@@ -691,7 +697,7 @@ class OrderManager:
                         },
                         source="order_manager"
                     )
-                    self._event_bus.put_nowait(event)
+                    self._event_bus.put_nowait(event, priority=0)  # EMERGENCY_CLOSE 优先级
             else:
                 logger.error(f"🚨 紧急平仓失败！仓位裸奔风险！: {open_order.symbol}")
 
@@ -743,6 +749,13 @@ class OrderManager:
             # 如果没有订单了，清理 symbol
             if not symbol_orders:
                 del self._symbol_to_orders[order.symbol]
+
+        # 🔥 [P0 修复] 清理 clOrdId 索引（防止内存泄漏）
+        if order.raw and 'clOrdId' in order.raw:
+            cl_ord_id = order.raw['clOrdId']
+            if cl_ord_id and cl_ord_id in self._clord_id_to_order_id:
+                del self._clord_id_to_order_id[cl_ord_id]
+                logger.debug(f"清理 clOrdId 索引: {cl_ord_id}")
 
         # 清理止损订单映射（如果订单有关联的止损）
         if order_id in self._stop_loss_orders:

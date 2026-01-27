@@ -12,6 +12,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
 from ..core.event_types import Event, EventType
+from ..core.event_bus import EventPriority  # 🔥 [P0 修复] 导入优先级常量
 
 
 class BaseGateway(ABC):
@@ -65,15 +66,16 @@ class BaseGateway(ABC):
         """
         pass
 
-    async def publish_event(self, event: Event):
+    async def publish_event(self, event: Event, priority: int = EventPriority.TICK):
         """
-        发布事件到事件总线
+        发布事件到事件总线（支持优先级）
 
         Args:
             event (Event): 要发布的事件
+            priority (int): 优先级（默认 TICK 优先级）
         """
         if self._event_bus:
-            self._event_bus.put_nowait(event)
+            self._event_bus.put_nowait(event, priority=priority)
 
     def set_event_bus(self, event_bus):
         """
