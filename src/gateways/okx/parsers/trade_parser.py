@@ -46,6 +46,10 @@ class TradeParser:
             # 提取 trades 数据数组
             trades_data = data.get("data", [])
 
+            # 🔥 [调试] 打印前3条数据，诊断数据格式问题
+            if trades_data and len(trades_data) > 0:
+                logger.debug(f"接收到 Trade 数据样本: {trades_data[:3]}")
+
             if not isinstance(trades_data, list) or len(trades_data) == 0:
                 logger.debug(f"Trade 数据为空或格式不正确: {trades_data}")
                 return None
@@ -59,24 +63,51 @@ class TradeParser:
 
                 # 解析字典格式（新格式）
                 if isinstance(trade_item, dict):
-                    price = float(trade_item.get("px", "0"))
-                    size = float(trade_item.get("sz", "0"))
+                    # 🔥 [修复] 先验证关键字段是否存在
+                    if "px" not in trade_item or "sz" not in trade_item:
+                        logger.warning(f"Trade 数据缺少关键字段: {trade_item}")
+                        continue
+
+                    px_value = trade_item.get("px")
+                    sz_value = trade_item.get("sz")
+
+                    # 🔥 [修复] 验证数据类型并添加异常处理
+                    try:
+                        price = float(px_value) if px_value is not None else 0.0
+                        size = float(sz_value) if sz_value is not None else 0.0
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"价格解析错误: px={px_value}, sz={sz_value}, error={e}")
+                        continue
+
                     timestamp = int(trade_item.get("ts", "0"))
                     side = trade_item.get("side", "")
 
                 # 解析数组格式（旧格式）
                 elif isinstance(trade_item, list) and len(trade_item) >= 4:
-                    price = float(trade_item[0])  # price
-                    size = float(trade_item[1])  # size
+                    try:
+                        price = float(trade_item[0])  # price
+                        size = float(trade_item[1])  # size
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"数组格式解析错误: {trade_item}, error={e}")
+                        continue
                     timestamp = int(trade_item[3])  # ts
                     side = str(trade_item[4])  # side
                 else:
                     logger.debug(f"Trade 数据格式未知: {trade_item}")
                     continue
 
-                # 验证数据完整性
-                if price <= 0 or size <= 0 or timestamp == 0 or side == "":
-                    logger.warning(f"Trade 数据不完整: price={price}, size={size}, ts={timestamp}, side={side}")
+                # 🔥 [修复] 验证数据完整性并添加价格合理性检查
+                if price <= 0 or price > 1000000:
+                    logger.warning(f"异常价格: {price}, 原始数据: {trade_item}")
+                    continue
+                if size <= 0:
+                    logger.warning(f"异常数量: {size}, 原始数据: {trade_item}")
+                    continue
+                if timestamp == 0:
+                    logger.warning(f"无效时间戳: {timestamp}, 原始数据: {trade_item}")
+                    continue
+                if side == "":
+                    logger.warning(f"空交易方向: 原始数据: {trade_item}")
                     continue
 
                 # 验证交易方向
