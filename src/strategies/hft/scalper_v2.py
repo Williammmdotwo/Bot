@@ -119,10 +119,9 @@ class ScalperV1Refactored(BaseStrategy):
         )
 
         # 容错：记录未识别的参数
-        if kwargs:
-            logger.warning(
-                f"策略 {strategy_id} 收到未识别的参数: {list(kwargs.keys())}"
-            )
+        # 🔥 [修复] 这些参数通过 main.py 传递，不需要警告
+        # 直接忽略 kwargs 即可
+        pass
 
         # ========== 初始化组件 ==========
 
@@ -150,9 +149,20 @@ class ScalperV1Refactored(BaseStrategy):
             aggressive_maker_price_offset=1.0
         )
         self.execution_algo = ExecutionAlgo(execution_config)
+        self.execution_config = execution_config  #  [修复] 保存为实例属性
 
         # 3. 状态管理器
         self.state_manager = StateManager(symbol)
+
+        # ========== 保存配置为实例属性 ==========
+        #  [修复] 创建 config 对象，保存所有配置参数
+        self.config = type('Config', (), {
+            'cooldown_seconds': cooldown_seconds,
+            'position_size': position_size,
+            'take_profit_pct': take_profit_pct,
+            'stop_loss_pct': stop_loss_pct,
+            'time_limit_seconds': time_limit_seconds
+        })
 
         # ========== 保留的配置 ==========
         self.contract_val = 1.0  # 合约面值
