@@ -312,7 +312,8 @@ class ScalperV1Refactored(BaseStrategy):
             local_pos_size = self.state_manager.get_local_pos_size()
 
             # 4. 更新成交量窗口
-            if now - self.vol_window_start >= 1.0:
+            # 🔥 [修复] 扩大时间窗口到 3 秒，更容易累积成交量
+            if now - self.vol_window_start >= 3.0:
                 self.vol_window_start = now
                 self.buy_vol = 0.0
                 self.sell_vol = 0.0
@@ -348,6 +349,27 @@ class ScalperV1Refactored(BaseStrategy):
                     sell_vol=self.sell_vol,
                     total_vol=total_vol
                 )
+
+                # 🔥 [新增] 记录满足所有条件的大机会日志
+                # 条件1：单笔金额 >= 500万 USDT
+                # 条件2：总量 >= 流量阈值
+                # 条件3：趋势向上（Price > EMA）
+                # 条件4：买卖失衡 >= 3倍
+                if (usdt_val >= 5000000.0 and
+                    total_vol >= self.signal_generator.config.min_flow_usdt and
+                    signal.is_valid and
+                    signal.direction == 'bullish'):
+
+                    imbalance_ratio = signal.metadata.get('imbalance_ratio', 0)
+                    ema_value = signal.metadata.get('ema_value', 0)
+
+                    logger.info(
+                        f"🎯 [大机会] {self.symbol}: "
+                        f"{side} {size:.4f} @ {price:.4f} = {usdt_val:,.0f} USDT | "
+                        f"总量={total_vol:,.0f} USDT | "
+                        f"失衡={imbalance_ratio:.2f}x | "
+                        f"趋势=看涨 (Price>{ema_value:.4f})"
+                    )
 
                 # 如果信号有效，执行入场逻辑
                 if signal.is_valid:
