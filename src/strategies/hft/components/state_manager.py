@@ -56,6 +56,16 @@ class SelfHealingState:
     healing_threshold: int = 3
 
 
+@dataclass
+class TrailingStopState:
+    """追踪止损状态"""
+    is_activated: bool = False
+    activation_threshold_pct: float = 0.001   # 0.1% 激活阈值
+    callback_threshold_pct: float = 0.0005    # 0.05% 回调阈值
+    highest_price: float = 0.0
+    stop_price: float = 0.0
+
+
 class StateManager:
     """
     状态管理器（ScalperV1 策略）
@@ -93,6 +103,9 @@ class StateManager:
 
         # 自愈状态
         self._healing = SelfHealingState()
+
+        # 追踪止损状态
+        self._trailing_stop = TrailingStopState()
 
         logger.info(f"📊 [StateManager] 初始化: symbol={symbol}")
 
@@ -316,6 +329,96 @@ class StateManager:
 
         logger.info(f"📊 [StateManager] {self.symbol}: 重置冷却状态")
 
+    # ========== 追踪止损 ==========
+
+    def reset_trailing_stop(self):
+        """
+        重置追踪止损状态
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        self._trailing_stop.is_activated = False
+        self._trailing_stop.highest_price = 0.0
+        self._trailing_stop.stop_price = 0.0
+
+        logger.debug(f"📊 [StateManager] {self.symbol}: 重置追踪止损")
+
+    def update_trailing_stop(self, current_price: float) -> Tuple[bool, float]:
+        """
+        更新追踪止损
+
+        逻辑：
+        1. 如果未激活，检查是否达到激活阈值（价格涨0.1%）
+        2. 如果已激活，检查是否触发回调（从最高点回落0.05%）
+        3. 如果触发回调，返回 (True, stop_price) 触发平仓
+
+        Args:
+            current_price (float): 当前价格
+
+        Returns:
+            Tuple[bool, float]: (should_close, stop_price)
+        """
+        # 1. 检查是否有持仓
+        if not self._position.is_open:
+            return (False, 0.0)
+
+        # 2. 如果未激活，检查是否达到激活阈值
+        if not self._trailing_stop.is_activated:
+            profit_pct = (current_price - self._position.entry_price) / self._position.entry_price
+
+            # 达到激活阈值（0.1%）
+            if profit_pct >= self._trailing_stop.activation_threshold_pct:
+                self._trailing_stop.is_activated = True
+                self._trailing_stop.highest_price = current_price
+                self._trailing_stop.stop_price = current_price * (1 - self._trailing_stop.callback_threshold_pct)
+
+                logger.info(
+                    f"✅ [追踪止损激活] {self.symbol}: "
+                    f"价格涨幅={profit_pct*100:.3f}% >= {self._trailing_stop.activation_threshold_pct*100:.3f}%, "
+                    f"最高价={self._trailing_stop.highest_price:.6f}, "
+                    f"止损价={self._trailing_stop.stop_price:.6f}"
+                )
+            else:
+                # 未达到激活阈值，继续观察
+                return (False, 0.0)
+
+        # 3. 如果已激活，更新最高价和止损价
+        if current_price > self._trailing_stop.highest_price:
+            # 价格创新高，更新最高价和止损价
+            self._trailing_stop.highest_price = current_price
+            self._trailing_stop.stop_price = current_price * (1 - self._trailing_stop.callback_threshold_pct)
+
+            logger.debug(
+                f"📈 [追踪止损更新] {self.symbol}: "
+                f"新高={current_price:.6f}, "
+                f"止损价={self._trailing_stop.stop_price:.6f}"
+            )
+
+        # 4. 检查是否触发回调
+        if current_price <= self._trailing_stop.stop_price:
+            logger.info(
+                f"🎯 [追踪止损触发] {self.symbol}: "
+                f"价格={current_price:.6f} <= 止损价={self._trailing_stop.stop_price:.6f}, "
+                f"利润={(self._trailing_stop.highest_price - self._position.entry_price) / self._position.entry_price * 100:.3f}%"
+            )
+            return (True, self._trailing_stop.stop_price)
+
+        # 5. 未触发回调
+        return (False, 0.0)
+
+    def get_trailing_stop_state(self) -> TrailingStopState:
+        """
+        获取追踪止损状态
+
+        Returns:
+            TrailingStopState: 追踪止损状态
+        """
+        return self._trailing_stop
+
     # ========== 自愈逻辑 ==========
 
     def increment_exit_failure(self):
@@ -420,6 +523,13 @@ class StateManager:
                 'last_exit_time': self._cooldown.last_exit_time,
                 'is_in_cooldown': self.is_in_cooldown(10.0)
             },
+            'trailing_stop': {
+                'is_activated': self._trailing_stop.is_activated,
+                'highest_price': self._trailing_stop.highest_price,
+                'stop_price': self._trailing_stop.stop_price,
+                'activation_threshold_pct': self._trailing_stop.activation_threshold_pct * 100,
+                'callback_threshold_pct': self._trailing_stop.callback_threshold_pct * 100
+            },
             'healing': {
                 'consecutive_exit_failures': self._healing.consecutive_exit_failures,
                 'last_exit_attempt_reason': self._healing.last_exit_attempt_reason,
@@ -441,5 +551,6 @@ class StateManager:
         self.clear_maker_order()
         self.reset_cooldown()
         self.reset_exit_failures()
+        self.reset_trailing_stop()
 
         logger.info(f"🔄 [StateManager] {self.symbol}: 重置所有状态")

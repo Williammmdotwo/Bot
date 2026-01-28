@@ -364,6 +364,23 @@ class ScalperV2(BaseStrategy):
                 # 调用状态管理器更新退出时间
                 self.state_manager.update_close_time()
 
+                # 🔥 [新增：检查追踪止损]
+                should_close_trailing, stop_price_trailing = self.state_manager.update_trailing_stop(price)
+
+                if should_close_trailing:
+                    await self._close_position(reason="trailing_stop", stop_price=stop_price_trailing)
+                    return
+
+                # 🔥 [新增：检查时间止损]
+                position_age = now - self.state_manager._position.entry_time
+                if position_age >= self.config.time_limit_seconds:
+                    logger.info(
+                        f"⏰ [时间止损触发] {self.symbol}: "
+                        f"持仓时间={position_age:.1f}s >= {self.config.time_limit_seconds}s"
+                    )
+                    await self._close_position(reason="time_stop")
+                    return
+
                 # 检查挂单插队（如果有挂单）
                 if self.state_manager.has_active_maker_order():
                     order_age = self.state_manager.get_maker_order_age()
@@ -693,10 +710,82 @@ class ScalperV2(BaseStrategy):
         Returns:
             float: 止损价格
         """
-        # 基于波动率计算止损（简化版）
-        stop_distance = entry_price * 0.01  # 1% 止损
+        # 基于配置的止损百分比计算（默认 1%）
+        stop_distance = entry_price * self.config.stop_loss_pct
         stop_loss = entry_price - stop_distance
         return stop_loss
+
+    async def _close_position(self, reason: str, stop_price: float = 0.0):
+        """
+        平仓（统一入口）
+
+        Args:
+            reason (str): 平仓原因（trailing_stop/time_stop/hard_stop）
+            stop_price (float): 止损价格（用于追踪止损）
+        """
+        try:
+            # 获取当前持仓
+            position = self.get_position(self.symbol)
+            if not position:
+                logger.warning(f"⚠️ [平仓跳过] {self.symbol}: 无持仓数据")
+                return
+
+            position_size = abs(position.size)
+            if position_size <= 0:
+                logger.warning(f"⚠️ [平仓跳过] {self.symbol}: 持仓数量=0")
+                return
+
+            # 计算平仓价格
+            current_price = position.entry_price
+            if reason == "trailing_stop" and stop_price > 0:
+                # 追踪止损：使用追踪止损价
+                close_price = stop_price
+            else:
+                # 其他情况：使用市价平仓
+                close_price = 0.0  # 0 表示市价
+
+            # 计算盈亏
+            if reason == "trailing_stop":
+                profit_pct = (self.state_manager._trailing_stop.highest_price - position.entry_price) / position.entry_price * 100
+                logger.info(
+                    f"🎯 [追踪止损平仓] {self.symbol}: "
+                    f"入场价={position.entry_price:.6f}, "
+                    f"最高价={self.state_manager._trailing_stop.highest_price:.6f}, "
+                    f"平仓价={close_price:.6f}, "
+                    f"利润={profit_pct:.3f}%"
+                )
+            elif reason == "time_stop":
+                logger.info(
+                    f"⏰ [时间止损平仓] {self.symbol}: "
+                    f"持仓超时，市价平仓"
+                )
+            else:
+                profit_pct = (current_price - position.entry_price) / position.entry_price * 100
+                logger.info(
+                    f"📉 [硬止损平仓] {self.symbol}: "
+                    f"入场价={position.entry_price:.6f}, "
+                    f"平仓价={current_price:.6f}, "
+                    f"盈亏={profit_pct:.3f}%"
+                )
+
+            # 执行平仓
+            success = await self.sell(
+                symbol=self.symbol,
+                entry_price=close_price if close_price > 0 else position.entry_price,  # 市价时使用入场价占位
+                stop_loss_price=0.0,  # 平仓不需要止损
+                order_type='market',  # 市价平仓
+                size=position_size
+            )
+
+            if success:
+                logger.info(
+                    f"✅ [平仓成功] {self.symbol}: "
+                    f"原因={reason}, "
+                    f"数量={position_size:.4f}"
+                )
+
+        except Exception as e:
+            logger.error(f"❌ [平仓失败] {self.symbol}: {e}", exc_info=True)
 
     async def _reset_position_state(self):
         """
