@@ -381,17 +381,17 @@ class ScalperV2(BaseStrategy):
                 )
 
                 # 🔥 [新增] 记录满足所有条件的大机会日志
-                # 条件1：单笔金额 >= 500万 USDT
+                # 条件1：单笔金额 >= 100万 USDT（使用 SCALPER_MIN_FLOW）
                 # 条件2：总量 >= 流量阈值
                 # 条件3：趋势向上（Price > EMA）
                 # 条件4：买卖失衡 >= 3倍
-                if (usdt_val >= 5000000.0 and
+                if (usdt_val >= self.signal_generator.config.min_flow_usdt and
                     total_vol >= self.signal_generator.config.min_flow_usdt and
                     signal.is_valid and
                     signal.direction == 'bullish'):
 
-                    imbalance_ratio = signal.metadata.get('imbalance_ratio', 0)
-                    ema_value = signal.metadata.get('ema_value', 0)
+                    imbalance_ratio = signal.imbalance_ratio
+                    ema_value = signal.ema_value
 
                     logger.info(
                         f"🎯 [大机会] {self.symbol}: "

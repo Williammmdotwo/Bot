@@ -525,6 +525,8 @@ class CapitalCommander:
             # [FIX] quantity = risk_amount / (price_distance * contract_val) / leverage
             # 🔥 [严重修复] 必须除以杠杆，否则仓位计算错误
             leverage_dec = self._get_effective_leverage(strategy_id)
+            # 🔥 [修复] 将 float 转换为 Decimal，避免类型错误
+            leverage_dec = Decimal(str(leverage_dec))
             base_quantity_dec = max_risk_amount_dec / (price_distance_dec * contract_val_dec * leverage_dec)
             base_quantity = float(base_quantity_dec)
 

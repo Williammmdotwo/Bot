@@ -192,6 +192,7 @@ def load_config_from_env() -> dict:
                     'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 30)),  # V2: 30s
                     'cooldown_seconds': float(os.getenv('SCALPER_COOLDOWN', 0.1)),  # V2: HFT mode
                     'position_size': position_size_value,  # 只在显式设置时才传值
+                    'leverage': float(os.getenv('SCALPER_LEVERAGE', 5.0)),  # 🔥 [修复] 添加杠杆配置
                     # ✨ V2 新增参数（有默认值，可通过环境变量覆盖）
                     'trailing_stop_activation_pct': float(os.getenv('SCALPER_TRAILING_STOP_ACTIVATION_PCT', 0.001)),  # 0.1%
                     'trailing_stop_callback_pct': float(os.getenv('SCALPER_TRAILING_STOP_CALLBACK_PCT', 0.0005)),  # 0.05%
