@@ -147,8 +147,8 @@ class OrderManager:
             )
 
             if not validation_result.is_passed:
-                # 🔥 降级：风控拦截是正常行为，改为 DEBUG
-                logger.debug(
+                # 🔥 [修复] 风控拒绝改为 WARNING 级别，让用户能看到
+                logger.warning(
                     f"🛑 [RiskGuardian] 风控拒绝下单: {validation_result.reason}"
                 )
                 return None
@@ -178,8 +178,8 @@ class OrderManager:
                 })
 
                 if not risk_passed:
-                    # 🔥 降级：风控拦截是正常行为，改为 DEBUG
-                    logger.debug(f"风控拒绝下单: {risk_reason}")
+                    # 🔥 [修复] 风控拒绝改为 WARNING 级别，让用户能看到
+                    logger.warning(f"🛑 [PreTradeCheck] 风控拒绝下单: {risk_reason}")
                     return None
 
             # 2. 🔥 [修复] 资金检查（CapitalCommander：购买力）

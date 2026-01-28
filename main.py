@@ -111,7 +111,18 @@ def load_config_from_env() -> dict:
 
     if env_max_amount:
         max_order_amount = float(env_max_amount)
-        logger.info(f"🛡️ 使用环境变量风控限制: {max_order_amount} USDT")
+        # 🔥 [修复] 检查风控限额是否合理
+        reasonable_min = total_capital * 0.5  # 至少是总资金的 50%
+        if max_order_amount < reasonable_min:
+            logger.warning(
+                f"⚠️  风控限额太小: {max_order_amount:.2f} USDT < 合理最小值 {reasonable_min:.2f} USDT"
+            )
+            logger.warning(
+                f"🔧 [自动调整] 使用自适应计算: {total_capital * 5.0:.2f} USDT (基于资金 5x)"
+            )
+            max_order_amount = total_capital * 5.0
+        else:
+            logger.info(f"🛡️ 使用环境变量风控限制: {max_order_amount} USDT")
     else:
         # 自适应计算：允许最大单笔下单为总资金的 500% (对应 5x 杠杆)
         # 这样 10000 U 本金会自动拥有 50000 U 的单笔限额，既安全又灵活
