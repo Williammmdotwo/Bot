@@ -333,9 +333,11 @@ class ScalperV2(BaseStrategy):
             if symbol != self.symbol:
                 return
 
-            # 2. 状态检查 - 全局冷却
-            if self.state_manager.is_in_global_cooldown(self.config.cooldown_seconds):
-                return
+            # 🔥 [修复] 移除重复的冷却检查
+            # BaseStrategy 已经在 _submit_order 中处理冷却逻辑
+            # 这里不再需要 StateManager 的全局冷却检查
+            # if self.state_manager.is_in_global_cooldown(self.config.cooldown_seconds):
+            #     return
 
             # 3. 状态检查 - 持仓状态
             is_open = self.state_manager.is_position_open()
