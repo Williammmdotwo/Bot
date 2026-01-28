@@ -277,7 +277,14 @@ class OkxRestGateway(RestGateway):
         if response_data.get('code') != '0':
             error_code = response_data.get('code')
             error_msg = response_data.get('msg') or 'Unknown error'
-            logger.error(f"API 错误: {error_code} - {error_msg}")
+
+            # 🔥 [修复] 打印完整响应数据，便于调试
+            logger.error(
+                f"🔴 API 错误详情:\n"
+                f"  错误码: {error_code}\n"
+                f"  错误信息: {error_msg}\n"
+                f"  完整响应: {response_data}"
+            )
             raise ValueError(f"API 错误: {error_code} - {error_msg}")
 
         return response_data
