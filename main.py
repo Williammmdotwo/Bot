@@ -139,7 +139,7 @@ def load_config_from_env() -> dict:
     strategies_config = []
 
     # 检查激活的策略类型
-    active_strategy = os.getenv('ACTIVE_STRATEGY', 'scalper_v1').lower()
+    active_strategy = os.getenv('ACTIVE_STRATEGY', 'scalper_v2').lower()
 
     # 根据激活的策略类型加载配置
     if active_strategy == 'sniper':
@@ -170,8 +170,8 @@ def load_config_from_env() -> dict:
             if not existing:
                 strategies_config.append(sniper_config)
 
-    elif active_strategy == 'scalper_v1':
-        enable_scalper = os.getenv('ENABLE_SCALPER_V1', 'true').lower() == 'true'
+    elif active_strategy == 'scalper_v2':
+        enable_scalper = os.getenv('ENABLE_SCALPER_V2', 'true').lower() == 'true'
 
         if enable_scalper:
             # 🔧 修复仓位传递逻辑：只在显式设置时才传递固定仓位
@@ -180,8 +180,8 @@ def load_config_from_env() -> dict:
             position_size_value = float(position_size_env) if position_size_env else None
 
             scalper_config = {
-                'id': 'scalper_v1',
-                'type': 'scalper_v1',
+                'id': 'scalper_v2',
+                'type': 'scalper_v2',
                 'capital': float(os.getenv('SCALPER_CAPITAL', 10000.0)),
                 'params': {
                     'symbol': os.getenv('SCALPER_SYMBOL', 'DOGE-USDT-SWAP'),
@@ -205,10 +205,10 @@ def load_config_from_env() -> dict:
                 }
             }
 
-            # [新增] 打印 ScalperV1 V2 配置，验证环境变量透传
+            # [新增] 打印 ScalperV2 配置，验证环境变量透传
             params_dict = scalper_config.get('params', {})
             logger.info(
-                f"🔧 ScalperV1 V2 Config Loaded: "
+                f"🔧 ScalperV2 Config Loaded: "
                 f"symbol={params_dict.get('symbol', 'N/A')}, "
                 f"min_flow={params_dict.get('min_flow_usdt', 'N/A')}, "
                 f"ratio={params_dict.get('imbalance_ratio', 'N/A')}, "
@@ -220,7 +220,7 @@ def load_config_from_env() -> dict:
             # 更新或追加策略配置
             existing = False
             for i, s in enumerate(strategies_config):
-                if s.get('type') == 'scalper_v1':
+                if s.get('type') == 'scalper_v2':
                     strategies_config[i] = scalper_config
                     existing = True
                     break

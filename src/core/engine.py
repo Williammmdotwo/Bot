@@ -235,9 +235,9 @@ class Engine:
             strategy_id = strategy_config.get('id', strategy_type)
             params['strategy_id'] = strategy_id  # 将 strategy_id 添加到参数中
 
-            if strategy_type == 'scalper_v1':
-                from ..strategies.hft.scalper_v2 import ScalperV1Refactored
-                strategy = ScalperV1Refactored(
+            if strategy_type == 'scalper_v2':
+                from ..strategies.hft.scalper_v2 import ScalperV2
+                strategy = ScalperV2(
                     event_bus=self._event_bus,
                     order_manager=self._order_manager,
                     capital_commander=self._capital_commander,
@@ -497,8 +497,14 @@ class Engine:
     def _setup_signal_handlers(self):
         """设置信号处理器（优雅退出）"""
         def signal_handler(signum, frame):
-            logger.info(f"收到信号 {signum}，准备退出...")
-            asyncio.create_task(self.stop())
+            import signal as signal_module
+            signal_name = signal_module.Signals(signum).name
+            logger.info(f"📡 收到信号 {signum} ({signal_name})，准备退出...")
+            # 只有在明确按下 Ctrl+C 时才退出
+            if signum == signal_module.SIGINT:
+                asyncio.create_task(self.stop())
+            else:
+                logger.warning(f"⚠️ 收到非预期信号 {signum} ({signal_name})，忽略...")
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)

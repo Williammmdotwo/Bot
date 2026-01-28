@@ -56,9 +56,9 @@ from .components.execution_algo import ExecutionConfig
 logger = logging.getLogger(__name__)
 
 
-class ScalperV1Refactored(BaseStrategy):
+class ScalperV2(BaseStrategy):
     """
-    ScalperV1 Micro-Reversion Sniper 策略（V2 - Refactored）
+    ScalperV2 Micro-Reversion Sniper 策略
 
     基于组件架构的重构版本，使用独立的组件：
     - SignalGenerator: 信号生成（EMA、Imbalance、Spread）
@@ -178,7 +178,7 @@ class ScalperV1Refactored(BaseStrategy):
         self._previous_price = 0.0
 
         logger.info(
-            f"🚀 ScalperV1 初始化（V2 - Refactored）: symbol={symbol}, "
+            f"🚀 ScalperV2 初始化: symbol={symbol}, "
             f"imbalance_ratio={imbalance_ratio}, "
             f"min_flow={min_flow_usdt} USDT, "
             f"take_profit={take_profit_pct*100:.2f}%, "
@@ -209,7 +209,7 @@ class ScalperV1Refactored(BaseStrategy):
         await self._sync_instrument_details()
 
         logger.info(
-            f"🚀 ScalperV1 V2 启动: symbol={self.symbol}, "
+            f"🚀 ScalperV2 启动: symbol={self.symbol}, "
             f"cooldown={self.config.cooldown_seconds}s, "
             f"mode=Sniper, "
             f"direction=LongOnly"
@@ -246,12 +246,21 @@ class ScalperV1Refactored(BaseStrategy):
             self.tick_size = float(inst_data.get('tickSz', 0.01))
 
             # 5. 同步智能点差阈值
-            current_price = float(inst_data.get('last', 0.0) or 1.0)
-            auto_spread = self.tick_size * 20  # 允许 20 跳的价差
-            auto_spread_pct = auto_spread / current_price if current_price > 0 else 0.001
+            # 🔥 [修复] 获取当前价格，优先使用 last，如果为 0 则尝试 markPrice 或 idxPx
+            current_price_raw = inst_data.get('last') or inst_data.get('markPx') or inst_data.get('idxPx')
+            current_price = float(current_price_raw) if current_price_raw else 1.0
 
-            # 混合策略：取 Config 和 Auto 的最大值
-            final_spread = max(self.signal_generator.config.spread_threshold_pct, auto_spread_pct)
+            if current_price <= 0:
+                logger.warning(
+                    f"⚠️ [配置警告] {self.symbol}: 无法获取当前价格，使用默认点差阈值"
+                )
+                final_spread = self.signal_generator.config.spread_threshold_pct
+            else:
+                auto_spread = self.tick_size * 20  # 允许 20 跳的价差
+                auto_spread_pct = auto_spread / current_price
+
+                # 混合策略：取 Config 和 Auto 的最大值
+                final_spread = max(self.signal_generator.config.spread_threshold_pct, auto_spread_pct)
 
             # 更新配置
             self.execution_config = ExecutionConfig(
@@ -767,8 +776,8 @@ class ScalperV1Refactored(BaseStrategy):
         win_rate = 0.0
 
         base_stats.update({
-            'strategy': 'ScalperV1',
-            'mode': 'Sniper V2 Refactored',
+            'strategy': 'ScalperV2',
+            'mode': 'Sniper',
             'version': '2.0',
             'architecture': 'Controller-Components',
             'symbol': self.symbol,
@@ -824,7 +833,7 @@ class ScalperV1Refactored(BaseStrategy):
         # 重置订单簿接收标志
         self._orderbook_received = False
 
-        logger.info(f"ScalperV1 V2 状态已完全重置: {self.symbol}")
+        logger.info(f"ScalperV2 状态已完全重置: {self.symbol}")
 
     # ========== 测试辅助方法 ==========
     # 这些方法仅供测试使用，用于设置组件状态
