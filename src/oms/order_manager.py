@@ -119,6 +119,14 @@ class OrderManager:
         # 3. 计算订单名义价值
         amount_usdt = calc_price * size if calc_price else 0
 
+        # 🔥 [修复] 乘以合约面值 ctVal（修复 100 倍错误）
+        if self._capital_commander and amount_usdt > 0:
+            instrument = self._capital_commander._instruments.get(symbol)
+            if instrument and hasattr(instrument, 'ct_val'):
+                ct_val = float(instrument.ct_val)
+                amount_usdt = amount_usdt * ct_val
+                logger.debug(f"💰 [订单金额计算] {symbol}: {size:.4f} × {calc_price:.2f} × ctVal({ct_val}) = {amount_usdt:.2f} USDT")
+
         # 4. 更新价格显示逻辑（使用计算后的价格）
         price_str = "MARKET"
         if calc_price and calc_price > 0:
