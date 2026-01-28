@@ -7,6 +7,8 @@ ScalperV1 策略组件模块
 - StateManager: 状态管理（持仓、订单、冷却、自愈）
 """
 
+import logging
+
 from .signal_generator import SignalGenerator
 from .execution_algo import ExecutionAlgo
 from .state_manager import StateManager

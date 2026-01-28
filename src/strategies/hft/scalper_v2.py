@@ -50,6 +50,8 @@ from ..base_strategy import BaseStrategy
 
 # 导入组件
 from .components import SignalGenerator, ExecutionAlgo, StateManager
+from .components.signal_generator import ScalperV1Config
+from .components.execution_algo import ExecutionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +127,7 @@ class ScalperV1Refactored(BaseStrategy):
         # ========== 初始化组件 ==========
 
         # 1. 信号生成器配置
-        signal_generator_config = SignalGenerator.ScalperV1Config(
+        signal_generator_config = ScalperV1Config(
             symbol=symbol,
             imbalance_ratio=imbalance_ratio,
             min_flow_usdt=min_flow_usdt,
@@ -135,7 +137,7 @@ class ScalperV1Refactored(BaseStrategy):
         self.signal_generator = SignalGenerator(signal_generator_config)
 
         # 2. 执行算法配置
-        execution_config = ExecutionAlgo.ExecutionConfig(
+        execution_config = ExecutionConfig(
             symbol=symbol,
             tick_size=0.0001,
             spread_threshold_pct=0.0005,
@@ -239,10 +241,10 @@ class ScalperV1Refactored(BaseStrategy):
             auto_spread_pct = auto_spread / current_price if current_price > 0 else 0.001
 
             # 混合策略：取 Config 和 Auto 的最大值
-            final_spread = max(signal_generator_config.spread_threshold_pct, auto_spread_pct)
+            final_spread = max(self.signal_generator.config.spread_threshold_pct, auto_spread_pct)
 
             # 更新配置
-            self.execution_config = ExecutionAlgo.ExecutionConfig(
+            self.execution_config = ExecutionConfig(
                 symbol=self.symbol,
                 tick_size=self.tick_size,
                 spread_threshold_pct=final_spread,
@@ -791,3 +793,38 @@ class ScalperV1Refactored(BaseStrategy):
         self._orderbook_received = False
 
         logger.info(f"ScalperV1 V2 状态已完全重置: {self.symbol}")
+
+    # ========== 测试辅助方法 ==========
+    # 这些方法仅供测试使用，用于设置组件状态
+
+    def _set_price_history_for_testing(self, prices: list):
+        """
+        设置价格历史（仅用于测试）
+
+        Args:
+            prices (list): 价格列表
+        """
+        import collections
+        self.signal_generator.price_history = collections.deque(prices, maxlen=100)
+        # 重新计算 EMA
+        if len(prices) >= self.signal_generator.config.ema_period:
+            recent_prices = prices[-self.signal_generator.config.ema_period:]
+            self.signal_generator.ema_value = sum(recent_prices) / len(recent_prices)
+
+    def _get_ema_value(self) -> float:
+        """
+        获取当前 EMA 值（仅用于测试）
+
+        Returns:
+            float: EMA 值
+        """
+        return self.signal_generator.ema_value
+
+    def _set_ema_value(self, value: float):
+        """
+        设置 EMA 值（仅用于测试）
+
+        Args:
+            value (float): EMA 值
+        """
+        self.signal_generator.ema_value = value
