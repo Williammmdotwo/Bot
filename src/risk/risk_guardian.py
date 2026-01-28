@@ -176,7 +176,7 @@ class RiskGuardian:
         if self._is_circuit_breaker_triggered(strategy_id, side, symbol):
             reason = f"策略 {strategy_id} 回撤熔断触发，禁止开仓"
             self._total_rejections += 1
-            logger.debug(f"🛑 风控拒绝: {reason}")
+            logger.warning(f"🛑 [风控拒绝] {reason}")  # 🔥 [修复] 改为 WARNING
             return RiskValidationResult(
                 is_passed=False,
                 reason=reason,
@@ -191,7 +191,7 @@ class RiskGuardian:
                 f"{self.frequency_window}s > {self.max_frequency} 单"
             )
             self._total_rejections += 1
-            logger.debug(f"风控拒绝: {reason}")
+            logger.warning(f"🛑 [风控拒绝] {reason}")  # 🔥 [修复] 改为 WARNING
             return RiskValidationResult(
                 is_passed=False,
                 reason=reason,
@@ -205,7 +205,7 @@ class RiskGuardian:
                 f"{self.max_order_amount:.2f} USDT"
             )
             self._total_rejections += 1
-            logger.debug(f"风控拒绝: {reason}")
+            logger.warning(f"🛑 [风控拒绝] {reason}")  # 🔥 [修复] 改为 WARNING
             return RiskValidationResult(
                 is_passed=False,
                 reason=reason,
@@ -220,7 +220,7 @@ class RiskGuardian:
         )
         if not policy_passed:
             self._total_rejections += 1
-            logger.debug(f"风控拒绝: {policy_reason}")
+            logger.warning(f"🛑 [风控拒绝] {policy_reason}")  # 🔥 [修复] 改为 WARNING
             return RiskValidationResult(
                 is_passed=False,
                 reason=policy_reason,
@@ -259,7 +259,7 @@ class RiskGuardian:
                 f"amount={amount_usdt:.2f} USDT"
             )
             self._total_rejections += 1
-            logger.debug(f"风控拒绝: {reason}")
+            logger.warning(f"🛑 [风控拒绝] {reason}")  # 🔥 [修复] 改为 WARNING
             return RiskValidationResult(
                 is_passed=False,
                 reason=reason,
@@ -281,7 +281,7 @@ class RiskGuardian:
             if suggested_size <= 0:
                 reason = "仓位计算风控触发，建议仓位为 0"
                 self._total_rejections += 1
-                logger.debug(f"风控拒绝: {reason}")
+                logger.warning(f"🛑 [风控拒绝] {reason}")  # 🔥 [修复] 改为 WARNING
                 return RiskValidationResult(
                     is_passed=False,
                     reason=reason,
