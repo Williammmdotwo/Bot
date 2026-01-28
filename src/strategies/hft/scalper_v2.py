@@ -248,19 +248,37 @@ class ScalperV2(BaseStrategy):
             # 5. 同步智能点差阈值
             # 🔥 [修复] 获取当前价格，优先使用 last，如果为 0 则尝试 markPrice 或 idxPx
             current_price_raw = inst_data.get('last') or inst_data.get('markPx') or inst_data.get('idxPx')
-            current_price = float(current_price_raw) if current_price_raw else 1.0
 
-            if current_price <= 0:
+            # 🔥 [修复] 检查价格有效性（处理 None 和 0）
+            if not current_price_raw or float(current_price_raw) <= 0:
                 logger.warning(
-                    f"⚠️ [配置警告] {self.symbol}: 无法获取当前价格，使用默认点差阈值"
+                    f"⚠️ [配置警告] {self.symbol}: 无法获取当前价格 (last={inst_data.get('last')}, markPx={inst_data.get('markPx')}, idxPx={inst_data.get('idxPx')})，使用默认点差阈值"
                 )
+                # 使用配置文件的默认点差阈值（不使用 AutoSpread）
                 final_spread = self.signal_generator.config.spread_threshold_pct
+                # 🔥 [修复] 保持初始化时的 tick_size（0.1），不被覆盖
+                logger.info(
+                    f"✅ [智能配置] {self.symbol}: "
+                    f"ctVal={self.contract_val}, "
+                    f"TickSize={self.tick_size:.6f} (使用初始化值), "
+                    f"Spread=Config({self.signal_generator.config.spread_threshold_pct:.4%})"
+                )
             else:
+                current_price = float(current_price_raw)
+
+                # 🔥 [修复] tick_size 已经是正确的值（0.1），直接使用
                 auto_spread = self.tick_size * 20  # 允许 20 跳的价差
                 auto_spread_pct = auto_spread / current_price
 
                 # 混合策略：取 Config 和 Auto 的最大值
                 final_spread = max(self.signal_generator.config.spread_threshold_pct, auto_spread_pct)
+
+                logger.info(
+                    f"✅ [智能配置] {self.symbol}: "
+                    f"ctVal={self.contract_val}, "
+                    f"TickSize={self.tick_size:.6f}, "
+                    f"AutoSpread={final_spread:.4%} (current_price={current_price:.2f})"
+                )
 
             # 更新配置
             self.execution_config = ExecutionConfig(
@@ -276,13 +294,6 @@ class ScalperV2(BaseStrategy):
                 aggressive_maker_price_offset=self.execution_config.aggressive_maker_price_offset
             )
             self.execution_algo = ExecutionAlgo(self.execution_config)
-
-            logger.info(
-                f"✅ [智能配置] {self.symbol}: "
-                f"ctVal={self.contract_val}, "
-                f"TickSize={self.tick_size:.6f}, "
-                f"AutoSpread={final_spread:.4%}"
-            )
 
         except Exception as e:
             logger.error(

@@ -116,7 +116,7 @@ class RiskProfile:
 # 默认保守配置（用于未注册 Profile 的策略）
 DEFAULT_CONSERVATIVE_PROFILE = RiskProfile(
     strategy_id="default",
-    max_leverage=1.0,
+    max_leverage=10.0,  # 🔥 [修复] 改为 10.0（匹配标准配置）
     max_order_size_usdt=1000.0,
     single_loss_cap_pct=0.01,
     stop_loss_type=StopLossType.HARD_PRICE,

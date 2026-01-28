@@ -3,6 +3,7 @@
 """
 
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
@@ -59,9 +60,19 @@ class BaseStrategy(ABC):
         self._position_manager = position_manager
 
         # 策略风控配置（默认保守配置）
+        # 🔥 [修复] 从环境变量读取杠杆（优先级：环境变量 > 默认 10x）
+        strategy_leverage_env = os.getenv('SCALPER_LEVERAGE')
+        default_leverage = 10.0
+        if strategy_leverage_env:
+            try:
+                default_leverage = float(strategy_leverage_env)
+                logger.info(f"📊 从环境变量读取杠杆: SCALPER_LEVERAGE={default_leverage}x")
+            except ValueError:
+                logger.warning(f"⚠️ SCALPER_LEVERAGE 环境变量无效: {strategy_leverage_env}, 使用默认值 10x")
+
         self.risk_profile = RiskProfile(
             strategy_id=self.strategy_id,
-            max_leverage=1.0,
+            max_leverage=default_leverage,  # 🔥 [修复] 使用环境变量或默认 10.0
             stop_loss_type=StopLossType.HARD_PRICE
         )
 
@@ -343,7 +354,16 @@ class BaseStrategy(ABC):
                 )
             else:
                 # 限价单：执行资金检查
-                amount_usdt = entry_price * safe_size
+                # 🔥 [修复] 计算名义价值必须乘以 contract_val
+                instrument = self._capital_commander._instruments.get(symbol)
+                if instrument and hasattr(instrument, 'ct_val'):
+                    ct_val = float(instrument.ct_val)
+                    logger.debug(f"💰 [购买力检查] {symbol}: 使用 ctVal={ct_val}")
+                else:
+                    ct_val = 1.0
+                    logger.warning(f"⚠️ [购买力检查] {symbol}: 未找到 ctVal，使用默认值 1.0")
+
+                amount_usdt = entry_price * safe_size * ct_val  # 🔥 [修复] 乘以 contract_val
                 if not self._capital_commander.check_buying_power(
                     self.strategy_id,
                     amount_usdt,
