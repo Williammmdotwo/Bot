@@ -5,6 +5,7 @@ Trade Parser - 处理交易数据逻辑
 """
 
 import logging
+import os
 from typing import Optional, Dict, Any
 from ....core.event_types import Event, EventType
 
@@ -31,6 +32,16 @@ class TradeParser:
         """
         self.symbol = symbol
         self.event_bus = event_bus
+
+        # 🔥 [修复] 从环境变量读取大单日志阈值
+        # 默认值: 500000 USDT (BTC 约 0.56 BTC)
+        # 可通过 .env 文件配置: SCALPER_MIN_FLOW
+        try:
+            self.big_order_threshold = float(os.getenv('SCALPER_MIN_FLOW', '500000'))
+            logger.info(f"📊 大单日志阈值已配置: {self.big_order_threshold:,.0f} USDT")
+        except (ValueError, TypeError) as e:
+            logger.warning(f"配置读取失败，使用默认值 500000 USDT: {e}")
+            self.big_order_threshold = 500000.0
 
     async def process(self, data: dict) -> Optional[Dict[str, Any]]:
         """
@@ -118,8 +129,9 @@ class TradeParser:
                 # 计算交易金额 (USDT)
                 usdt_value = price * size
 
+                # 🔥 [修复] 使用配置的阈值而非硬编码
                 # 高频数据流不记录详细日志，仅保留错误日志
-                if usdt_value >= 10000.0:
+                if usdt_value >= self.big_order_threshold:
                     logger.info(
                         f"🐋 [大单] {self.symbol}: {side} {size:.4f} @ {price:.4f} = {usdt_value:.2f} USDT"
                     )
