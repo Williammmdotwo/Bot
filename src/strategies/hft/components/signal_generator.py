@@ -86,12 +86,11 @@ class SignalGenerator:
         self.buy_vol_increment = 0.0
         self.sell_vol_increment = 0.0
 
-        logger.info(
-            f"SignalGenerator 初始化: symbol={config.symbol}, "
-            f"ema_period={config.ema_period}, "
-            f"imbalance_ratio={config.imbalance_ratio}, "
-            f"spread_threshold={config.spread_threshold_pct*100:.4f}%"
-        )
+        # 🔧 [调试] 验证 min_flow_usdt 配置
+        logger.info(f"🔧 [配置验证] SignalGenerator 初始化:")
+        logger.info(f"   config.min_flow_usdt = {config.min_flow_usdt:.0f}")
+        logger.info(f"   self.config.min_flow_usdt = {self.config.min_flow_usdt:.0f}")
+        logger.info(f"   对象 = {config}")
 
     def _update_ema(self, price: float):
         """
@@ -208,57 +207,19 @@ class SignalGenerator:
                 f"流动性过滤: Volume={volume_usdt:.0f} USDT < "
                 f"MinFlow={self.config.min_flow_usdt:.0f} USDT"
             )
-        return signal
-
-    def get_state(self) -> dict:
-        """
-        获取当前状态（用于调试和监控）
-
-        Returns:
-            dict: 当前状态信息
-        """
-        return {
-            'ema_value': self.ema_value,
-            'price_history_len': len(self.price_history),
-            'trend_bias': self.get_trend_bias(),
-            'buy_vol_increment': self.buy_vol_increment,
-            'sell_vol_increment': self.sell_vol_increment,
-            'config': {
-                'symbol': self.config.symbol,
-                'ema_period': self.config.ema_period,
-                'imbalance_ratio': self.config.imbalance_ratio,
-                'min_flow_usdt': self.config.min_flow_usdt,
-                'spread_threshold_pct': self.config.spread_threshold_pct
-            }
-        }
-
-        # 4. 检查流动性：最小流速（USDT）
-        if total_vol < self.config.min_flow_usdt:
-            signal.is_valid = False
-            signal.direction = "neutral"
-            signal.reason = f"volume_filter:volume_too_low"
-            signal.metadata = {
-                'total_vol': total_vol,
-                'min_flow': self.config.min_flow_usdt
-            }
-            logger.debug(
-                f"[SignalGenerator] {symbol}: "
-                f"流动性过滤: Volume={total_vol:.0f} USDT < "
-                f"MinFlow={self.config.min_flow_usdt:.0f} USDT"
-            )
             return signal
 
         # 5. 计算买卖失衡
         imbalance = 0.0
-        if sell_vol > 0:
-            imbalance = buy_vol / sell_vol
-        elif buy_vol > 0:
+        if self.sell_vol_increment > 0:
+            imbalance = self.buy_vol_increment / self.sell_vol_increment
+        elif self.buy_vol_increment > 0:
             # 卖量为0，买量>0 -> 极度看多
-            imbalance = 9999.0
+            imbalance = 999.0
             logger.debug(
                 f"[SignalGenerator] {symbol}: "
-                f"极端失衡: 卖={sell_vol:.0f} USDT, "
-                f"买={buy_vol:.0f} USDT, 失衡比=∞"
+                f"极端失衡: 卖={self.sell_vol_increment:.0f} USDT, "
+                f"买={self.buy_vol_increment:.0f} USDT, 失衡比=∞"
             )
 
         # 检查是否满足失衡阈值
@@ -267,8 +228,8 @@ class SignalGenerator:
             signal.direction = "neutral"
             signal.reason = f"imbalance_filter:ratio_too_low"
             signal.metadata = {
-                'buy_vol': buy_vol,
-                'sell_vol': sell_vol,
+                'buy_vol': self.buy_vol_increment,
+                'sell_vol': self.sell_vol_increment,
                 'imbalance_ratio': imbalance,
                 'threshold': self.config.imbalance_ratio
             }
@@ -287,10 +248,10 @@ class SignalGenerator:
         signal.metadata = {
             'ema_value': self.ema_value,
             'trend_bias': trend_bias,
-            'buy_vol': buy_vol,
-            'sell_vol': sell_vol,
+            'buy_vol': self.buy_vol_increment,
+            'sell_vol': self.sell_vol_increment,
             'imbalance_ratio': imbalance,
-            'total_vol': total_vol
+            'total_vol': self.buy_vol_increment + self.sell_vol_increment
         }
 
         logger.info(
@@ -314,6 +275,8 @@ class SignalGenerator:
             'ema_value': self.ema_value,
             'price_history_len': len(self.price_history),
             'trend_bias': self.get_trend_bias(),
+            'buy_vol_increment': self.buy_vol_increment,
+            'sell_vol_increment': self.sell_vol_increment,
             'config': {
                 'symbol': self.config.symbol,
                 'ema_period': self.config.ema_period,
