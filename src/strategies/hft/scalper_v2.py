@@ -52,6 +52,7 @@ from ..base_strategy import BaseStrategy
 from .components import SignalGenerator, ExecutionAlgo, StateManager
 from .components.signal_generator import ScalperV1Config
 from .components.execution_algo import ExecutionConfig
+from .components.position_sizer import PositionSizer, PositionSizingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,46 @@ class ScalperV2(BaseStrategy):
         self._instrument_synced = False
         self._start_time = 0.0
         self._orderbook_received = False
+
+        # ========== 初始化自适应仓位管理器 ==========
+        # 优先级：环境变量 > 配置文件 > 代码默认值
+        # 从kwargs中获取position_sizing配置（如果有的话）
+        position_sizing_kwargs = kwargs.get('position_sizing', {})
+
+        # 创建仓位管理配置
+        position_sizing_config = PositionSizingConfig(
+            # 基础资金配置
+            base_equity_ratio=position_sizing_kwargs.get('base_equity_ratio', 0.02),  # 总资金的 2%
+            max_leverage=position_sizing_kwargs.get('max_leverage', 5.0),
+            min_order_value=position_sizing_kwargs.get('min_order_value', 10.0),  # 最小下单金额 10 USDT
+
+            # 信号强度自适应配置
+            signal_scaling_enabled=position_sizing_kwargs.get('signal_scaling_enabled', True),
+            signal_threshold_normal=position_sizing_kwargs.get('signal_threshold_normal', 5.0),
+            signal_threshold_aggressive=position_sizing_kwargs.get('signal_threshold_aggressive', 10.0),
+            signal_aggressive_multiplier=position_sizing_kwargs.get('signal_aggressive_multiplier', 1.5),
+
+            # 流动性/滑点保护配置
+            liquidity_protection_enabled=position_sizing_kwargs.get('liquidity_protection_enabled', True),
+            liquidity_depth_ratio=position_sizing_kwargs.get('liquidity_depth_ratio', 0.20),  # 单笔金额不超过盘口前 3 档的 20%
+            liquidity_depth_levels=position_sizing_kwargs.get('liquidity_depth_levels', 3),
+
+            # 波动率保护配置
+            volatility_protection_enabled=position_sizing_kwargs.get('volatility_protection_enabled', True),
+            volatility_ema_period=position_sizing_kwargs.get('volatility_ema_period', 20),
+            volatility_threshold=position_sizing_kwargs.get('volatility_threshold', 0.001)  # 0.1%
+        )
+
+        # 初始化仓位计算器
+        self.position_sizer = PositionSizer(position_sizing_config)
+
+        logger.info(
+            f"✅ [ScalperV2] 自适应仓位管理器已初始化: "
+            f"base_ratio={position_sizing_config.base_equity_ratio*100:.1f}%, "
+            f"signal_normal={position_sizing_config.signal_threshold_normal}x, "
+            f"signal_agg={position_sizing_config.signal_threshold_aggressive}x, "
+            f"liquidity_ratio={position_sizing_config.liquidity_depth_ratio*100:.0f}%"
+        )
 
         # ========== 保留的变量 ==========
         self.vol_window_start = 0.0
@@ -430,33 +471,48 @@ class ScalperV2(BaseStrategy):
                         logger.warning("订单簿数据不可用，跳过本次开仓")
                         return
 
+                    # 获取账户权益（用于自适应仓位计算）
+                    account_equity = self._capital_commander.get_total_equity()
+
+                    # 获取订单簿深度（用于流动性保护）
+                    order_book = self.public_gateway.get_order_book_depth(levels=3)
+
+                    # 🎯 使用自适应仓位管理器计算下单金额
+                    usdt_amount = self.position_sizer.calculate_order_size(
+                        account_equity=account_equity,
+                        order_book=order_book,
+                        signal_ratio=signal.imbalance_ratio,
+                        current_price=price,
+                        side='buy'  # 做多只看卖方深度
+                    )
+
+                    # 如果返回 0，说明流动性不足或信号太弱，跳过
+                    if usdt_amount <= 0:
+                        logger.warning(
+                            f"🛑 [自适应仓位] {self.symbol}: "
+                            f"计算金额={usdt_amount:.2f} USDT ≤ 0，跳过本次开仓"
+                        )
+                        return
+
+                    # 转换为合约张数
+                    trade_size = self.position_sizer.convert_to_contracts(
+                        amount_usdt=usdt_amount,
+                        current_price=price,
+                        ct_val=self.contract_val
+                    )
+
+                    # 确保至少 1 张
+                    trade_size = max(1, int(trade_size))
+                    logger.info(
+                        f"🎯 [自适应仓位] {self.symbol}: "
+                        f"账户权益={account_equity:.2f} USDT, "
+                        f"下单金额={usdt_amount:.2f} USDT, "
+                        f"合约张数={trade_size} 张, "
+                        f"不平衡比={signal.imbalance_ratio:.1f}x"
+                    )
+
                     # 计算止损价格
                     stop_loss_price = self._calculate_stop_loss(price)
-
-                    # 检查风控：计算仓位
-                    if self.config.position_size is not None:
-                        trade_size = max(1, int(self.config.position_size))
-                        logger.debug(f"使用固定仓位: {trade_size}")
-                    else:
-                        # 基于风险计算仓位
-                        trade_size = self._capital_commander.calculate_safe_quantity(
-                            symbol=self.symbol,
-                            entry_price=best_bid,  # 临时使用，后面会重新计算
-                            stop_loss_price=stop_loss_price,
-                            strategy_id=self.strategy_id,
-                            contract_val=self.contract_val
-                        )
-
-                        # 如果风控返回 0 或负数，直接跳过开仓
-                        if trade_size <= 0:
-                            logger.warning(
-                                f"🚫 [风控拒绝] {self.symbol}: "
-                                f"计算仓位={trade_size:.4f} ≤ 0，跳过本次开仓"
-                            )
-                            return
-
-                        trade_size = max(1, int(trade_size))
-                        logger.debug(f"基于风险计算仓位: {trade_size}")
 
                     # 使用执行算法计算挂单价格
                     decision = self.execution_algo.calculate_maker_price(

@@ -262,3 +262,65 @@ class OkxPublicWsGateway(WsBaseGateway):
         except Exception as e:
             logger.error(f"获取最佳买卖价失败: {e}", exc_info=True)
             return (0.0, 0.0)
+
+    def get_order_book_depth(self, levels: int = 3) -> dict:
+        """
+        获取订单簿深度数据（用于流动性保护）
+
+        Args:
+            levels: 档位数量（默认3档）
+
+        Returns:
+            dict: {'bids': [...], 'asks': [...]}
+        """
+        try:
+            bids = self._order_book.get('bids', [])[:levels]
+            asks = self._order_book.get('asks', [])[:levels]
+
+            return {'bids': bids, 'asks': asks}
+
+        except Exception as e:
+            logger.error(f"获取订单簿深度失败: {e}", exc_info=True)
+            return {'bids': [], 'asks': []}
+
+    def get_depth_value(self, levels: int = 3, side: str = 'buy') -> float:
+        """
+        获取盘口前N档的总金额（流动性指标）
+
+        🔥 关键：根据交易方向使用对应方深度
+        - 做多（buy）看卖方深度（asks）
+        - 做空（sell）看买方深度（bids）
+
+        Args:
+            levels: 档位数量
+            side: 交易方向 'buy' 或 'sell'
+
+        Returns:
+            float: 总金额 (USDT)
+        """
+        try:
+            # 🔥 关键：根据交易方向使用对应方深度
+            if side == 'buy':
+                depth_orders = self._order_book.get('asks', [])
+                side_name = "卖方"
+            else:
+                depth_orders = self._order_book.get('bids', [])
+                side_name = "买方"
+
+            total_value = 0.0
+
+            # 计算前N档的总金额
+            for i in range(min(levels, len(depth_orders))):
+                price, size = depth_orders[i]
+                total_value += price * size
+
+            logger.debug(
+                f"📊 [深度查询] {side_name}盘口前{levels}档 "
+                f"总金额={total_value:.2f} USDT"
+            )
+
+            return total_value
+
+        except Exception as e:
+            logger.error(f"计算深度价值失败: {e}", exc_info=True)
+            return 0.0
