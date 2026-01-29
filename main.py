@@ -213,57 +213,53 @@ def load_config_from_env() -> dict:
                     'maker_timeout_seconds': float(os.getenv('SCALPER_MAKER_TIMEOUT', 3.0)),  # 🔥 [修复] Maker 挂单超时时间（默认 3 秒）
                     'enable_chasing': os.getenv('SCALPER_ENABLE_CHASING', 'true').lower() == 'true',  # 是否启用追单
                     'tick_size': float(os.getenv('SCALPER_TICK_SIZE', 0.01)),  # 最小价格跳动
-                    'max_chase_distance_pct': float(os.getenv('SCALPER_MAX_CHASE_DISTANCE', 0.001))  # 最大追单距离 0.1%
-                },
-
-                # ========== 自适应仓位管理配置 (Position Sizing) ==========
-                'position_sizing': {
-                    # 基础资金配置
-                    'base_equity_ratio': float(
-                        os.getenv('POSITION_SIZING_BASE_EQUITY_RATIO', '0.02')
-                    ),  # 总资金的 2%
-                    'max_leverage': float(
-                        os.getenv('POSITION_SIZING_MAX_LEVERAGE', '5.0')
-                    ),  # 最大杠杆 5x
-                    'min_order_value': float(
-                        os.getenv('POSITION_SIZING_MIN_ORDER_VALUE', '10.0')
-                    ),  # 最小下单金额 10 USDT
-
-                    # 信号强度自适应配置
-                    'signal_scaling_enabled': os.getenv(
-                        'POSITION_SIZING_SIGNAL_SCALING_ENABLED', 'true'
-                    ).lower() == 'true',
-                    'signal_threshold_normal': float(
-                        os.getenv('POSITION_SIZING_SIGNAL_THRESHOLD_NORMAL', '5.0')
-                    ),  # 5x 不平衡 -> 1.0倍
-                    'signal_threshold_aggressive': float(
-                        os.getenv('POSITION_SIZING_SIGNAL_THRESHOLD_AGGRESSIVE', '10.0')
-                    ),  # 10x 不平衡 -> 1.5倍
-                    'signal_aggressive_multiplier': float(
-                        os.getenv('POSITION_SIZING_AGGRESSIVE_MULTIPLIER', '1.5')
-                    ),
-
-                    # 流动性/滑点保护配置
-                    'liquidity_protection_enabled': os.getenv(
-                        'POSITION_SIZING_LIQUIDITY_PROTECTION_ENABLED', 'true'
-                    ).lower() == 'true',
-                    'liquidity_depth_ratio': float(
-                        os.getenv('POSITION_SIZING_LIQUIDITY_DEPTH_RATIO', '0.20')
-                    ),  # 单笔金额不超过盘口前 3 档的 20%
-                    'liquidity_depth_levels': int(
-                        os.getenv('POSITION_SIZING_LIQUIDITY_DEPTH_LEVELS', '3')
-                    ),  # 监控前 3 档深度
-
-                    # 波动率保护配置
-                    'volatility_protection_enabled': os.getenv(
-                        'POSITION_SIZING_VOLATILITY_PROTECTION_ENABLED', 'true'
-                    ).lower() == 'true',
-                    'volatility_ema_period': int(
-                        os.getenv('POSITION_SIZING_VOLATILITY_EMA_PERIOD', '20')
-                    ),  # 波动率 EMA 周期
-                    'volatility_threshold': float(
-                        os.getenv('POSITION_SIZING_VOLATILITY_THRESHOLD', '0.001')
-                    )  # 波动率阈值 0.1%
+                    'max_chase_distance_pct': float(os.getenv('SCALPER_MAX_CHASE_DISTANCE', 0.001)),  # 最大追单距离 0.1%
+                    # ========== 自适应仓位管理配置 (Position Sizing) ==========
+                    'position_sizing': {
+                        # 基础资金配置
+                        'base_equity_ratio': float(
+                            os.getenv('POSITION_SIZING_BASE_EQUITY_RATIO', '0.02')
+                        ),  # 总资金的 2%
+                        'max_leverage': float(
+                            os.getenv('POSITION_SIZING_MAX_LEVERAGE', '5.0')
+                        ),  # 最大杠杆 5x
+                        'min_order_value': float(
+                            os.getenv('POSITION_SIZING_MIN_ORDER_VALUE', '10.0')
+                        ),  # 最小下单金额 10 USDT
+                        # 信号强度自适应配置
+                        'signal_scaling_enabled': os.getenv(
+                            'POSITION_SIZING_SIGNAL_SCALING_ENABLED', 'true'
+                        ).lower() == 'true',
+                        'signal_threshold_normal': float(
+                            os.getenv('POSITION_SIZING_SIGNAL_THRESHOLD_NORMAL', '5.0')
+                        ),  # 5x 不平衡 -> 1.0倍
+                        'signal_threshold_aggressive': float(
+                            os.getenv('POSITION_SIZING_SIGNAL_THRESHOLD_AGGRESSIVE', '10.0')
+                        ),  # 10x 不平衡 -> 1.5倍
+                        'signal_aggressive_multiplier': float(
+                            os.getenv('POSITION_SIZING_AGGRESSIVE_MULTIPLIER', '1.5')
+                        ),
+                        # 流动性/滑点保护配置
+                        'liquidity_protection_enabled': os.getenv(
+                            'POSITION_SIZING_LIQUIDITY_PROTECTION_ENABLED', 'true'
+                        ).lower() == 'true',
+                        'liquidity_depth_ratio': float(
+                            os.getenv('POSITION_SIZING_LIQUIDITY_DEPTH_RATIO', '0.20')
+                        ),  # 单笔金额不超过盘口前 3 档的 20%
+                        'liquidity_depth_levels': int(
+                            os.getenv('POSITION_SIZING_LIQUIDITY_DEPTH_LEVELS', '3')
+                        ),  # 监控前 3 档深度
+                        # 波动率保护配置
+                        'volatility_protection_enabled': os.getenv(
+                            'POSITION_SIZING_VOLATILITY_PROTECTION_ENABLED', 'true'
+                        ).lower() == 'true',
+                        'volatility_ema_period': int(
+                            os.getenv('POSITION_SIZING_VOLATILITY_EMA_PERIOD', '20')
+                        ),  # 波动率 EMA 周期
+                        'volatility_threshold': float(
+                            os.getenv('POSITION_SIZING_VOLATILITY_THRESHOLD', '0.001')
+                        )  # 波动率阈值 0.1%
+                    }
                 }
             }
 
