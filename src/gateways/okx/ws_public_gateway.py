@@ -304,9 +304,13 @@ class OkxPublicWsGateway(WsBaseGateway):
                 'asks': asks
             }
 
+            # 先计算值，避免 f-string 语法错误
+            best_bid_value = bids[0][0] if bids else 0
+            best_ask_value = asks[0][0] if asks else 0
+
             logger.debug(
-                f"📊 [OrderBook 更新] best_bid={bids[0][0] if bids else 0:.6f}, "
-                f"best_ask={asks[0][0] if asks else 0:.6f}, "
+                f"📊 [OrderBook 更新] best_bid={best_bid_value:.6f}, "
+                f"best_ask={best_ask_value:.6f}, "
                 f"bids={len(bids)}, asks={len(asks)}"
             )
 
