@@ -561,6 +561,9 @@ class ScalperV2(BaseStrategy):
         🔥 [关键修复] 开仓成交后必须清除 maker_order_id
         否则会一直认为有挂单，无法重新开仓，也无法正常撤单
 
+        🔥 [修复 66] 必须验证成交的订单 ID 是否等于 maker_order_id
+        否则任何订单成交都会错误地清除 maker_order_id
+
         Args:
             event (Event): ORDER_FILLED 事件
         """
@@ -568,9 +571,22 @@ class ScalperV2(BaseStrategy):
             data = event.data
             side = data.get('side', '').lower()
             filled_size = float(data.get('filled_size', 0))
+            order_id = data.get('order_id', '')
 
             # 根据订单类型分发处理
             if side == 'buy':
+                # 🔥 [修复 66] 验证订单 ID
+                maker_order_id = self.state_manager.get_maker_order_id()
+
+                if maker_order_id and maker_order_id != "pending":
+                    if order_id != maker_order_id:
+                        # 成交的订单不是当前 maker 订单，跳过
+                        logger.debug(
+                            f"🔔 [开仓成交跳过] {self.symbol}: "
+                            f"成交订单={order_id} != 当前订单={maker_order_id}"
+                        )
+                        return
+
                 # 开仓成交：更新持仓状态
                 entry_price = float(data.get('price', 0))
                 self.state_manager.update_position(
@@ -626,7 +642,8 @@ class ScalperV2(BaseStrategy):
         try:
             # 检查开仓锁
             if self.state_manager.has_active_maker_order():
-                logger.debug(
+                # 🔥 [修复 67] 改为 INFO 级别，方便排查问题
+                logger.info(
                     f"🚫 [风控拦截] {self.symbol}: "
                     f"上一个开仓请求尚未结束，拒绝重复开仓"
                 )
@@ -988,19 +1005,41 @@ class ScalperV2(BaseStrategy):
         """
         处理订单取消事件（解锁开仓锁）
 
+        🔥 [修复 66] 必须验证被取消的订单 ID 是否等于 maker_order_id
+        否则任何订单取消都会导致重复开仓
+
         Args:
             event (Event): ORDER_CANCELLED 事件
         """
         try:
             data = event.data
             symbol = data.get('symbol', '')
+            order_id = data.get('order_id', '')
 
             if symbol != self.symbol:
                 return
 
-            if self.state_manager.has_active_maker_order():
-                logger.warning(f"🚫 [开仓失败] {self.symbol}: 订单被取消，解锁开仓锁")
-                self.state_manager.clear_maker_order()
+            # 🔥 [关键修复] 验证订单 ID
+            maker_order_id = self.state_manager.get_maker_order_id()
+
+            if not maker_order_id or maker_order_id == "pending":
+                # 没有活动的 maker 订单，跳过
+                return
+
+            if order_id != maker_order_id:
+                # 被取消的订单不是当前 maker 订单，跳过
+                logger.debug(
+                    f"🔔 [订单取消跳过] {self.symbol}: "
+                    f"取消订单={order_id} != 当前订单={maker_order_id}"
+                )
+                return
+
+            # ✅ 只有当前 maker 订单被取消时才清除状态
+            logger.warning(
+                f"🚫 [开仓失败] {self.symbol}: "
+                f"订单 {maker_order_id} 被取消，解锁开仓锁"
+            )
+            self.state_manager.clear_maker_order()
         except Exception as e:
             logger.error(f"处理订单取消事件失败: {e}", exc_info=True)
 

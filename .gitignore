@@ -190,3 +190,7 @@ staging/
 
 # Documentation - ignore generated docs
 /docs/
+
+# Project status and changelog (local tracking only)
+更新日志.md
+项目状态.md
