@@ -450,8 +450,8 @@ class ScalperV2(BaseStrategy):
                     signal.is_valid and
                     signal.direction == 'bullish'):
 
-                    imbalance_ratio = signal.imbalance_ratio
-                    ema_value = signal.ema_value
+                    imbalance_ratio = signal.metadata.get('imbalance_ratio', 0.0)
+                    ema_value = signal.metadata.get('ema_value', 0.0)
 
                     logger.info(
                         f"🎯 [大机会] {self.symbol}: "
@@ -481,7 +481,7 @@ class ScalperV2(BaseStrategy):
                     usdt_amount = self.position_sizer.calculate_order_size(
                         account_equity=account_equity,
                         order_book=order_book,
-                        signal_ratio=signal.imbalance_ratio,
+                        signal_ratio=signal.metadata.get('imbalance_ratio', 0.0),
                         current_price=price,
                         side='buy'  # 做多只看卖方深度
                     )
@@ -508,7 +508,7 @@ class ScalperV2(BaseStrategy):
                         f"账户权益={account_equity:.2f} USDT, "
                         f"下单金额={usdt_amount:.2f} USDT, "
                         f"合约张数={trade_size} 张, "
-                        f"不平衡比={signal.imbalance_ratio:.1f}x"
+                        f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
                     )
 
                     # 计算止损价格
