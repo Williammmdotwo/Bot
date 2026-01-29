@@ -53,6 +53,7 @@ from .components import SignalGenerator, ExecutionAlgo, StateManager
 from .components.signal_generator import ScalperV1Config
 from .components.execution_algo import ExecutionConfig
 from .components.position_sizer import PositionSizer, PositionSizingConfig
+from .strategy_state import StrategyState
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,16 @@ class ScalperV2(BaseStrategy):
         self._instrument_synced = False
         self._start_time = 0.0
         self._orderbook_received = False
+
+        # ========== 状态机管理 ==========
+        # 🔥 [修复 68] FSM + 模块化路由架构
+        # 避免在有挂单时仍大量计算信号和仓位
+        self._state = StrategyState.IDLE
+        self._last_state_transition_time = 0.0
+        logger.info(
+            f"🔧 [FSM 初始化] {self.symbol}: "
+            f"初始状态={self._state.name}"
+        )
 
         # ========== 初始化自适应仓位管理器 ==========
         # 优先级：环境变量 > 配置文件 > 代码默认值

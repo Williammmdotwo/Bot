@@ -81,6 +81,11 @@ class SignalGenerator:
         self.price_history = collections.deque(maxlen=100)
         self.ema_value = 0.0
 
+        # 🔥 [优化 69] Imbalance 增量计算
+        # 避免每次都从 OrderBook 重新计算，改为增量更新
+        self.buy_vol_increment = 0.0
+        self.sell_vol_increment = 0.0
+
         logger.info(
             f"SignalGenerator 初始化: symbol={config.symbol}, "
             f"ema_period={config.ema_period}, "
@@ -90,20 +95,41 @@ class SignalGenerator:
 
     def _update_ema(self, price: float):
         """
-        更新 EMA 值
+        更新 EMA 值（O(1) 优化）
+
+        🔥 [优化 69] 使用递推公式，避免遍历历史价格
+        公式：new_ema = old_ema * (1 - k) + price * k
+        其中 k = 2 / (ema_period + 1)
 
         Args:
             price (float): 当前价格
         """
+        # 将新价格添加到历史
         self.price_history.append(price)
 
-        if len(self.price_history) >= self.config.ema_period:
-            recent_prices = list(self.price_history)[-self.config.ema_period:]
-            self.ema_value = sum(recent_prices) / len(recent_prices)
-        elif len(self.price_history) > 0:
-            self.ema_value = sum(self.price_history) / len(self.price_history)
-        else:
+        # 🔥 [优化 69] O(1) EMA 计算
+        k = 2.0 / (self.config.ema_period + 1)
+        self.ema_value = self.ema_value * (1 - k) + price * k
+
+        # 确保 EMA 不为 0（避免第一次计算错误）
+        if self.ema_value <= 0:
             self.ema_value = price
+
+    def update_volumes_increment(self, side: str, usdt_val: float):
+        """
+        增量更新买卖成交量
+
+        🔥 [优化 70] 避免每次都重新计算 Imbalance
+        改为增量更新，外部传入 buy/sell 和金额即可
+
+        Args:
+            side (str): 交易方向 ('buy' or 'sell')
+            usdt_val (float): 交易金额（USDT）
+        """
+        if side == 'buy':
+            self.buy_vol_increment += usdt_val
+        elif side == 'sell':
+            self.sell_vol_increment += usdt_val
 
     def get_trend_bias(self) -> str:
         """
@@ -137,7 +163,7 @@ class SignalGenerator:
         Args:
             symbol (str): 交易对
             price (float): 当前价格
-            side (str): 'buy' or 'sell'
+            side (str): 交易方向
             size (float): 成交数量
             volume_usdt (float): 成交金额（USDT）
 
@@ -182,74 +208,29 @@ class SignalGenerator:
                 f"流动性过滤: Volume={volume_usdt:.0f} USDT < "
                 f"MinFlow={self.config.min_flow_usdt:.0f} USDT"
             )
-            return signal
-
-        # 5. 计算买卖失衡（需要从外部获取买卖量）
-        # 注意：这里需要通过参数传入，本方法暂时返回中性信号
-        signal.direction = "bullish"
-        signal.is_valid = True
-        signal.reason = "signal_valid"
-        signal.strength = 1.0
-        signal.metadata = {
-            'ema_value': self.ema_value,
-            'trend_bias': trend_bias,
-            'volume_usdt': volume_usdt
-        }
-
-        logger.info(
-            f"[SignalGenerator] {symbol}: "
-            f"生成有效信号: Direction={signal.direction}, "
-            f"Strength={signal.strength:.2f}, "
-            f"Reason={signal.reason}"
-        )
-
         return signal
 
-    def compute_with_volumes(
-        self,
-        symbol: str,
-        price: float,
-        buy_vol: float,
-        sell_vol: float,
-        total_vol: float
-    ) -> Signal:
+    def get_state(self) -> dict:
         """
-        计算交易信号（带成交量）
-
-        Args:
-            symbol (str): 交易对
-            price (float): 当前价格
-            buy_vol (float): 买入成交量（USDT）
-            sell_vol (float): 卖出成交量（USDT）
-            total_vol (float): 总成交量（USDT）
+        获取当前状态（用于调试和监控）
 
         Returns:
-            Signal: 交易信号对象
+            dict: 当前状态信息
         """
-        # 1. 更新 EMA（趋势过滤）
-        self._update_ema(price)
-
-        # 2. 初始化信号对象
-        signal = Signal()
-
-        # 3. 趋势过滤：只做多（Price > EMA）
-        trend_bias = self.get_trend_bias()
-        if trend_bias != "bullish":
-            signal.is_valid = False
-            signal.direction = "neutral"
-            signal.reason = f"trend_filter:{trend_bias}"
-            signal.metadata = {
-                'ema_value': self.ema_value,
-                'current_price': price,
-                'trend_bias': trend_bias
+        return {
+            'ema_value': self.ema_value,
+            'price_history_len': len(self.price_history),
+            'trend_bias': self.get_trend_bias(),
+            'buy_vol_increment': self.buy_vol_increment,
+            'sell_vol_increment': self.sell_vol_increment,
+            'config': {
+                'symbol': self.config.symbol,
+                'ema_period': self.config.ema_period,
+                'imbalance_ratio': self.config.imbalance_ratio,
+                'min_flow_usdt': self.config.min_flow_usdt,
+                'spread_threshold_pct': self.config.spread_threshold_pct
             }
-            logger.debug(
-                f"[SignalGenerator] {symbol}: "
-                f"趋势过滤: Trend={trend_bias}, "
-                f"Price={price:.6f}, EMA={self.ema_value:.6f} "
-                f"(不满足看涨条件)"
-            )
-            return signal
+        }
 
         # 4. 检查流动性：最小流速（USDT）
         if total_vol < self.config.min_flow_usdt:
