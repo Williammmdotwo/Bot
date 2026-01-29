@@ -409,7 +409,7 @@ class ScalperV2(BaseStrategy):
                 should_close_trailing, stop_price_trailing = self.state_manager.update_trailing_stop(price)
 
                 if should_close_trailing:
-                    await self._close_position(reason="trailing_stop", stop_price=stop_price_trailing)
+                    await self._close_position(reason="trailing_stop", stop_price=stop_price_trailing, current_price=price)
                     return
 
                 # 🔥 [新增：检查时间止损]
@@ -419,7 +419,20 @@ class ScalperV2(BaseStrategy):
                         f"⏰ [时间止损触发] {self.symbol}: "
                         f"持仓时间={position_age:.1f}s >= {self.config.time_limit_seconds}s"
                     )
-                    await self._close_position(reason="time_stop")
+                    await self._close_position(reason="time_stop", current_price=price)
+                    return
+
+                # 🔥 [关键修复：检查硬止损]
+                entry_price = self.state_manager._position.entry_price
+                hard_stop_price = entry_price * (1 - self.config.stop_loss_pct)
+
+                if price <= hard_stop_price:
+                    logger.info(
+                        f"📉 [硬止损触发] {self.symbol}: "
+                        f"当前价={price:.6f} <= 止损价={hard_stop_price:.6f}, "
+                        f"入场价={entry_price:.6f}, 亏损={(entry_price - price)/entry_price*100:.3f}%"
+                    )
+                    await self._close_position(reason="hard_stop", current_price=price)
                     return
 
                 # 检查挂单插队（如果有挂单）
@@ -545,6 +558,9 @@ class ScalperV2(BaseStrategy):
         """
         处理订单成交事件
 
+        🔥 [关键修复] 开仓成交后必须清除 maker_order_id
+        否则会一直认为有挂单，无法重新开仓，也无法正常撤单
+
         Args:
             event (Event): ORDER_FILLED 事件
         """
@@ -562,7 +578,15 @@ class ScalperV2(BaseStrategy):
                     entry_price=entry_price,
                     entry_time=time.time()
                 )
-                logger.info(f"✅ [开仓成交] {self.symbol}: 解锁开仓锁")
+
+                # 🔥 [关键修复] 清除挂单状态
+                # 订单成交后，挂单已不存在，必须清除 maker_order_id
+                self.state_manager.clear_maker_order()
+
+                logger.info(
+                    f"✅ [开仓成交] {self.symbol}: "
+                    f"解锁开仓锁，清除挂单状态"
+                )
             elif side == 'sell':
                 # 平仓成交：更新持仓状态并检查是否完全平仓
                 self.state_manager.update_position(
@@ -615,29 +639,84 @@ class ScalperV2(BaseStrategy):
                 f"(价值: {order_value:.2f} USDT, ctVal={contract_val})"
             )
 
-            # 下单
-            success = await self.buy(
+            # 🔥 [修复] 下单后需要捕获真实的 order_id
+            # 不能使用 success 布尔值，需要获取 Order 对象
+            # 下单（不使用 await buy，直接调用 _order_manager.submit_order）
+            order = await self._order_manager.submit_order(
                 symbol=symbol,
-                entry_price=price,
-                stop_loss_price=stop_loss_price,
+                side='buy',
                 order_type='limit',
-                size=size
+                size=size,
+                price=price,
+                strategy_id=self.strategy_id,
+                stop_loss_price=stop_loss_price
             )
 
-            if success:
-                # 更新订单状态
+            if order:
+                # 更新订单状态 - 🔥 使用真实的 order_id
                 self.state_manager.set_maker_order(
-                    order_id="pending",
+                    order_id=order.order_id,  # ✅ 使用真实 ID 而不是 "pending"
                     price=price,
                     initial_price=price
+                )
+                logger.info(
+                    f"✅ [挂单成功] {self.symbol}: "
+                    f"order_id={order.order_id}, price={price:.6f}, size={size}"
                 )
             else:
                 logger.warning(f"🚫 [开仓失败] {self.symbol}: 下单失败，已重置开仓锁")
 
-            return success
+            return order is not None
         except Exception as e:
             logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
             return False
+
+    async def _cancel_maker_order(self):
+        """
+        撤销当前挂单（用于插队逻辑）
+
+        🔥 关键修复：此方法在 _check_chasing_conditions 中被调用，但从未实现
+        导致插队功能失效，挂单永远不会被撤销
+        """
+        try:
+            # 获取当前挂单 ID
+            maker_order_id = self.state_manager.get_maker_order_id()
+
+            # 检查是否有有效的挂单 ID
+            if not maker_order_id or maker_order_id == "pending":
+                logger.debug(
+                    f"🛑 [撤单跳过] {self.symbol}: "
+                    f"无有效挂单 ID (maker_order_id={maker_order_id})"
+                )
+                return
+
+            logger.info(
+                f"🔄 [撤单] {self.symbol}: "
+                f"撤销挂单 {maker_order_id}"
+            )
+
+            # 调用 OrderManager 撤单
+            success = await self._order_manager.cancel_order(
+                order_id=maker_order_id,
+                symbol=self.symbol
+            )
+
+            if success:
+                logger.info(
+                    f"✅ [撤单成功] {self.symbol}: "
+                    f"挂单 {maker_order_id} 已撤销"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ [撤单失败] {self.symbol}: "
+                    f"挂单 {maker_order_id} 撤单失败，继续尝试重新挂单"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"❌ [撤单异常] {self.symbol}: "
+                f"{e}", exc_info=True
+            )
 
     async def _check_chasing_conditions(
         self,
@@ -771,13 +850,16 @@ class ScalperV2(BaseStrategy):
         stop_loss = entry_price - stop_distance
         return stop_loss
 
-    async def _close_position(self, reason: str, stop_price: float = 0.0):
+    async def _close_position(self, reason: str, stop_price: float = 0.0, current_price: float = 0.0):
         """
         平仓（统一入口）
+
+        🔥 [修复] 接收 current_price 参数，用于正确计算盈亏
 
         Args:
             reason (str): 平仓原因（trailing_stop/time_stop/hard_stop）
             stop_price (float): 止损价格（用于追踪止损）
+            current_price (float): 当前市场价格（用于计算盈亏）
         """
         try:
             # 获取当前持仓
@@ -792,7 +874,9 @@ class ScalperV2(BaseStrategy):
                 return
 
             # 计算平仓价格
-            current_price = position.entry_price
+            # 🔥 [修复] 使用传入的 current_price 而非 entry_price
+            calc_price = current_price if current_price > 0 else position.entry_price
+
             if reason == "trailing_stop" and stop_price > 0:
                 # 追踪止损：使用追踪止损价
                 close_price = stop_price
@@ -811,18 +895,54 @@ class ScalperV2(BaseStrategy):
                     f"利润={profit_pct:.3f}%"
                 )
             elif reason == "time_stop":
+                # 🔥 [修复] 使用 current_price 计算盈亏
+                if current_price > 0:
+                    profit_pct = (current_price - position.entry_price) / position.entry_price * 100
+                    logger.info(
+                        f"⏰ [时间止损平仓] {self.symbol}: "
+                        f"入场价={position.entry_price:.6f}, "
+                        f"当前价={current_price:.6f}, "
+                        f"盈亏={profit_pct:.3f}%"
+                    )
+                else:
+                    logger.info(
+                        f"⏰ [时间止损平仓] {self.symbol}: "
+                        f"持仓超时，市价平仓"
+                    )
+            else:  # hard_stop
+                # 🔥 [修复] 使用 current_price 计算盈亏
+                if current_price > 0:
+                    profit_pct = (current_price - position.entry_price) / position.entry_price * 100
+                    logger.info(
+                        f"📉 [硬止损平仓] {self.symbol}: "
+                        f"入场价={position.entry_price:.6f}, "
+                        f"当前价={current_price:.6f}, "
+                        f"盈亏={profit_pct:.3f}%"
+                    )
+                else:
+                    logger.info(
+                        f"📉 [硬止损平仓] {self.symbol}: "
+                        f"触发硬止损，市价平仓"
+                    )
+
+            # 执行平仓
+            success = await self.sell(
+                symbol=self.symbol,
+                entry_price=close_price if close_price > 0 else position.entry_price,  # 市价时使用入场价占位
+                stop_loss_price=0.0,  # 平仓不需要止损
+                order_type='market',  # 市价平仓
+                size=position_size
+            )
+
+            if success:
                 logger.info(
-                    f"⏰ [时间止损平仓] {self.symbol}: "
-                    f"持仓超时，市价平仓"
+                    f"✅ [平仓成功] {self.symbol}: "
+                    f"原因={reason}, "
+                    f"数量={position_size:.4f}"
                 )
-            else:
-                profit_pct = (current_price - position.entry_price) / position.entry_price * 100
-                logger.info(
-                    f"📉 [硬止损平仓] {self.symbol}: "
-                    f"入场价={position.entry_price:.6f}, "
-                    f"平仓价={current_price:.6f}, "
-                    f"盈亏={profit_pct:.3f}%"
-                )
+
+        except Exception as e:
+            logger.error(f"❌ [平仓失败] {self.symbol}: {e}", exc_info=True)
 
             # 执行平仓
             success = await self.sell(
@@ -846,6 +966,9 @@ class ScalperV2(BaseStrategy):
     async def _reset_position_state(self):
         """
         重置持仓状态（平仓后）
+
+        🔥 [关键修复] 必须重置追踪止损状态
+        否则下次开仓时，追踪止损状态还是旧的，导致逻辑混乱
         """
         # 重置持仓状态
         self.state_manager.close_position()
@@ -856,7 +979,10 @@ class ScalperV2(BaseStrategy):
         # 重置冷却状态
         self.state_manager.reset_cooldown()
 
-        logger.info(f"✅ [持仓归零] {self.symbol}: 平仓完成，重置状态")
+        # 🔥 [关键修复] 重置追踪止损状态
+        self.state_manager.reset_trailing_stop()
+
+        logger.info(f"✅ [持仓归零] {self.symbol}: 平仓完成，重置所有状态")
 
     async def on_order_cancelled(self, event: Event):
         """

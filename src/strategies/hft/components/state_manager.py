@@ -159,6 +159,18 @@ class StateManager:
         """
         return self._position.is_open
 
+    def is_position_closed(self) -> bool:
+        """
+        检查持仓是否已关闭
+
+        🔥 [修复] 此方法在 scalper_v2.py.on_order_filled() 中被调用
+        但 StateManager 中从未定义，导致平仓成交时程序崩溃
+
+        Returns:
+            bool: 持仓是否关闭
+        """
+        return self._position.size == 0.0 or not self._position.is_open
+
     def close_position(self):
         """
         平仓（重置持仓状态）
