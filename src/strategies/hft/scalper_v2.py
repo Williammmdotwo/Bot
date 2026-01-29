@@ -491,6 +491,8 @@ class ScalperV2(BaseStrategy):
             elif current_state == StrategyState.PENDING_CLOSE:
                 # 【极轻量级】平仓挂单维护
                 await self._handle_pending_close_state(event.data)
+        except Exception as e:
+            logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
 
     async def on_order_filled(self, event: Event):
         """
