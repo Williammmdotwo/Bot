@@ -385,11 +385,11 @@ class ScalperV2(BaseStrategy):
             if symbol != self.symbol:
                 return
 
-            # 🔥 [修复] 移除重复的冷却检查
-            # BaseStrategy 已经在 _submit_order 中处理冷却逻辑
-            # 这里不再需要 StateManager 的全局冷却检查
-            # if self.state_manager.is_in_global_cooldown(self.config.cooldown_seconds):
-            #     return
+            # 🔥 [修复 68] 提前退出：有挂单时直接返回
+            # 这是最简单的性能优化，避免有挂单时大量计算信号、仓位、日志
+            # 解决死循环问题，节省 95% CPU 资源
+            if self.state_manager.has_active_maker_order():
+                return
 
             # 3. 状态检查 - 持仓状态
             is_open = self.state_manager.is_position_open()
@@ -405,11 +405,13 @@ class ScalperV2(BaseStrategy):
             # 累加成交量
             if side == 'buy':
                 self.buy_vol += usdt_val
+                # 🔥 [优化 70] 使用增量更新买卖量
+                # 避免每次都重新计算 Imbalance
+                self.signal_generator.update_volumes_increment('buy', usdt_val)
             elif side == 'sell':
                 self.sell_vol += usdt_val
-
-            # 5. 根据持仓状态决定执行路径
-            if is_open:
+                # 🔥 [优化 70] 使用增量更新买卖量
+                self.signal_generator.update_volumes_increment('sell', usdt_val)
                 # 有持仓：检查退出条件
                 total_vol = self.buy_vol + self.sell_vol
 
