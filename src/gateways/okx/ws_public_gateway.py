@@ -283,6 +283,36 @@ class OkxPublicWsGateway(WsBaseGateway):
             logger.error(f"获取订单簿深度失败: {e}", exc_info=True)
             return {'bids': [], 'asks': []}
 
+    def on_book_update(self, event):
+        """
+        📊 订单簿更新事件处理器（修复 OrderBook 数据同步问题）
+
+        🔥 关键修复：BookParser 推送事件，但网关的 _order_book 从未被更新
+        导致 PositionSizer 获取空订单簿，计算下单金额为 0
+
+        Args:
+            event: BOOK_EVENT 事件
+        """
+        try:
+            data = event.data
+            bids = data.get('bids', [])
+            asks = data.get('asks', [])
+
+            # 更新本地订单簿缓存
+            self._order_book = {
+                'bids': bids,
+                'asks': asks
+            }
+
+            logger.debug(
+                f"📊 [OrderBook 更新] best_bid={bids[0][0] if bids else 0:.6f}, "
+                f"best_ask={asks[0][0] if asks else 0:.6f}, "
+                f"bids={len(bids)}, asks={len(asks)}"
+            )
+
+        except Exception as e:
+            logger.error(f"更新订单簿失败: {e}", exc_info=True)
+
     def get_depth_value(self, levels: int = 3, side: str = 'buy') -> float:
         """
         获取盘口前N档的总金额（流动性指标）

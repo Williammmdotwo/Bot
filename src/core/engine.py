@@ -317,6 +317,11 @@ class Engine:
                 f"TICK, ORDER_FILLED 和 ORDER_CANCELLED"
             )
 
+        # 3. 🔥 [修复58] 注册 OrderBook 事件监听器（修复 PositionSizer 获取空订单簿问题）
+        if self._public_ws and hasattr(self._public_ws, 'on_book_update'):
+            self._event_bus.register(EventType.BOOK_EVENT, self._public_ws.on_book_update)
+            logger.info("✅ Public WebSocket 已注册监听 BOOK_EVENT（更新 OrderBook 缓存）")
+
     async def _load_instruments(self):
         """
         动态加载交易对信息（补丁三）
