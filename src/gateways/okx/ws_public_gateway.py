@@ -304,9 +304,9 @@ class OkxPublicWsGateway(WsBaseGateway):
                 'asks': asks
             }
 
-            # 先计算值，避免 f-string 语法错误
-            best_bid_value = bids[0][0] if bids else 0
-            best_ask_value = asks[0][0] if asks else 0
+            # 🔥 关键修复：bids[0][0] 是字符串，需要转换为 float
+            best_bid_value = float(bids[0][0]) if bids and len(bids) > 0 else 0.0
+            best_ask_value = float(asks[0][0]) if asks and len(asks) > 0 else 0.0
 
             logger.debug(
                 f"📊 [OrderBook 更新] best_bid={best_bid_value:.6f}, "
