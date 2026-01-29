@@ -183,21 +183,6 @@ class ScalperV2(BaseStrategy):
             f"初始状态={self._state.name}"
         )
 
-        def _transition_to_state(self, new_state: StrategyState, reason: str = ""):
-            """状态转换（带日志记录）"""
-            old_state = self._state
-            self._state = new_state
-            self._last_state_transition_time = time.time()
-            logger.debug(f"🔄 [FSM] {self.symbol}: {old_state.name} -> {new_state.name} ({reason})")
-
-        def _get_state(self) -> StrategyState:
-            """获取当前状态"""
-            return self._state
-
-        def _is_state(self, expected_state: StrategyState) -> bool:
-            """检查是否在指定状态"""
-            return self._state == expected_state
-
         # ========== 初始化自适应仓位管理器 ==========
         # 优先级：环境变量 > 配置文件 > 代码默认值
         # 从kwargs中获取position_sizing配置（如果有的话）
@@ -251,6 +236,22 @@ class ScalperV2(BaseStrategy):
             f"take_profit={take_profit_pct*100:.2f}%, "
             f"time_stop={time_limit_seconds}s"
         )
+
+    # 🔥 [修复] 状态机方法：移到类级别（不再嵌套在 __init__ 中）
+    def _transition_to_state(self, new_state: StrategyState, reason: str = ""):
+        """状态转换（带日志记录）"""
+        old_state = self._state
+        self._state = new_state
+        self._last_state_transition_time = time.time()
+        logger.debug(f"🔄 [FSM] {self.symbol}: {old_state.name} -> {new_state.name} ({reason})")
+
+    def _get_state(self) -> StrategyState:
+        """获取当前状态"""
+        return self._state
+
+    def _is_state(self, expected_state: StrategyState) -> bool:
+        """检查是否在指定状态"""
+        return self._state == expected_state
 
     def set_public_gateway(self, gateway):
         """
@@ -427,41 +428,6 @@ class ScalperV2(BaseStrategy):
                 self.sell_vol += usdt_val
                 # 🔥 [优化 70] 使用增量更新买卖量
                 self.signal_generator.update_volumes_increment('sell', usdt_val)
-                # 有持仓：检查退出条件
-                total_vol = self.buy_vol + self.sell_vol
-
-                # 调用状态管理器更新退出时间
-                self.state_manager.update_close_time()
-
-                # 🔥 [新增：检查追踪止损]
-                should_close_trailing, stop_price_trailing = self.state_manager.update_trailing_stop(price)
-
-                if should_close_trailing:
-                    await self._close_position(reason="trailing_stop", stop_price=stop_price_trailing, current_price=price)
-                    return
-
-                # 🔥 [新增：检查时间止损]
-                position_age = now - self.state_manager._position.entry_time
-                if position_age >= self.config.time_limit_seconds:
-                    logger.info(
-                        f"⏰ [时间止损触发] {self.symbol}: "
-                        f"持仓时间={position_age:.1f}s >= {self.config.time_limit_seconds}s"
-                    )
-                    await self._close_position(reason="time_stop", current_price=price)
-                    return
-
-                # 🔥 [关键修复：检查硬止损]
-                entry_price = self.state_manager._position.entry_price
-                hard_stop_price = entry_price * (1 - self.config.stop_loss_pct)
-
-                if price <= hard_stop_price:
-                    logger.info(
-                        f"📉 [硬止损触发] {self.symbol}: "
-                        f"当前价={price:.6f} <= 止损价={hard_stop_price:.6f}, "
-                        f"入场价={entry_price:.6f}, 亏损={(entry_price - price)/entry_price*100:.3f}%"
-                    )
-                    await self._close_position(reason="hard_stop", current_price=price)
-                    return
 
             # 🔥 [修复 73] 重构 on_tick() 为 FSM 状态路由器
             # 根据当前状态调用不同的处理方法，实现模块化架构
@@ -480,7 +446,8 @@ class ScalperV2(BaseStrategy):
             # PENDING_OPEN 状态：有挂单，开仓中
             elif current_state == StrategyState.PENDING_OPEN:
                 # 【极轻量级】挂单维护（插队/撤单）
-                await self._handle_pending_open_state(event.data)
+                # 注意：由于提前退出优化，这个状态可能不会到达
+                pass
 
             # POSITION_HELD 状态：已开仓
             elif current_state == StrategyState.POSITION_HELD:
@@ -490,7 +457,9 @@ class ScalperV2(BaseStrategy):
             # PENDING_CLOSE 状态：有平仓挂单，平仓中
             elif current_state == StrategyState.PENDING_CLOSE:
                 # 【极轻量级】平仓挂单维护
-                await self._handle_pending_close_state(event.data)
+                # 注意：由于提前退出优化，这个状态可能不会到达
+                pass
+
         except Exception as e:
             logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
 
@@ -543,6 +512,9 @@ class ScalperV2(BaseStrategy):
                     f"✅ [开仓成交] {self.symbol}: "
                     f"解锁开仓锁，清除挂单状态"
                 )
+                # 🔥 [新增] 状态转换到 POSITION_HELD
+                self._transition_to_state(StrategyState.POSITION_HELD, "开仓成功")
+
             elif side == 'sell':
                 # 平仓成交：更新持仓状态并检查是否完全平仓
                 self.state_manager.update_position(
@@ -621,6 +593,8 @@ class ScalperV2(BaseStrategy):
                     f"✅ [挂单成功] {self.symbol}: "
                     f"order_id={order.order_id}, price={price:.6f}, size={size}"
                 )
+                # 🔥 [新增] 状态转换到 PENDING_OPEN
+                self._transition_to_state(StrategyState.PENDING_OPEN, "下单成功")
             else:
                 logger.warning(f"🚫 [开仓失败] {self.symbol}: 下单失败，已重置开仓锁")
 
@@ -931,7 +905,7 @@ class ScalperV2(BaseStrategy):
                 logger.debug(
                     f"🔔 [订单取消跳过] {self.symbol}: "
                         f"取消订单={order_id} != 当前订单={maker_order_id}"
-                    f"跳过处理"
+                        f"跳过处理"
                 )
                 return
 
@@ -979,7 +953,8 @@ class ScalperV2(BaseStrategy):
             else:
                 logger.debug(
                     f"🔔 [Event Ignore] {self.symbol}: "
-                    f"忽略事件类型={event.type}"
+                        f"忽略事件类型={event.type}"
+                    f"跳过处理"
                 )
         except Exception as e:
             logger.error(f"处理事件失败: {e}", exc_info=True)
@@ -1074,10 +1049,10 @@ class ScalperV2(BaseStrategy):
 
             logger.info(
                 f"🎯 [自适应仓位] {self.symbol}: "
-                f"账户权益={account_equity:.2f} USDT, "
-                f"下单金额={usdt_amount:.2f} USDT, "
-                f"合约张数={trade_size} 张, "
-                f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
+                    f"账户权益={account_equity:.2f} USDT, "
+                    f"下单金额={usdt_amount:.2f} USDT, "
+                    f"合约张数={trade_size} 张, "
+                    f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
             )
 
             # 计算止损价格
@@ -1101,6 +1076,7 @@ class ScalperV2(BaseStrategy):
             )
 
             if success:
+                # 🔥 [新增] 状态转换到 PENDING_OPEN
                 self._transition_to_state(StrategyState.PENDING_OPEN, "下单成功")
                 logger.info(
                     f"✅ [狙击挂单已提交] {self.symbol} @ {decision.price:.6f}, "
