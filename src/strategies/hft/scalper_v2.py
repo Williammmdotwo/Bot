@@ -183,6 +183,21 @@ class ScalperV2(BaseStrategy):
             f"初始状态={self._state.name}"
         )
 
+        def _transition_to_state(self, new_state: StrategyState, reason: str = ""):
+            """状态转换（带日志记录）"""
+            old_state = self._state
+            self._state = new_state
+            self._last_state_transition_time = time.time()
+            logger.debug(f"🔄 [FSM] {self.symbol}: {old_state.name} -> {new_state.name} ({reason})")
+
+        def _get_state(self) -> StrategyState:
+            """获取当前状态"""
+            return self._state
+
+        def _is_state(self, expected_state: StrategyState) -> bool:
+            """检查是否在指定状态"""
+            return self._state == expected_state
+
         # ========== 初始化自适应仓位管理器 ==========
         # 优先级：环境变量 > 配置文件 > 代码默认值
         # 从kwargs中获取position_sizing配置（如果有的话）
@@ -448,124 +463,34 @@ class ScalperV2(BaseStrategy):
                     await self._close_position(reason="hard_stop", current_price=price)
                     return
 
-                # 检查挂单插队（如果有挂单）
-                if self.state_manager.has_active_maker_order():
-                    order_age = self.state_manager.get_maker_order_age()
-                    await self._check_chasing_conditions(price, now, order_age)
+            # 🔥 [修复 73] 重构 on_tick() 为 FSM 状态路由器
+            # 根据当前状态调用不同的处理方法，实现模块化架构
 
-            else:
-                # 无持仓：检查入场条件
-                total_vol = self.buy_vol + self.sell_vol
+            # 检查当前状态
+            current_state = self._get_state()
 
-                # 使用信号生成器计算信号（带成交量）
-                signal = self.signal_generator.compute_with_volumes(
-                    symbol=symbol,
-                    price=price,
-                    buy_vol=self.buy_vol,
-                    sell_vol=self.sell_vol,
-                    total_vol=total_vol
-                )
+            # 🔍 [临时调试] 记录当前状态
+            logger.debug(f"🔍 [FSM 路由] {self.symbol}: state={current_state.name}, tick price={price:.6f}")
 
-                # 🔥 [新增] 记录满足所有条件的大机会日志
-                # 条件1：单笔金额 >= 100万 USDT（使用 SCALPER_MIN_FLOW）
-                # 条件2：总量 >= 流量阈值
-                # 条件3：趋势向上（Price > EMA）
-                # 条件4：买卖失衡 >= 3倍
-                if (usdt_val >= self.signal_generator.config.min_flow_usdt and
-                    total_vol >= self.signal_generator.config.min_flow_usdt and
-                    signal.is_valid and
-                    signal.direction == 'bullish'):
+            # IDLE 状态：无持仓、无挂单
+            if current_state == StrategyState.IDLE:
+                # 【轻量级】信号生成 + 开仓逻辑
+                await self._handle_idle_state(event.data)
 
-                    imbalance_ratio = signal.metadata.get('imbalance_ratio', 0.0)
-                    ema_value = signal.metadata.get('ema_value', 0.0)
+            # PENDING_OPEN 状态：有挂单，开仓中
+            elif current_state == StrategyState.PENDING_OPEN:
+                # 【极轻量级】挂单维护（插队/撤单）
+                await self._handle_pending_open_state(event.data)
 
-                    logger.info(
-                        f"🎯 [大机会] {self.symbol}: "
-                        f"{side} {size:.4f} @ {price:.4f} = {usdt_val:,.0f} USDT | "
-                        f"总量={total_vol:,.0f} USDT | "
-                        f"失衡={imbalance_ratio:.2f}x | "
-                        f"趋势=看涨 (Price>{ema_value:.4f})"
-                    )
+            # POSITION_HELD 状态：已开仓
+            elif current_state == StrategyState.POSITION_HELD:
+                # 【轻量级】止损/止盈检查
+                await self._handle_position_held_state(event.data)
 
-                # 如果信号有效，执行入场逻辑
-                if signal.is_valid:
-                    # 检查点差和 OrderBook 数据
-                    best_bid, best_ask = self._get_order_book_best_prices(price)
-
-                    # 如果 OrderBook 数据不可用，跳过本次开仓
-                    if best_bid <= 0 or best_ask <= 0:
-                        logger.warning("订单簿数据不可用，跳过本次开仓")
-                        return
-
-                    # 获取账户权益（用于自适应仓位计算）
-                    account_equity = self._capital_commander.get_total_equity()
-
-                    # 获取订单簿深度（用于流动性保护）
-                    order_book = self.public_gateway.get_order_book_depth(levels=3)
-
-                    # 🎯 使用自适应仓位管理器计算下单金额
-                    usdt_amount = self.position_sizer.calculate_order_size(
-                        account_equity=account_equity,
-                        order_book=order_book,
-                        signal_ratio=signal.metadata.get('imbalance_ratio', 0.0),
-                        current_price=price,
-                        side='buy'  # 做多只看卖方深度
-                    )
-
-                    # 如果返回 0，说明流动性不足或信号太弱，跳过
-                    if usdt_amount <= 0:
-                        logger.warning(
-                            f"🛑 [自适应仓位] {self.symbol}: "
-                            f"计算金额={usdt_amount:.2f} USDT ≤ 0，跳过本次开仓"
-                        )
-                        return
-
-                    # 转换为合约张数
-                    trade_size = self.position_sizer.convert_to_contracts(
-                        amount_usdt=usdt_amount,
-                        current_price=price,
-                        ct_val=self.contract_val
-                    )
-
-                    # 确保至少 1 张
-                    trade_size = max(1, int(trade_size))
-                    logger.info(
-                        f"🎯 [自适应仓位] {self.symbol}: "
-                        f"账户权益={account_equity:.2f} USDT, "
-                        f"下单金额={usdt_amount:.2f} USDT, "
-                        f"合约张数={trade_size} 张, "
-                        f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
-                    )
-
-                    # 计算止损价格
-                    stop_loss_price = self._calculate_stop_loss(price)
-
-                    # 使用执行算法计算挂单价格
-                    decision = self.execution_algo.calculate_maker_price(
-                        side='buy',
-                        best_bid=best_bid,
-                        best_ask=best_ask,
-                        order_age=0.0
-                    )
-
-                    # 提交挂单
-                    success = await self._place_maker_order(
-                        symbol=symbol,
-                        price=decision.price,
-                        stop_loss_price=stop_loss_price,
-                        size=trade_size,
-                        contract_val=self.contract_val
-                    )
-
-                    if success:
-                        logger.info(
-                            f"✅ [狙击挂单已提交] {self.symbol} @ {decision.price:.6f}, "
-                            f"数量={trade_size}, 止损={stop_loss_price:.6f}, "
-                            f"策略={decision.reason}"
-                        )
-
-        except Exception as e:
-            logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
+            # PENDING_CLOSE 状态：有平仓挂单，平仓中
+            elif current_state == StrategyState.PENDING_CLOSE:
+                # 【极轻量级】平仓挂单维护
+                await self._handle_pending_close_state(event.data)
 
     async def on_order_filled(self, event: Event):
         """
@@ -626,6 +551,7 @@ class ScalperV2(BaseStrategy):
                 logger.info(f"✅ [平仓成交] {self.symbol}: 数量={filled_size}")
 
                 if self.state_manager.is_position_closed():
+                    # 🔥 [修复 74] 平仓成功后重置状态到 IDLE
                     await self._reset_position_state()
 
         except Exception as e:
@@ -722,7 +648,7 @@ class ScalperV2(BaseStrategy):
 
             logger.info(
                 f"🔄 [撤单] {self.symbol}: "
-                f"撤销挂单 {maker_order_id}"
+                    f"撤销挂单 {maker_order_id}"
             )
 
             # 调用 OrderManager 撤单
@@ -748,88 +674,66 @@ class ScalperV2(BaseStrategy):
                 f"{e}", exc_info=True
             )
 
-    async def _check_chasing_conditions(
-        self,
-        current_price: float,
-        now: float,
-        order_age: float
-    ):
+    async def _handle_position_held_state(self, tick_data: dict):
         """
-        检查追单条件（委托给执行算法）
+        处理 POSITION_HELD 状态（已开仓）
+
+        【轻量级】止损/止盈检查
+        - 运行追踪止损检查
+        - 运行时间止损检查
+        - 运行硬止损检查
+        - 必要时平仓
+        - 不运行信号计算、不计算 Imbalance
 
         Args:
-            current_price (float): 当前价格
-            now (float): 当前时间戳
-            order_age (float): 订单存活时间（秒）
+            tick_data (dict): Tick 数据
         """
         try:
-            # 获取当前挂单信息
-            current_maker_price = self.state_manager.get_maker_order_price()
-            maker_order_id = self.state_manager.get_maker_order_id()
+            # 提取数据
+            symbol = tick_data.get('symbol')
+            price = float(tick_data.get('price', 0))
+            now = time.time()
 
-            # 调用执行算法判断是否应该追单
-            should_chase = self.execution_algo.should_chase(
-                current_maker_price=current_maker_price,
-                current_price=current_price,
-                order_age=order_age
-            )
+            # 更新追踪止损
+            should_close_trailing, stop_price_trailing = self.state_manager.update_trailing_stop(price)
 
-            # 如果应该追单，执行插队逻辑
-            if should_chase:
+            # 追踪止损触发
+            if should_close_trailing:
                 logger.info(
-                    f"🔄 [插队触发] {self.symbol}: "
-                    f"原价格={current_maker_price:.6f}, "
-                    f"新价格={current_price:.6f}"
+                    f"🎯 [追踪止损平仓] {self.symbol}: "
+                    f"止损价={stop_price_trailing:.6f}, "
+                    f"当前价={price:.6f}"
                 )
-                await self._cancel_maker_order()
-                await asyncio.sleep(0.1)
-
-            # 重新计算挂单价格
-            best_bid, best_ask = self._get_order_book_best_prices(current_price)
-            if best_bid <= 0 or best_ask <= 0:
-                logger.debug(f"🛑 [追单跳过] {self.symbol}: 订单簿数据无效")
+                await self._close_position(reason="trailing_stop", stop_price=stop_price_trailing, current_price=price)
+                self._transition_to_state(StrategyState.PENDING_CLOSE, "追踪止损触发")
                 return
 
-            decision = self.execution_algo.calculate_maker_price(
-                side='buy',
-                best_bid=best_bid,
-                best_ask=best_ask,
-                order_age=0.0
-            )
-
-            # 计算止损价格
-            stop_loss_price = self._calculate_stop_loss(current_price)
-
-            # 计算交易数量
-            if self.config.position_size is not None:
-                trade_size = max(1, int(self.config.position_size))
-            else:
-                trade_size = self._capital_commander.calculate_safe_quantity(
-                    symbol=self.symbol,
-                    entry_price=decision.price,
-                    stop_loss_price=stop_loss_price,
-                    strategy_id=self.strategy_id,
-                    contract_val=self.contract_val
-                )
-                trade_size = max(1, int(trade_size))
-
-            # 重新提交挂单
-            success = await self._place_maker_order(
-                symbol=self.symbol,
-                price=decision.price,
-                stop_loss_price=stop_loss_price,
-                size=trade_size,
-                contract_val=self.contract_val
-            )
-
-            if success:
+            # 时间止损检查
+            position_age = now - self.state_manager._position.entry_time
+            if position_age >= self.config.time_limit_seconds:
                 logger.info(
-                    f"✅ [插队成功] {self.symbol} @ {decision.price:.6f}, "
-                    f"数量={trade_size}, 止损={stop_loss_price:.6f}"
+                    f"⏰ [时间止损触发] {self.symbol}: "
+                    f"持仓时间={position_age:.1f}s >= {self.config.time_limit_seconds}s"
                 )
+                await self._close_position(reason="time_stop", current_price=price)
+                self._transition_to_state(StrategyState.PENDING_CLOSE, "时间止损触发")
+                return
+
+            # 硬止损检查
+            entry_price = self.state_manager._position.entry_price
+            hard_stop_price = entry_price * (1 - self.config.stop_loss_pct)
+
+            if price <= hard_stop_price:
+                logger.info(
+                    f"📉 [硬止损触发] {self.symbol}: "
+                    f"当前价={price:.6f} <= 止损价={hard_stop_price:.6f}"
+                )
+                await self._close_position(reason="hard_stop", current_price=price)
+                self._transition_to_state(StrategyState.PENDING_CLOSE, "硬止损触发")
+                return
 
         except Exception as e:
-            logger.error(f"检查追单条件失败: {e}", exc_info=True)
+            logger.error(f"❌ [POSITION_HELD 状态处理失败] {self.symbol}: {e}", exc_info=True)
 
     def _get_order_book_best_prices(self, current_price: float = 0.0) -> tuple:
         """
@@ -958,26 +862,7 @@ class ScalperV2(BaseStrategy):
             # 执行平仓
             success = await self.sell(
                 symbol=self.symbol,
-                entry_price=close_price if close_price > 0 else position.entry_price,  # 市价时使用入场价占位
-                stop_loss_price=0.0,  # 平仓不需要止损
-                order_type='market',  # 市价平仓
-                size=position_size
-            )
-
-            if success:
-                logger.info(
-                    f"✅ [平仓成功] {self.symbol}: "
-                    f"原因={reason}, "
-                    f"数量={position_size:.4f}"
-                )
-
-        except Exception as e:
-            logger.error(f"❌ [平仓失败] {self.symbol}: {e}", exc_info=True)
-
-            # 执行平仓
-            success = await self.sell(
-                symbol=self.symbol,
-                entry_price=close_price if close_price > 0 else position.entry_price,  # 市价时使用入场价占位
+                entry_price=close_price if close_price > 0 else position.entry_price,
                 stop_loss_price=0.0,  # 平仓不需要止损
                 order_type='market',  # 市价平仓
                 size=position_size
@@ -1043,7 +928,8 @@ class ScalperV2(BaseStrategy):
                 # 被取消的订单不是当前 maker 订单，跳过
                 logger.debug(
                     f"🔔 [订单取消跳过] {self.symbol}: "
-                    f"取消订单={order_id} != 当前订单={maker_order_id}"
+                        f"取消订单={order_id} != 当前订单={maker_order_id}"
+                    f"跳过处理"
                 )
                 return
 
@@ -1096,6 +982,135 @@ class ScalperV2(BaseStrategy):
         except Exception as e:
             logger.error(f"处理事件失败: {e}", exc_info=True)
 
+    # ========== FSM 状态处理方法（模块化路由） ==========
+
+    async def _handle_idle_state(self, tick_data: dict):
+        """
+        处理 IDLE 状态（无持仓、无挂单）
+
+        【轻量级】信号生成 + 开仓逻辑
+        - 运行昂贵的信号计算（EMA、Imbalance、Spread）
+        - 运行仓位计算
+        - 提交挂单
+
+        Args:
+            tick_data (dict): Tick 数据
+        """
+        try:
+            # 提取数据
+            symbol = tick_data.get('symbol')
+            price = float(tick_data.get('price', 0))
+            size = float(tick_data.get('size', 0))
+            side = tick_data.get('side', '').lower()
+            usdt_val = price * size * self.contract_val
+            now = time.time()
+
+            # 计算总量
+            total_vol = self.buy_vol + self.sell_vol
+
+            # 使用信号生成器计算信号
+            signal = self.signal_generator.compute(
+                symbol=symbol,
+                price=price,
+                side=side,
+                size=size,
+                volume_usdt=usdt_val
+            )
+
+            # 如果信号无效，直接返回
+            if not signal.is_valid:
+                return
+
+            # 🔥 [日志] 记录大机会
+            if (usdt_val >= self.signal_generator.config.min_flow_usdt and
+                total_vol >= self.signal_generator.config.min_flow_usdt and
+                signal.direction == 'bullish'):
+                imbalance_ratio = signal.metadata.get('imbalance_ratio', 0.0)
+                ema_value = signal.metadata.get('ema_value', 0.0)
+
+                logger.info(
+                    f"🎯 [大机会] {self.symbol}: "
+                    f"{side} {size:.4f} @ {price:.4f} = {usdt_val:,.0f} USDT | "
+                    f"总量={total_vol:,.0f} USDT | "
+                    f"失衡={imbalance_ratio:.2f}x | "
+                    f"趋势=看涨 (Price>{ema_value:.4f})"
+                )
+
+            # 检查 OrderBook 数据
+            best_bid, best_ask = self._get_order_book_best_prices(price)
+            if best_bid <= 0 or best_ask <= 0:
+                logger.warning("订单簿数据不可用，跳过本次开仓")
+                return
+
+            # 获取账户权益
+            account_equity = self._capital_commander.get_total_equity()
+
+            # 获取订单簿深度
+            order_book = self.public_gateway.get_order_book_depth(levels=3)
+
+            # 计算下单金额
+            usdt_amount = self.position_sizer.calculate_order_size(
+                account_equity=account_equity,
+                order_book=order_book,
+                signal_ratio=signal.metadata.get('imbalance_ratio', 0.0),
+                current_price=price,
+                side='buy'
+            )
+
+            # 如果金额为 0，跳过
+            if usdt_amount <= 0:
+                logger.warning(f"🛑 [自适应仓位] {self.symbol}: 计算金额={usdt_amount:.2f} USDT ≤ 0，跳过本次开仓")
+                return
+
+            # 转换为合约张数
+            trade_size = self.position_sizer.convert_to_contracts(
+                amount_usdt=usdt_amount,
+                current_price=price,
+                ct_val=self.contract_val
+            )
+            trade_size = max(1, int(trade_size))
+
+            logger.info(
+                f"🎯 [自适应仓位] {self.symbol}: "
+                f"账户权益={account_equity:.2f} USDT, "
+                f"下单金额={usdt_amount:.2f} USDT, "
+                f"合约张数={trade_size} 张, "
+                f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
+            )
+
+            # 计算止损价格
+            stop_loss_price = self._calculate_stop_loss(price)
+
+            # 计算挂单价格
+            decision = self.execution_algo.calculate_maker_price(
+                side='buy',
+                best_bid=best_bid,
+                best_ask=best_ask,
+                order_age=0.0
+            )
+
+            # 提交挂单
+            success = await self._place_maker_order(
+                symbol=symbol,
+                price=decision.price,
+                stop_loss_price=stop_loss_price,
+                size=trade_size,
+                contract_val=self.contract_val
+            )
+
+            if success:
+                self._transition_to_state(StrategyState.PENDING_OPEN, "下单成功")
+                logger.info(
+                    f"✅ [狙击挂单已提交] {self.symbol} @ {decision.price:.6f}, "
+                    f"数量={trade_size}, 止损={stop_loss_price:.6f}, "
+                    f"策略={decision.reason}"
+                )
+            else:
+                self._transition_to_state(StrategyState.IDLE, "下单失败")
+
+        except Exception as e:
+            logger.error(f"❌ [IDLE 状态处理失败] {self.symbol}: {e}", exc_info=True)
+
     def get_statistics(self) -> Dict[str, Any]:
         """
         获取策略统计信息
@@ -1115,8 +1130,9 @@ class ScalperV2(BaseStrategy):
             'strategy': 'ScalperV2',
             'mode': 'Sniper',
             'version': '2.0',
-            'architecture': 'Controller-Components',
+            'architecture': 'Controller-Components-FSM',
             'symbol': self.symbol,
+            'fsm_state': self._get_state().name,
             'is_position_open': position_state.is_open,
             'position_size': position_state.size,
             'has_maker_order': self.state_manager.has_active_maker_order(),
@@ -1170,38 +1186,3 @@ class ScalperV2(BaseStrategy):
         self._orderbook_received = False
 
         logger.info(f"ScalperV2 状态已完全重置: {self.symbol}")
-
-    # ========== 测试辅助方法 ==========
-    # 这些方法仅供测试使用，用于设置组件状态
-
-    def _set_price_history_for_testing(self, prices: list):
-        """
-        设置价格历史（仅用于测试）
-
-        Args:
-            prices (list): 价格列表
-        """
-        import collections
-        self.signal_generator.price_history = collections.deque(prices, maxlen=100)
-        # 重新计算 EMA
-        if len(prices) >= self.signal_generator.config.ema_period:
-            recent_prices = prices[-self.signal_generator.config.ema_period:]
-            self.signal_generator.ema_value = sum(recent_prices) / len(recent_prices)
-
-    def _get_ema_value(self) -> float:
-        """
-        获取当前 EMA 值（仅用于测试）
-
-        Returns:
-            float: EMA 值
-        """
-        return self.signal_generator.ema_value
-
-    def _set_ema_value(self, value: float):
-        """
-        设置 EMA 值（仅用于测试）
-
-        Args:
-            value (float): EMA 值
-        """
-        self.signal_generator.ema_value = value
