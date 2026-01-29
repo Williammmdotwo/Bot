@@ -343,10 +343,15 @@ class OkxPublicWsGateway(WsBaseGateway):
 
             total_value = 0.0
 
-            # 计算前N档的总金额
+            # 🔥 关键修复：正确处理 OrderBook 数据格式
+            # BookParser 已标准化为 [[price_float, size_float], ...]
             for i in range(min(levels, len(depth_orders))):
-                price, size = depth_orders[i]
-                total_value += price * size
+                order = depth_orders[i]
+                # 确保有 2 个元素（price 和 size）
+                if len(order) >= 2:
+                    price = float(order[0])
+                    size = float(order[1])
+                    total_value += price * size
 
             logger.debug(
                 f"📊 [深度查询] {side_name}盘口前{levels}档 "

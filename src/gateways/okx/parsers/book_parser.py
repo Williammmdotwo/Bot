@@ -56,25 +56,38 @@ class BookParser:
             bids = book.get('bids', [])
             asks = book.get('asks', [])
 
-            # 只保留前5档（足够用于 Maker 策略）
-            best_bid = 0.0
-            best_ask = 0.0
+            # 🔥 关键修复：标准化数据格式，转换为 float
+            # OKX Book 数据格式: ["price", "size", "orders", "timestamp"]
+            # 只取前2个字段：price 和 size，并转换为 float
+            standardized_bids = []
+            standardized_asks = []
+
+            if bids:
+                for bid in bids[:5]:  # 只保留前5档
+                    if len(bid) >= 2:
+                        price = float(bid[0])
+                        size = float(bid[1])
+                        standardized_bids.append([price, size])
+
+            if asks:
+                for ask in asks[:5]:  # 只保留前5档
+                    if len(ask) >= 2:
+                        price = float(ask[0])
+                        size = float(ask[1])
+                        standardized_asks.append([price, size])
 
             # 买一价（买单第一档的价格）
-            if bids and len(bids) > 0:
-                best_bid = float(bids[0][0])
-
+            best_bid = standardized_bids[0][0] if standardized_bids else 0.0
             # 卖一价（卖单第一档的价格）
-            if asks and len(asks) > 0:
-                best_ask = float(asks[0][0])
+            best_ask = standardized_asks[0][0] if standardized_asks else 0.0
 
             # 高频订单簿数据不记录详细日志
             logger.debug(
                 f"Order Book: best_bid={best_bid:.6f}, best_ask={best_ask:.6f}, "
-                f"bids={len(bids)}, asks={len(asks)}"
+                f"bids={len(standardized_bids)}, asks={len(standardized_asks)}"
             )
 
-            # 推送 BOOK_EVENT 事件到事件总线
+            # 推送 BOOK_EVENT 事件到事件总线（标准化后的数据）
             if self.event_bus:
                 from ....core.event_types import Event, EventType
 
@@ -84,8 +97,8 @@ class BookParser:
                         'symbol': self.symbol,
                         'best_bid': best_bid,
                         'best_ask': best_ask,
-                        'bids': bids[:5] if bids else [],
-                        'asks': asks[:5] if asks else []
+                        'bids': standardized_bids,  # ✅ 标准化格式：[[price_float, size_float], ...]
+                        'asks': standardized_asks   # ✅ 标准化格式：[[price_float, size_float], ...]
                     },
                     source="book_parser"
                 )
