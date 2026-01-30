@@ -312,9 +312,20 @@ class Engine:
             if hasattr(strategy, 'on_order_cancelled'):
                 self._event_bus.register(EventType.ORDER_CANCELLED, strategy.on_order_cancelled)
 
+            # 🔥 [修复] 注册订单提交事件（可选回调）
+            if hasattr(strategy, 'on_order_submitted'):
+                self._event_bus.register(EventType.ORDER_SUBMITTED, strategy.on_order_submitted)
+                logger.debug(f"✅ 策略 {strategy.strategy_id} 已注册 on_order_submitted 事件处理器")
+
+            # 🔥 [修复] 注册通用事件处理器（用于监听ORDERBOOK_UPDATED等）
+            if hasattr(strategy, 'on_event'):
+                self._event_bus.register(EventType.ORDERBOOK_UPDATED, strategy.on_event)
+                self._event_bus.register(EventType.ORDERBOOK_SNAPSHOT, strategy.on_event)
+                logger.debug(f"✅ 策略 {strategy.strategy_id} 已注册 on_event 事件处理器")
+
             logger.info(
                 f"✅ 策略 {strategy.strategy_id} 已注册监听 "
-                f"TICK, ORDER_FILLED 和 ORDER_CANCELLED"
+                f"TICK, ORDER_FILLED, ORDER_CANCELLED, ORDER_SUBMITTED 和 ORDERBOOK_UPDATED"
             )
 
         # 3. 🔥 [修复58] 注册 OrderBook 事件监听器（修复 PositionSizer 获取空订单簿问题）

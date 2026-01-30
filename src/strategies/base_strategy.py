@@ -147,6 +147,17 @@ class BaseStrategy(ABC):
         """
         pass
 
+    async def on_order_submitted(self, event: Event):
+        """
+        处理订单提交事件（可选回调）
+
+        子类可以覆盖此方法来处理订单提交后的逻辑。
+
+        Args:
+            event (Event): ORDER_SUBMITTED 事件
+        """
+        pass
+
     async def buy(
         self,
         symbol: str,

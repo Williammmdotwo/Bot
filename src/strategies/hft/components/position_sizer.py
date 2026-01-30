@@ -285,6 +285,8 @@ class PositionSizer:
         """
         将USDT金额转换为合约张数
 
+        🔥 [修复] 使用四舍五入而非截断，避免计算误差
+
         Args:
             amount_usdt: USDT金额
             current_price: 当前价格
@@ -293,12 +295,27 @@ class PositionSizer:
         Returns:
             int: 合约张数
         """
-        contract_value = current_price * ct_val  # 每张合约的价值
-        contracts = int(amount_usdt / contract_value)
+        if current_price <= 0 or ct_val <= 0:
+            logger.error(f"❌ [合约转换失败] 价格或ct_val无效: price={current_price}, ct_val={ct_val}")
+            return 0
+
+        # 计算每张合约的价值
+        contract_value = current_price * ct_val
+
+        # 🔥 [修复] 使用四舍五入，避免int()截断导致的误差
+        # 例如：450 / 822.52 = 0.547，int()会得到0，round()会得到1
+        contracts = round(amount_usdt / contract_value)
+
+        # 确保至少返回1张（如果计算结果>=0.5）
+        # 这样可以避免因为浮点精度问题导致的0张
+        if contracts >= 0.5:
+            contracts = max(1, contracts)
+        else:
+            contracts = 0
 
         logger.debug(
             f"💰 [合约转换] {amount_usdt:.2f} USDT / "
-            f"({current_price:.6f} × {ct_val}) = {contracts} 张"
+            f"({current_price:.6f} × {ct_val}) = {contracts} 张 (每张价值={contract_value:.2f} USDT)"
         )
 
         return contracts
