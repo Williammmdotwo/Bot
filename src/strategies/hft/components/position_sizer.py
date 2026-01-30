@@ -57,14 +57,16 @@ class PositionSizer:
     3. 波动率保护（市场剧烈波动时减仓）- 防止损误触
     """
 
-    def __init__(self, config: PositionSizingConfig):
+    def __init__(self, config: PositionSizingConfig, ct_val: float = 1.0):
         """
         初始化仓位计算器
 
         Args:
             config (PositionSizingConfig): 仓位管理配置
+            ct_val (float): 合约面值（1张=ct_val个币）
         """
         self.cfg = config
+        self.ct_val = ct_val  # 🔥 [新增] 保存合约面值
 
         # 波动率历史（用于标准差计算）
         self._price_history = collections.deque(maxlen=config.volatility_ema_period)
@@ -76,7 +78,8 @@ class PositionSizer:
             f"signal_normal={config.signal_threshold_normal}x, "
             f"signal_agg={config.signal_threshold_aggressive}x, "
             f"liq_ratio={config.liquidity_depth_ratio*100:.0f}%, "
-            f"volatility={config.volatility_threshold*100:.3f}%"
+            f"volatility={config.volatility_threshold*100:.3f}%, "
+            f"ctVal={ct_val}"  # 🔥 [新增] 显示合约面值
         )
 
     def calculate_order_size(
@@ -164,10 +167,12 @@ class PositionSizer:
         # --- 4. 流动性/滑点保护（单向深度）---
         liquidity_limit = float('inf')
         if self.cfg.liquidity_protection_enabled:
+            # 🔥 [修复] 传入合约面值，正确计算深度价值
             depth_value = self._calculate_depth_value(
                 order_book,
                 self.cfg.liquidity_depth_levels,
-                side  # 🔥 关键：根据交易方向使用对应方深度
+                side,
+                self.ct_val  # 🔥 [新增] 传入合约面值
             )
 
             liquidity_limit = depth_value * self.cfg.liquidity_depth_ratio
@@ -230,7 +235,7 @@ class PositionSizer:
                 f"波动率={self._volatility_value:.4%}"
             )
 
-    def _calculate_depth_value(self, order_book: Dict[str, Any], levels: int, side: str) -> float:
+    def _calculate_depth_value(self, order_book: Dict[str, Any], levels: int, side: str, ct_val: float = 1.0) -> float:
         """
         计算盘口前N档的总金额（🔥 关键：单向深度）
 
@@ -238,6 +243,7 @@ class PositionSizer:
             order_book: {'bids': [...], 'asks': [...]}
             levels: 档位数量
             side: 交易方向 'buy' 或 'sell'
+            ct_val: 合约面值（1张=ct_val个币）
 
         Returns:
             float: 总金额 (USDT)
@@ -257,17 +263,19 @@ class PositionSizer:
 
             # 🔥 关键修复：正确处理 OrderBook 数据格式
             # BookParser 已标准化为 [[price_float, size_float], ...]
+            # 🔥 [严重修复] 必须乘以 ct_val，因为订单簿中的 size 是币的数量
+            # 例如：DOGE-USDT-SWAP 的 ctVal=10，size=10 实际价值 = price * size * 10
             for i in range(min(levels, len(depth_orders))):
                 order = depth_orders[i]
                 # 确保有 2 个元素（price 和 size）
                 if len(order) >= 2:
                     price = float(order[0])
                     size = float(order[1])
-                    total_value += price * size
+                    total_value += price * size * ct_val  # 🔥 [修复] 乘以合约面值
 
             logger.debug(
                 f"📊 [深度计算] {side_name}盘口前{levels}档 "
-                f"总金额={total_value:.2f} USDT"
+                f"总金额={total_value:.2f} USDT (ctVal={ct_val})"
             )
 
             return total_value

@@ -213,7 +213,8 @@ class ScalperV2(BaseStrategy):
         )
 
         # 初始化仓位计算器
-        self.position_sizer = PositionSizer(position_sizing_config)
+        # 🔥 [修复] 传入合约面值，确保深度计算正确
+        self.position_sizer = PositionSizer(position_sizing_config, ct_val=self.contract_val)
 
         logger.info(
             f"✅ [ScalperV2] 自适应仓位管理器已初始化: "
@@ -1013,19 +1014,34 @@ class ScalperV2(BaseStrategy):
                 logger.warning("订单簿数据不可用，跳过本次开仓")
                 return
 
-            # 获取账户权益
-            account_equity = self._capital_commander.get_total_equity()
+            # 🔥 [修复] 获取策略专属资金（而非全局总权益）
+            strategy_capital = self._capital_commander.get_strategy_capital(self.strategy_id)
+            if strategy_capital:
+                account_equity = strategy_capital.available
+                logger.debug(
+                    f"💰 [策略资金] {self.symbol}: "
+                    f"可用资金={account_equity:.2f} USDT "
+                    f"(策略专属)"
+                )
+            else:
+                # 降级：使用全局权益
+                account_equity = self._capital_commander.get_total_equity()
+                logger.warning(
+                    f"⚠️ [资金降级] {self.symbol}: "
+                    f"未找到策略资金，使用全局权益={account_equity:.2f} USDT"
+                )
 
             # 获取订单簿深度
             order_book = self.public_gateway.get_order_book_depth(levels=3)
 
-            # 计算下单金额
+            # 计算下单金额（传入合约面值）
             usdt_amount = self.position_sizer.calculate_order_size(
                 account_equity=account_equity,
                 order_book=order_book,
                 signal_ratio=signal.metadata.get('imbalance_ratio', 0.0),
                 current_price=price,
-                side='buy'
+                side='buy',
+                ct_val=self.contract_val  # 🔥 [新增] 传入合约面值
             )
 
             # 如果金额为 0，跳过
