@@ -937,24 +937,18 @@ class ScalperV2(BaseStrategy):
         try:
             from ...core.event_types import EventType
 
-            # 监听 OrderBook 更新事件
-            if event.type == EventType.ORDERBOOK_UPDATED:
+            # 🔥 [修复] 监听 BOOK_EVENT 事件（而非 ORDERBOOK_UPDATED）
+            if event.type == EventType.BOOK_EVENT:
                 logger.debug(
                     f"📊 [OrderBook Updated] {self.symbol}: "
                     f"收到订单簿更新事件"
                 )
                 # 标记已接收
                 self._orderbook_received = True
-            elif event.type == EventType.ORDERBOOK_SNAPSHOT:
-                logger.debug(
-                    f"📊 [OrderBook Snapshot] {self.symbol}: "
-                    f"收到订单簿快照事件"
-                )
             else:
                 logger.debug(
                     f"🔔 [Event Ignore] {self.symbol}: "
-                        f"忽略事件类型={event.type}"
-                    f"跳过处理"
+                    f"忽略事件类型={event.type}"
                 )
         except Exception as e:
             logger.error(f"处理事件失败: {e}", exc_info=True)
