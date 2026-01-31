@@ -38,7 +38,11 @@
     "max_chase_distance_pct": 0.001,
     "min_order_life_seconds": 2.0,
     "aggressive_maker_spread_ticks": 2.0,
-    "aggressive_maker_price_offset": 1.0
+    "aggressive_maker_price_offset": 1.0,
+    "max_slippage_pct": 0.001,
+    "compute_throttle_ms": 50,
+    "anti_flipping_threshold": 10.0,
+    "enable_depth_protection": true
   },
 
   "signal_generator": {

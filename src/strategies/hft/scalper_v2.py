@@ -173,6 +173,28 @@ class ScalperV2(BaseStrategy):
         self._start_time = 0.0
         self._orderbook_received = False
 
+        # ========== 🔥 [新增] 计算节流配置 ==========
+        # 从 kwargs 中读取 execution_algo 配置
+        execution_algo_kwargs = kwargs.get('execution_algo', {})
+
+        self.max_slippage_pct = execution_algo_kwargs.get('max_slippage_pct', 0.001)  # 0.1%
+        self.compute_throttle_ms = execution_algo_kwargs.get('compute_throttle_ms', 50)  # 50ms
+        self.anti_flipping_threshold = execution_algo_kwargs.get('anti_flipping_threshold', 10.0)  # 10倍
+        self.enable_depth_protection = execution_algo_kwargs.get('enable_depth_protection', True)
+
+        # 计算节流状态
+        self._last_compute_time = 0.0
+        self._last_price = 0.0
+        self._last_ask_snapshot = {}  # 用于深度感知撤单
+
+        logger.info(
+            f"⚙️ [ExecutionAlgo 升级] {self.symbol}: "
+            f"max_slippage={self.max_slippage_pct*100:.2%}, "
+            f"throttle={self.compute_throttle_ms}ms, "
+            f"anti_flipping={self.anti_flipping_threshold}x, "
+            f"depth_protection={self.enable_depth_protection}"
+        )
+
         # ========== 状态机管理 ==========
         # 🔥 [修复 68] FSM + 模块化路由架构
         # 避免在有挂单时仍大量计算信号和仓位
@@ -395,6 +417,10 @@ class ScalperV2(BaseStrategy):
         - 不直接实现信号生成或执行逻辑
         - 所有业务逻辑都委托给组件
 
+        🔥 [新增] 计算节流优化：
+        - 如果当前 Tick 价格与上次的差小于 tick_size，且距离上次计算不足 50ms，则直接返回
+        - 将无效的计算密集度降低 85% 以上
+
         Args:
             event (Event): TICK 事件
         """
@@ -415,6 +441,23 @@ class ScalperV2(BaseStrategy):
             # 检查交易对是否匹配
             if symbol != self.symbol:
                 return
+
+            # 🔥 [新增] 计算节流（Scheme A Implementation）
+            # 检查：如果当前 Tick 价格与 self._last_price 之差小于 tick_size，且距离上次计算不足 50ms
+            # 则直接返回（跳过 signal_generator.compute）
+            # 目标：将无效的计算密集度降低 85% 以上
+            if self._last_price > 0:
+                # 价格变化小于 tick_size
+                price_delta = abs(price - self._last_price)
+                time_delta_ms = (now - self._last_compute_time) * 1000  # 转换为毫秒
+
+                if price_delta < self.tick_size and time_delta_ms < self.compute_throttle_ms:
+                    # 跳过计算
+                    return
+
+            # 更新最后计算时间和价格
+            self._last_compute_time = now
+            self._last_price = price
 
             # 🔥 [修复 68] 提前退出：有挂单时直接返回
             # 这是最简单的性能优化，避免有挂单时大量计算信号、仓位、日志
@@ -1078,6 +1121,54 @@ class ScalperV2(BaseStrategy):
                     f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
             )
 
+            # 🔥 [新增] VWAP 滑点预估
+            # 在下达 limit buy 订单前，从 MarketDataManager 获取当前前 5 档深度
+            # 计算：根据我们要下的 size，模拟消耗盘口深度，计算加权平均成交价 (VWAP)
+            # 限制：如果 abs(VWAP - BestAsk) / BestAsk > max_slippage_pct（建议配置 0.1%），则放弃此交易
+            if self.enable_depth_protection:
+                if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                    order_book_depth = self.market_data_manager.get_order_book_depth(self.symbol, levels=5)
+
+                    if order_book_depth and 'asks' in order_book_depth and len(order_book_depth['asks']) >= 5:
+                        # 计算 VWAP
+                        remaining_size = trade_size * self.contract_val  # 转换为实际数量
+                        vwap_numerator = 0.0
+                        vwap_denominator = 0.0
+                        simulated_size = 0.0
+
+                        for ask in order_book_depth['asks'][:5]:  # 前 5 档
+                            ask_price = ask[0]
+                            ask_size = ask[1]
+
+                            # 模拟消耗
+                            if remaining_size <= ask_size:
+                                vwap_numerator += ask_price * remaining_size
+                                vwap_denominator += remaining_size
+                                simulated_size += remaining_size
+                                break
+                            else:
+                                vwap_numerator += ask_price * ask_size
+                                vwap_denominator += ask_size
+                                remaining_size -= ask_size
+                                simulated_size += ask_size
+
+                        if vwap_denominator > 0:
+                            vwap = vwap_numerator / vwap_denominator
+                            best_ask = order_book_depth['asks'][0][0]
+
+                            # 计算滑点
+                            slippage_pct = abs(vwap - best_ask) / best_ask if best_ask > 0 else 0.0
+
+                            if slippage_pct > self.max_slippage_pct:
+                                logger.warning(
+                                    f"🛑 [滑点保护] {self.symbol}: "
+                                    f"预估执行偏差过大: {slippage_pct*100:.2%} "
+                                    f"(阈值={self.max_slippage_pct*100:.2%}), "
+                                    f"VWAP={vwap:.6f}, BestAsk={best_ask:.6f}, "
+                                    f"跳过本次交易"
+                                )
+                                return
+
             # 计算止损价格
             stop_loss_price = self._calculate_stop_loss(price)
 
@@ -1400,6 +1491,75 @@ class ScalperV2(BaseStrategy):
 
                                     # 重新计算价格并挂单
                                     await self._reorder_after_cancel()
+
+                                # 🔥 [新增] 深度感知撤单
+                                # 场景：当我们的挂单处于队列中时
+                                # 优化：监控我们订单所在的价格档位，以及其前方的总挂单量
+                                if self.enable_depth_protection and hasattr(self, 'market_data_manager') and self.market_data_manager:
+                                    order_book_depth = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
+
+                                    if order_book_depth and 'bids' in order_book_depth and len(order_book_depth['bids']) > 0:
+                                        # 查找我们订单所在的档位
+                                        our_price_level = None
+                                        volume_ahead = 0.0
+
+                                        for i, bid in enumerate(order_book_depth['bids']):
+                                            bid_price = bid[0]
+                                            bid_size = bid[1]
+
+                                            # 价格匹配（考虑tick_size精度）
+                                            if abs(bid_price - maker_order_price) < self.tick_size:
+                                                our_price_level = i
+                                                break
+                                            # 在我们订单之前的档位
+                                            elif bid_price > maker_order_price:
+                                                volume_ahead += bid_size
+
+                                        # 如果找到我们的档位
+                                        if our_price_level is not None:
+                                            our_bid = order_book_depth['bids'][our_price_level]
+                                            our_size = our_bid[1]
+
+                                            # 获取上次快照用于检测删单
+                                            last_snapshot = self._last_ask_snapshot.get(maker_order_id, {})
+                                            last_volume_ahead = last_snapshot.get('volume_ahead', 0.0)
+
+                                            # 🔥 [策略1] 如果前方突然出现了巨大的"压单"
+                                            # 压单量 > 我们订单的 10 倍
+                                            if volume_ahead > our_size * self.anti_flipping_threshold:
+                                                logger.warning(
+                                                    f"🚨 [深度感知-压单] {self.symbol}: "
+                                                    f"前方压单量={volume_ahead:.0f} (我们的={our_size:.0f}), "
+                                                    f"超过{self.anti_flipping_threshold}倍阈值，立即撤单"
+                                                )
+                                                await self._cancel_maker_order()
+                                                # 等待500ms
+                                                await asyncio.sleep(0.5)
+                                                continue
+
+                                            # 🔥 [策略2] 前方档位在 100ms 内发生了剧烈的"删单"
+                                            if len(last_snapshot) > 0:
+                                                volume_change = abs(volume_ahead - last_volume_ahead)
+                                                time_since_snapshot = time.time() - last_snapshot.get('timestamp', 0)
+
+                                                # 如果删单量超过我们订单的10倍，且时间<100ms
+                                                if (volume_change > our_size * self.anti_flipping_threshold and
+                                                    time_since_snapshot < 0.1):
+                                                    logger.warning(
+                                                        f"🚨 [深度感知-删单] {self.symbol}: "
+                                                        f"前方删单量={volume_change:.0f} (我们的={our_size:.0f}), "
+                                                        f"超过{self.anti_flipping_threshold}倍阈值，立即撤单"
+                                                    )
+                                                    await self._cancel_maker_order()
+                                                    # 等待500ms
+                                                    await asyncio.sleep(0.5)
+                                                    continue
+
+                                            # 保存快照
+                                            self._last_ask_snapshot[maker_order_id] = {
+                                                'volume_ahead': volume_ahead,
+                                                'timestamp': time.time()
+                                            }
 
                     # ========== 状态一致性检查 ==========
                     # 如果有持仓但状态是 PENDING_OPEN，说明订单成交但状态未更新
