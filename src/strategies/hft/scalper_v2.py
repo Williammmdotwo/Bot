@@ -254,14 +254,25 @@ class ScalperV2(BaseStrategy):
         """检查是否在指定状态"""
         return self._state == expected_state
 
+    def set_market_data_manager(self, market_data_manager):
+        """
+        注入市场数据管理器（用于获取订单簿数据）
+
+        Args:
+            market_data_manager: MarketDataManager 实例
+        """
+        self.market_data_manager = market_data_manager
+        logger.info(f"市场数据管理器已注入到策略 {self.strategy_id}")
+
     def set_public_gateway(self, gateway):
         """
-        注入公共网关（用于获取订单簿数据）
+        注入公共网关（用于获取订单簿数据）- 已废弃，请使用 set_market_data_manager
 
         Args:
             gateway: OkxPublicWsGateway 实例
         """
         self.public_gateway = gateway
+        logger.warning(f"⚠️ set_public_gateway 已废弃，请使用 set_market_data_manager")
         logger.info(f"公共网关已注入到策略 {self.strategy_id}")
 
     async def start(self):
@@ -726,24 +737,33 @@ class ScalperV2(BaseStrategy):
             tuple: (best_bid, best_ask)
         """
         try:
-            # 检查是否已收到 OrderBook 数据
-            if not self._orderbook_received:
-                # 未收到 OrderBook 数据，降级使用 Last Price
-                if current_price > 0:
-                    logger.debug(
-                        f"⚠️ [降级策略] {self.symbol}: "
-                        f"订单簿数据不可用，使用 Last Price={current_price:.6f}"
-                    )
-                    return (current_price, current_price)
-                else:
-                    return (0.0, 0.0)
+            # 优先使用 MarketDataManager
+            if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                best_bid, best_ask = self.market_data_manager.get_best_bid_ask(self.symbol)
 
-            # 已收到 OrderBook 数据，从公共网关获取
-            if hasattr(self, 'public_gateway') and self.public_gateway:
+                # 如果数据不可用，降级使用 Last Price
+                if best_bid <= 0 or best_ask <= 0:
+                    if current_price > 0:
+                        logger.debug(
+                            f"⚠️ [降级策略] {self.symbol}: "
+                            f"订单簿数据不可用，使用 Last Price={current_price:.6f}"
+                        )
+                        return (current_price, current_price)
+                    else:
+                        return (0.0, 0.0)
+                else:
+                    return (best_bid, best_ask)
+
+            # 兼容旧代码（公共网关）
+            elif hasattr(self, 'public_gateway') and self.public_gateway:
                 best_bid, best_ask = self.public_gateway.get_best_bid_ask()
                 return (best_bid, best_ask)
             else:
-                return (0.0, 0.0)
+                # 降级使用 Last Price
+                if current_price > 0:
+                    return (current_price, current_price)
+                else:
+                    return (0.0, 0.0)
 
         except Exception as e:
             logger.error(f"获取订单簿价格失败: {e}", exc_info=True)
@@ -933,29 +953,13 @@ class ScalperV2(BaseStrategy):
 
     async def on_event(self, event: Event):
         """
-        处理通用事件（监听 OrderBook 更新）
+        处理通用事件（已废弃 - MarketDataManager 自动处理 OrderBook 更新）
 
         Args:
             event (Event): 通用事件
         """
-        try:
-            from ...core.event_types import EventType
-
-            # 🔥 [修复] 监听 BOOK_EVENT 事件（而非 ORDERBOOK_UPDATED）
-            if event.type == EventType.BOOK_EVENT:
-                logger.debug(
-                    f"📊 [OrderBook Updated] {self.symbol}: "
-                    f"收到订单簿更新事件"
-                )
-                # 标记已接收
-                self._orderbook_received = True
-            else:
-                logger.debug(
-                    f"🔔 [Event Ignore] {self.symbol}: "
-                    f"忽略事件类型={event.type}"
-                )
-        except Exception as e:
-            logger.error(f"处理事件失败: {e}", exc_info=True)
+        # 不再需要监听 BOOK_EVENT，MarketDataManager 会自动订阅
+        pass
 
     # ========== FSM 状态处理方法（模块化路由） ==========
 
@@ -1035,7 +1039,13 @@ class ScalperV2(BaseStrategy):
                 )
 
             # 获取订单簿深度
-            order_book = self.public_gateway.get_order_book_depth(levels=3)
+            if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
+            elif hasattr(self, 'public_gateway') and self.public_gateway:
+                order_book = self.public_gateway.get_order_book_depth(levels=3)
+            else:
+                logger.warning(f"⚠️ [警告] {self.symbol}: 无法获取订单簿深度")
+                order_book = {'bids': [], 'asks': []}
 
             # 计算下单金额（传入合约面值）
             usdt_amount = self.position_sizer.calculate_order_size(
@@ -1205,7 +1215,12 @@ class ScalperV2(BaseStrategy):
                 account_equity = self._capital_commander.get_total_equity()
 
             # 获取订单簿深度
-            order_book = self.public_gateway.get_order_book_depth(levels=3)
+            if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
+            elif hasattr(self, 'public_gateway') and self.public_gateway:
+                order_book = self.public_gateway.get_order_book_depth(levels=3)
+            else:
+                order_book = {'bids': [], 'asks': []}
 
             # 计算下单金额
             usdt_amount = self.position_sizer.calculate_order_size(
@@ -1287,13 +1302,14 @@ class ScalperV2(BaseStrategy):
 
                     # 检查是否有持仓
                     if position and abs(position.size) > 0:
-                        # 从订单管理器获取当前价格
+                        # 从 MarketDataManager 获取当前价格
                         current_price = 0.0
-                        if self._order_manager:
-                            # 尝试获取最新价格
-                            if hasattr(self, 'public_gateway') and self.public_gateway:
-                                best_bid, best_ask = self.public_gateway.get_best_bid_ask()
-                                current_price = (best_bid + best_ask) / 2 if best_bid > 0 and best_ask > 0 else 0.0
+                        if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                            best_bid, best_ask = self.market_data_manager.get_best_bid_ask(self.symbol)
+                            current_price = (best_bid + best_ask) / 2 if best_bid > 0 and best_ask > 0 else 0.0
+                        elif hasattr(self, 'public_gateway') and self.public_gateway:
+                            best_bid, best_ask = self.public_gateway.get_best_bid_ask()
+                            current_price = (best_bid + best_ask) / 2 if best_bid > 0 and best_ask > 0 else 0.0
 
                         if current_price > 0:
                             now = time.time()
@@ -1352,7 +1368,10 @@ class ScalperV2(BaseStrategy):
                         if maker_order_id and maker_order_id != "pending":
                             # 获取当前价格
                             maker_price = 0.0
-                            if hasattr(self, 'public_gateway') and self.public_gateway:
+                            if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                                best_bid, best_ask = self.market_data_manager.get_best_bid_ask(self.symbol)
+                                maker_price = best_bid if best_bid > 0 else 0.0
+                            elif hasattr(self, 'public_gateway') and self.public_gateway:
                                 best_bid, best_ask = self.public_gateway.get_best_bid_ask()
                                 maker_price = best_bid if best_bid > 0 else 0.0
 

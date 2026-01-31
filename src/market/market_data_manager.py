@@ -1,0 +1,227 @@
+"""
+MarketDataManager - 统一行情数据管理中心
+
+职责：
+- 订阅 BOOK_EVENT 和 TICK_EVENT
+- 维护全局最新的 L2 OrderBook 和 Ticker 状态
+- 提供只读快照给策略和组件
+- 线程安全（asyncio.Lock）
+"""
+
+import asyncio
+import time
+from typing import Dict, Tuple, Optional
+from dataclasses import dataclass
+
+from src.core.event_bus import EventBus
+from src.core.event_types import Event, EventType
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OrderBookSnapshot:
+    """订单簿快照（不可变）"""
+    symbol: str
+    bids: Tuple[Tuple[float, float]]  # [(price, size), ...]
+    asks: Tuple[Tuple[float, float]]
+    best_bid: float
+    best_ask: float
+    timestamp: float
+
+
+@dataclass
+class TickerSnapshot:
+    """行情快照（不可变）"""
+    symbol: str
+    last_price: float
+    bid_price: float
+    ask_price: float
+    volume_24h: float
+    timestamp: float
+
+
+class MarketDataManager:
+    """
+    市场数据管理器（单一数据源）
+
+    设计原则：
+    - 单向数据流：只从 EventBus 订阅，不发送事件
+    - 线程安全：使用 asyncio.Lock 保护状态
+    - 不可变快照：返回的快照对象不可修改
+    """
+
+    def __init__(self, event_bus: EventBus):
+        """
+        初始化市场数据管理器
+
+        Args:
+            event_bus: 事件总线
+        """
+        self._event_bus = event_bus
+        self._lock = asyncio.Lock()
+
+        # 订单簿状态（按 symbol 索引）
+        self._order_books: Dict[str, Dict] = {}  # {symbol: {'bids': ..., 'asks': ...}}
+
+        # 行情状态（按 symbol 索引）
+        self._tickers: Dict[str, Dict] = {}  # {symbol: {...}}
+
+        # 订阅事件
+        self._subscribe_to_events()
+
+        logger.info("📊 MarketDataManager 初始化完成")
+
+    def _subscribe_to_events(self):
+        """订阅 BOOK_EVENT 和 TICK_EVENT"""
+        self._event_bus.register(EventType.BOOK_EVENT, self._on_book_event)
+        self._event_bus.register(EventType.TICK_EVENT, self._on_tick_event)
+        logger.info("📊 MarketDataManager 已订阅 BOOK_EVENT 和 TICK_EVENT")
+
+    async def _on_book_event(self, event: Event):
+        """
+        处理订单簿事件（内部更新）
+
+        Args:
+            event: BOOK_EVENT
+        """
+        async with self._lock:
+            data = event.data
+            symbol = data.get('symbol')
+
+            if not symbol:
+                return
+
+            # 更新订单簿
+            self._order_books[symbol] = {
+                'bids': data.get('bids', []),
+                'asks': data.get('asks', [])
+            }
+
+            logger.debug(f"📊 [MarketDataManager] 更新 OrderBook: {symbol}")
+
+    async def _on_tick_event(self, event: Event):
+        """
+        处理 Tick 事件（更新 Ticker）
+
+        Args:
+            event: TICK_EVENT
+        """
+        async with self._lock:
+            data = event.data
+            symbol = data.get('symbol')
+
+            if not symbol:
+                return
+
+            # 更新 Ticker
+            self._tickers[symbol] = {
+                'last_price': float(data.get('price', 0)),
+                'timestamp': data.get('timestamp', 0) / 1000.0
+            }
+
+            logger.debug(f"📊 [MarketDataManager] 更新 Ticker: {symbol}")
+
+    def get_order_book_snapshot(self, symbol: str) -> Optional[OrderBookSnapshot]:
+        """
+        获取订单簿快照（只读，不可变）
+
+        Args:
+            symbol: 交易对
+
+        Returns:
+            OrderBookSnapshot: 订单簿快照，如果不存在返回 None
+        """
+        with self._lock:
+            order_book = self._order_books.get(symbol)
+
+            if not order_book:
+                return None
+
+            bids = order_book.get('bids', [])
+            asks = order_book.get('asks', [])
+
+            # 提取最佳买卖价
+            best_bid = float(bids[0][0]) if bids and len(bids) > 0 else 0.0
+            best_ask = float(asks[0][0]) if asks and len(asks) > 0 else 0.0
+
+            # 转换为不可变元组
+            bids_tuple = tuple((float(b[0]), float(b[1])) for b in bids)
+            asks_tuple = tuple((float(a[0]), float(a[1])) for a in asks)
+
+            return OrderBookSnapshot(
+                symbol=symbol,
+                bids=bids_tuple,
+                asks=asks_tuple,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                timestamp=time.time()
+            )
+
+    def get_ticker_snapshot(self, symbol: str) -> Optional[TickerSnapshot]:
+        """
+        获取行情快照（只读，不可变）
+
+        Args:
+            symbol: 交易对
+
+        Returns:
+            TickerSnapshot: 行情快照，如果不存在返回 None
+        """
+        with self._lock:
+            ticker = self._tickers.get(symbol)
+
+            if not ticker:
+                return None
+
+            return TickerSnapshot(
+                symbol=symbol,
+                last_price=ticker['last_price'],
+                bid_price=ticker.get('bid_price', ticker['last_price']),
+                ask_price=ticker.get('ask_price', ticker['last_price']),
+                volume_24h=ticker.get('volume_24h', 0.0),
+                timestamp=ticker['timestamp']
+            )
+
+    def get_best_bid_ask(self, symbol: str) -> Tuple[float, float]:
+        """
+        获取最优买卖价（便捷方法）
+
+        Args:
+            symbol: 交易对
+
+        Returns:
+            Tuple[float, float]: (best_bid, best_ask)
+        """
+        snapshot = self.get_order_book_snapshot(symbol)
+
+        if snapshot:
+            return (snapshot.best_bid, snapshot.best_ask)
+        else:
+            return (0.0, 0.0)
+
+    def get_order_book_depth(self, symbol: str, levels: int = 3) -> Dict:
+        """
+        获取订单簿深度（用于流动性保护）
+
+        Args:
+            symbol: 交易对
+            levels: 档位数量
+
+        Returns:
+            Dict: {'bids': [...], 'asks': [...]}
+        """
+        snapshot = self.get_order_book_snapshot(symbol)
+
+        if not snapshot:
+            return {'bids': [], 'asks': []}
+
+        # 截取指定档位
+        bids = snapshot.bids[:levels]
+        asks = snapshot.asks[:levels]
+
+        return {
+            'bids': [(p, s) for p, s in bids],
+            'asks': [(p, s) for p, s in asks]
+        }

@@ -31,6 +31,7 @@ from ..risk.pre_trade import PreTradeCheck
 from ..gateways.okx.rest_api import OkxRestGateway
 from ..gateways.okx.ws_public_gateway import OkxPublicWsGateway
 from ..gateways.okx.ws_private_gateway import OkxPrivateWsGateway
+from ..market.market_data_manager import MarketDataManager
 
 from ..strategies.base_strategy import BaseStrategy
 
@@ -69,6 +70,9 @@ class Engine:
         self._rest_gateway: Optional[OkxRestGateway] = None
         self._public_ws: Optional[OkxPublicWsGateway] = None
         self._private_ws: Optional[OkxPrivateWsGateway] = None
+
+        # 市场数据管理器
+        self._market_data_manager: Optional[MarketDataManager] = None
 
         # 策略容器
         self._strategies: List[BaseStrategy] = []
@@ -206,11 +210,15 @@ class Engine:
         await self._register_event_handlers()
         logger.info("✅ 事件处理器已注册")
 
-        # 8. 动态加载交易对信息（补丁三）
+        # 8. 创建市场数据管理器
+        self._market_data_manager = MarketDataManager(event_bus=self._event_bus)
+        logger.info("✅ MarketDataManager 已初始化")
+
+        # 9. 动态加载交易对信息（补丁三）
         await self._load_instruments()
         logger.info("✅ 交易对信息已加载")
 
-        # 9. 分配策略资金
+        # 10. 分配策略资金
         await self._allocate_strategy_capitals()
         logger.info("✅ 策略资金已分配")
 
@@ -250,10 +258,10 @@ class Engine:
             # [修复] 注入 PositionManager（支持自动全平）
             strategy.set_position_manager(self._position_manager)
 
-            # ✨ 新增：注入公共网关（支持 Maker 模式获取订单簿数据）
-            if hasattr(strategy, 'set_public_gateway'):
-                strategy.set_public_gateway(self._public_ws)
-                logger.debug(f"公共网关已注入到策略: {strategy.strategy_id}")
+            # ✨ 新增：注入市场数据管理器（统一数据源）
+            if hasattr(strategy, 'set_market_data_manager'):
+                strategy.set_market_data_manager(self._market_data_manager)
+                logger.debug(f"MarketDataManager 已注入到策略: {strategy.strategy_id}")
 
             logger.info(
                 f"策略已加载: {strategy.strategy_id} ({strategy_type})"
@@ -386,7 +394,7 @@ class Engine:
                         f"lot_size={lot_size}, min_order_size={min_order_size}, "
                         f"min_notional={min_notional:.2f} USDT, "
                         f"ctVal={ct_val}, "  # 🔥 [修复] 显示合约面值
-                        f"tickSize={tick_size}"  # 🔥 [Fix 41] 显示 tick_size
+                        f"tickSize={tick_size}"  # � [Fix 41] 显示 tick_size
                     )
 
             logger.info(
