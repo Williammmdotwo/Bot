@@ -6,17 +6,22 @@ StateManager - 状态管理器
 - 活动订单（Active Orders）
 - 冷却锁（Cooldowns）
 - 自愈逻辑（Self-Healing）
+- 🔥 [新增] 持久化支持
 
 设计原则：
 - 单一职责：只负责状态管理，不涉及信号生成或执行
-- 无状态：不维护任何持久化状态
 - 可测试：独立的接口，易于单元测试
+- 🔥 [新增] 支持可选持久化适配器
 """
 
 import logging
 import time
-from typing import Optional, Tuple
+import asyncio
+from typing import Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from ...persistence.persistence_adapter import PersistenceAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -75,21 +80,24 @@ class StateManager:
     2. 活动订单管理（Active Orders）
     3. 冷却锁管理（Cooldowns）
     4. 自愈逻辑（Self-Healing）
+    5. 🔥 [新增] 持久化支持（可选）
 
     设计原则：
     - 单一职责：只负责状态管理，不涉及信号生成或执行
-    - 无状态：不维护任何持久化状态
     - 可测试：独立的接口，易于单元测试
+    - 🔥 [新增] 支持可选持久化适配器
     """
 
-    def __init__(self, symbol: str):
+    def __init__(self, symbol: str, persistence: Optional['PersistenceAdapter'] = None):
         """
         初始化状态管理器
 
         Args:
             symbol (str): 交易对
+            persistence (PersistenceAdapter): 可选的持久化适配器
         """
         self.symbol = symbol
+        self._persistence = persistence
 
         # 持仓状态
         self._position = PositionState()
@@ -107,7 +115,11 @@ class StateManager:
         # 追踪止损状态
         self._trailing_stop = TrailingStopState()
 
-        logger.info(f"📊 [StateManager] 初始化: symbol={symbol}")
+        # 🔥 [新增] 如果有持久化，尝试恢复状态
+        if self._persistence:
+            asyncio.create_task(self._load_from_persistence())
+
+        logger.info(f"📊 [StateManager] 初始化: symbol={symbol}, persistence={persistence is not None}")
 
     # ========== 持仓管理 ==========
 
@@ -131,6 +143,10 @@ class StateManager:
             f"entry_price={entry_price:.6f}, "
             f"is_open={self._position.is_open}"
         )
+
+        # 🔥 [新增] 触发异步保存
+        if self._persistence:
+            asyncio.create_task(self._save_to_persistence())
 
     def get_position(self) -> PositionState:
         """
@@ -182,6 +198,10 @@ class StateManager:
 
         logger.info(f"📊 [StateManager] {self.symbol}: 平仓")
 
+        # 🔥 [新增] 触发异步保存
+        if self._persistence:
+            asyncio.create_task(self._save_to_persistence())
+
     # ========== 订单管理 ==========
 
     def set_maker_order(
@@ -208,6 +228,10 @@ class StateManager:
             f"设置 Maker 订单: id={order_id}, "
             f"price={price:.6f}"
         )
+
+        # 🔥 [新增] 触发异步保存
+        if self._persistence:
+            asyncio.create_task(self._save_to_persistence())
 
     def get_maker_order_id(self) -> Optional[str]:
         """
@@ -255,6 +279,10 @@ class StateManager:
         self._order.maker_order_initial_price = 0.0
 
         logger.debug(f"📊 [StateManager] {self.symbol}: 清除 Maker 订单")
+
+        # 🔥 [新增] 触发异步保存
+        if self._persistence:
+            asyncio.create_task(self._save_to_persistence())
 
     # ========== 冷却锁管理 ==========
 
@@ -506,6 +534,81 @@ class StateManager:
             SelfHealingState: 自愈状态
         """
         return self._healing
+
+    # ========== 持久化支持 ==========
+
+    async def _save_to_persistence(self):
+        """保存状态到持久化存储"""
+        if not self._persistence:
+            return
+
+        try:
+            state_data = {
+                'position': {
+                    'size': self._position.size,
+                    'entry_price': self._position.entry_price,
+                    'entry_time': self._position.entry_time,
+                    'is_open': self._position.is_open
+                },
+                'order': {
+                    'maker_order_id': self._order.maker_order_id,
+                    'maker_order_price': self._order.maker_order_price,
+                    'maker_order_time': self._order.maker_order_time,
+                    'maker_order_initial_price': self._order.maker_order_initial_price
+                },
+                'trailing_stop': {
+                    'is_activated': self._trailing_stop.is_activated,
+                    'highest_price': self._trailing_stop.highest_price,
+                    'stop_price': self._trailing_stop.stop_price
+                },
+                'timestamp': time.time()
+            }
+
+            await self._persistence.save(f'state_{self.symbol}', state_data)
+            logger.debug(f"💾 [StateManager] 状态已保存: {self.symbol}")
+
+        except Exception as e:
+            logger.error(f"💾 [StateManager] 保存状态失败: {e}")
+
+    async def _load_from_persistence(self):
+        """从持久化存储加载状态"""
+        if not self._persistence:
+            return
+
+        try:
+            state_key = f'state_{self.symbol}'
+
+            if await self._persistence.exists(state_key):
+                state_data = await self._persistence.load(state_key)
+
+                if state_data:
+                    # 恢复持仓状态
+                    position_data = state_data.get('position', {})
+                    self._position.size = position_data.get('size', 0.0)
+                    self._position.entry_price = position_data.get('entry_price', 0.0)
+                    self._position.entry_time = position_data.get('entry_time', 0.0)
+                    self._position.is_open = position_data.get('is_open', False)
+
+                    # 恢复订单状态
+                    order_data = state_data.get('order', {})
+                    self._order.maker_order_id = order_data.get('maker_order_id')
+                    self._order.maker_order_price = order_data.get('maker_order_price', 0.0)
+                    self._order.maker_order_time = order_data.get('maker_order_time', 0.0)
+                    self._order.maker_order_initial_price = order_data.get('maker_order_initial_price', 0.0)
+
+                    # 恢复追踪止损状态
+                    trailing_data = state_data.get('trailing_stop', {})
+                    self._trailing_stop.is_activated = trailing_data.get('is_activated', False)
+                    self._trailing_stop.highest_price = trailing_data.get('highest_price', 0.0)
+                    self._trailing_stop.stop_price = trailing_data.get('stop_price', 0.0)
+
+                    logger.info(
+                        f"💾 [StateManager] 状态已恢复: {self.symbol}, "
+                        f"position_size={self._position.size}, "
+                        f"maker_order={self._order.maker_order_id}"
+                    )
+        except Exception as e:
+            logger.error(f"💾 [StateManager] 加载状态失败: {e}")
 
     # ========== 获取完整状态 ==========
 

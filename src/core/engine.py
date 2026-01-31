@@ -32,6 +32,7 @@ from ..gateways.okx.rest_api import OkxRestGateway
 from ..gateways.okx.ws_public_gateway import OkxPublicWsGateway
 from ..gateways.okx.ws_private_gateway import OkxPrivateWsGateway
 from ..market.market_data_manager import MarketDataManager
+from ..persistence.persistence_adapter import JsonPersistenceAdapter
 
 from ..strategies.base_strategy import BaseStrategy
 
@@ -73,6 +74,9 @@ class Engine:
 
         # 市场数据管理器
         self._market_data_manager: Optional[MarketDataManager] = None
+
+        # 🔥 [新增] 持久化适配器
+        self._persistence: Optional[JsonPersistenceAdapter] = None
 
         # 策略容器
         self._strategies: List[BaseStrategy] = []
@@ -214,11 +218,22 @@ class Engine:
         self._market_data_manager = MarketDataManager(event_bus=self._event_bus)
         logger.info("✅ MarketDataManager 已初始化")
 
-        # 9. 动态加载交易对信息（补丁三）
+        # 9. 🔥 [新增] 创建持久化适配器
+        persistence_config = self.config.get('persistence', {})
+        persistence_type = persistence_config.get('type', 'json')
+
+        if persistence_type == 'json':
+            storage_path = persistence_config.get('storage_path', 'data/state.json')
+            self._persistence = JsonPersistenceAdapter(storage_path)
+            logger.info(f"✅ PersistenceAdapter 已初始化: {storage_path}")
+        else:
+            logger.warning(f"⚠️ 未知的持久化类型: {persistence_type}，使用内存模式")
+
+        # 10. 动态加载交易对信息（补丁三）
         await self._load_instruments()
         logger.info("✅ 交易对信息已加载")
 
-        # 10. 分配策略资金
+        # 11. 分配策略资金
         await self._allocate_strategy_capitals()
         logger.info("✅ 策略资金已分配")
 
@@ -262,6 +277,15 @@ class Engine:
             if hasattr(strategy, 'set_market_data_manager'):
                 strategy.set_market_data_manager(self._market_data_manager)
                 logger.debug(f"MarketDataManager 已注入到策略: {strategy.strategy_id}")
+
+            # 🔥 [新增] 注入持久化适配器到 StateManager
+            if self._persistence and hasattr(strategy, 'state_manager'):
+                # 重新创建 StateManager 并注入持久化适配器
+                from ..strategies.hft.components.state_manager import StateManager
+                symbol = strategy.symbol if hasattr(strategy, 'symbol') else 'UNKNOWN'
+                old_state_manager = strategy.state_manager
+                strategy.state_manager = StateManager(symbol=symbol, persistence=self._persistence)
+                logger.debug(f"✅ PersistenceAdapter 已注入到策略 {strategy.strategy_id} 的 StateManager")
 
             logger.info(
                 f"策略已加载: {strategy.strategy_id} ({strategy_type})"
@@ -507,7 +531,10 @@ class Engine:
         self._position_manager.start_scheduled_sync(interval=sync_interval)
         logger.info(f"✅ 定时持仓同步已启动，间隔: {sync_interval}秒")
 
-        # 4. 设置信号处理
+        # 🔥 [新增] 原子对账：启动时验证本地订单状态
+        await self._reconcile_with_exchange()
+
+        # 5. 设置信号处理
         self._setup_signal_handlers()
 
         # 5. 进入主循环
@@ -597,6 +624,52 @@ class Engine:
             logger.error(f"引擎运行异常: {e}", exc_info=True)
             await self.stop()
             raise
+
+    async def _reconcile_with_exchange(self):
+        """
+        🔥 [新增] 原子对账：启动时立即查询活动订单
+
+        确保本地保存的 maker_order_id 在交易所仍然有效
+        """
+        logger.info("🔄 [Engine] 开始原子对账...")
+
+        try:
+            # 查询所有活动订单
+            active_orders = await self._rest_gateway.fetch_active_orders()
+
+            # 对每个策略进行对账
+            for strategy in self._strategies:
+                if not hasattr(strategy, 'state_manager'):
+                    continue
+
+                state_manager = strategy.state_manager
+                local_order_id = state_manager.get_maker_order_id()
+
+                if local_order_id and local_order_id != "pending":
+                    # 检查本地订单是否在交易所活动中
+                    is_active = any(
+                        order.get('ordId') == local_order_id
+                        for order in active_orders
+                        if order.get('state') == 'live'
+                    )
+
+                    if not is_active:
+                        logger.warning(
+                            f"⚠️ [Engine] 策略 {strategy.symbol} 的本地订单 {local_order_id} "
+                            f"不在交易所活动中，自动清理"
+                        )
+                        state_manager.clear_maker_order()
+                    else:
+                        logger.info(
+                            f"✅ [Engine] 策略 {strategy.symbol} 的订单 {local_order_id} "
+                            f"确认有效"
+                        )
+
+            logger.info("✅ [Engine] 原子对账完成")
+
+        except Exception as e:
+            logger.error(f"❌ [Engine] 原子对账失败: {e}")
+            # 不阻塞启动，继续运行
 
     def get_status(self) -> dict:
         """

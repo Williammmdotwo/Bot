@@ -105,7 +105,11 @@ class EventBus:
             'processed': 0,
             'errors': 0
         }
-        logger.info("EventBus 初始化（优先级队列模式）")
+        # 🔥 [新增] 性能监控
+        self._latency_stats: Dict[str, List[float]] = {}
+        self.WARNING_LATENCY_MS = 10.0
+        self.CRITICAL_LATENCY_MS = 50.0
+        logger.info("EventBus 初始化（优先级队列模式 + 性能监控）")
 
     def register(self, event_type: EventType, handler: Callable):
         """
@@ -250,13 +254,17 @@ class EventBus:
 
     async def _process_event(self, event: Event):
         """
-        处理单个事件
+        处理单个事件（带性能监控）
 
         调用所有注册的处理器。
 
         Args:
             event (Event): 要处理的事件（已从 PriorityEvent 解包）
         """
+        # 🔥 [新增] 开始计时
+        import time
+        start_time = time.perf_counter()
+
         # 🔥 [P0 修复] 处理的是解包后的 Event 对象
         handlers = self._handlers.get(event.type, [])
 
@@ -294,6 +302,32 @@ class EventBus:
 
             # 🔥 [修复] 无论成功还是失败，都增加 processed 计数
             self._stats['processed'] += 1
+
+        # 🔥 [新增] 计算并记录延迟
+        processing_time_ms = (time.perf_counter() - start_time) * 1000.0
+
+        # 记录延迟统计
+        event_type_str = event.type.value
+        if event_type_str not in self._latency_stats:
+            self._latency_stats[event_type_str] = []
+
+        self._latency_stats[event_type_str].append(processing_time_ms)
+
+        # 只保留最近 100 个样本
+        if len(self._latency_stats[event_type_str]) > 100:
+            self._latency_stats[event_type_str] = self._latency_stats[event_type_str][-100:]
+
+        # 检查是否超时
+        if processing_time_ms > self.CRITICAL_LATENCY_MS:
+            logger.error(
+                f"⚠️ [EventBus] 事件处理延迟过高: "
+                f"{event_type_str}={processing_time_ms:.2f}ms > {self.CRITICAL_LATENCY_MS}ms"
+            )
+        elif processing_time_ms > self.WARNING_LATENCY_MS:
+            logger.warning(
+                f"⚠️ [EventBus] 事件处理延迟: "
+                f"{event_type_str}={processing_time_ms:.2f}ms > {self.WARNING_LATENCY_MS}ms"
+            )
 
     def get_stats(self) -> Dict[str, int]:
         """
@@ -336,6 +370,52 @@ class EventBus:
     def is_running(self) -> bool:
         """检查事件总线是否运行中"""
         return self._running
+
+    # 🔥 [新增] 性能监控方法
+
+    def get_latency_stats(self, event_type: Optional[str] = None) -> Dict:
+        """
+        获取延迟统计信息
+
+        Args:
+            event_type: 事件类型，None 表示全部
+
+        Returns:
+            Dict: 统计信息
+        """
+        if event_type:
+            latencies = self._latency_stats.get(event_type, [])
+            if not latencies:
+                return {}
+
+            return {
+                'event_type': event_type,
+                'count': len(latencies),
+                'avg_ms': sum(latencies) / len(latencies),
+                'max_ms': max(latencies),
+                'min_ms': min(latencies),
+                'p99_ms': sorted(latencies)[int(len(latencies) * 0.99)] if len(latencies) > 0 else 0.0
+            }
+        else:
+            # 返回所有事件类型的统计
+            return {
+                etype: self.get_latency_stats(etype)
+                for etype in self._latency_stats.keys()
+            }
+
+    def reset_latency_stats(self, event_type: Optional[str] = None):
+        """
+        重置延迟统计信息
+
+        Args:
+            event_type: 事件类型，None 表示重置全部
+        """
+        if event_type:
+            self._latency_stats.pop(event_type, None)
+            logger.info(f"📊 [EventBus] 已重置 {event_type} 的延迟统计")
+        else:
+            self._latency_stats.clear()
+            logger.info("📊 [EventBus] 已重置所有延迟统计")
 
 
 # 全局单例（可选）
