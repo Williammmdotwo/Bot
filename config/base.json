@@ -20,6 +20,13 @@
     },
     "monitoring": {
       "enabled": true
+    },
+    "notification": {
+      "enabled": true,
+      "webhook_url": "",
+      "webhook_timeout": 5.0,
+      "max_retries": 3,
+      "heartbeat_interval_hours": 4
     }
   },
   "database": {
