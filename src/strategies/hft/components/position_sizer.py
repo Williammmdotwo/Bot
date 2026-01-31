@@ -88,7 +88,8 @@ class PositionSizer:
         order_book: Dict[str, Any],
         signal_ratio: float,
         current_price: float,
-        side: str = 'buy'  # 交易方向 'buy' 或 'sell'
+        side: str = 'buy',  # 交易方向 'buy' 或 'sell'
+        ct_val: float = None  # 🔥 [修复] 添加合约面值参数
     ) -> float:
         """
         自适应计算单笔下单金额 (USDT)
@@ -99,10 +100,17 @@ class PositionSizer:
             signal_ratio: 当前买卖量不平衡比率 (例如 5.2, 8.5)
             current_price: 当前价格
             side: 交易方向 'buy' 或 'sell'（决定使用哪方深度）
+            ct_val: 合约面值（1张=ct_val个币），如果为 None 则使用 self.ct_val
 
         Returns:
             float: 下单金额 (USDT)
         """
+        # 🔥 [修复] 如果未传入 ct_val，使用初始化时的值
+        if ct_val is None:
+            ct_val = self.ct_val
+        else:
+            # 确保 ct_val 是 float 类型
+            ct_val = float(ct_val)
 
         # --- 1. 基础资金限制 ---
         base_amount = account_equity * self.cfg.base_equity_ratio
@@ -167,12 +175,12 @@ class PositionSizer:
         # --- 4. 流动性/滑点保护（单向深度）---
         liquidity_limit = float('inf')
         if self.cfg.liquidity_protection_enabled:
-            # 🔥 [修复] 传入合约面值，正确计算深度价值
+            # 🔥 [修复] 使用传入的 ct_val 而非 self.ct_val
             depth_value = self._calculate_depth_value(
                 order_book,
                 self.cfg.liquidity_depth_levels,
                 side,
-                self.ct_val  # 🔥 [新增] 传入合约面值
+                ct_val  # 🔥 [修复] 使用传入的合约面值参数
             )
 
             liquidity_limit = depth_value * self.cfg.liquidity_depth_ratio
