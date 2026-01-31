@@ -277,6 +277,9 @@ class ScalperV2(BaseStrategy):
         # 同步 Instrument 详情
         await self._sync_instrument_details()
 
+        # 🔥 [修复] 启动独立的监控协程（避免提前退出导致止损失效）
+        asyncio.create_task(self._monitor_position())
+
         logger.info(
             f"🚀 ScalperV2 启动: symbol={self.symbol}, "
             f"cooldown={self.config.cooldown_seconds}s, "
@@ -1159,6 +1162,253 @@ class ScalperV2(BaseStrategy):
     def reset_statistics(self):
         """重置统计信息"""
         logger.info(f"重置统计信息: {self.symbol}")
+
+    async def _reorder_after_cancel(self):
+        """
+        🔥 [新增] 撤单后重新挂单（追单逻辑）
+
+        在监控协程中调用，用于插队功能：
+        1. 获取当前价格
+        2. 重新计算挂单价格
+        3. 提交新挂单
+
+        Returns:
+            bool: 重新挂单是否成功
+        """
+        try:
+            # 获取当前价格
+            best_bid, best_ask = self._get_order_book_best_prices()
+
+            if best_bid <= 0 or best_ask <= 0:
+                logger.warning(
+                    f"⚠️ [重新挂单] {self.symbol}: "
+                    f"订单簿数据不可用，取消追单"
+                )
+                return False
+
+            # 计算止损价格
+            stop_loss_price = self._calculate_stop_loss(best_bid)
+
+            # 计算挂单价格
+            decision = self.execution_algo.calculate_maker_price(
+                side='buy',
+                best_bid=best_bid,
+                best_ask=best_ask,
+                order_age=0.0
+            )
+
+            # 获取策略资金
+            strategy_capital = self._capital_commander.get_strategy_capital(self.strategy_id)
+            if strategy_capital:
+                account_equity = strategy_capital.available
+            else:
+                account_equity = self._capital_commander.get_total_equity()
+
+            # 获取订单簿深度
+            order_book = self.public_gateway.get_order_book_depth(levels=3)
+
+            # 计算下单金额
+            usdt_amount = self.position_sizer.calculate_order_size(
+                account_equity=account_equity,
+                order_book=order_book,
+                signal_ratio=5.0,  # 使用默认值
+                current_price=best_bid,
+                side='buy',
+                ct_val=self.contract_val
+            )
+
+            if usdt_amount <= 0:
+                logger.warning(
+                    f"⚠️ [重新挂单] {self.symbol}: "
+                    f"计算金额为0，取消追单"
+                )
+                return False
+
+            # 转换为合约张数
+            trade_size = self.position_sizer.convert_to_contracts(
+                amount_usdt=usdt_amount,
+                current_price=best_bid,
+                ct_val=self.contract_val
+            )
+            trade_size = max(1, int(trade_size))
+
+            # 提交挂单
+            success = await self._place_maker_order(
+                symbol=self.symbol,
+                price=decision.price,
+                stop_loss_price=stop_loss_price,
+                size=trade_size,
+                contract_val=self.contract_val
+            )
+
+            if success:
+                logger.info(
+                    f"✅ [追单成功] {self.symbol}: "
+                    f"新价格={decision.price:.6f}, "
+                    f"数量={trade_size}, "
+                    f"策略={decision.reason}"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ [追单失败] {self.symbol}: "
+                    f"重新挂单失败"
+                )
+
+            return success
+
+        except Exception as e:
+            logger.error(f"❌ [重新挂单失败] {self.symbol}: {e}", exc_info=True)
+            return False
+
+    async def _monitor_position(self):
+        """
+        🔥 [修复] 独立的持仓监控协程
+
+        解决提前退出优化导致的止损失效问题：
+        - on_tick 中的提前退出（有挂单时 return）导致无法监控止损
+        - 使用独立的协程持续监控持仓状态
+        - 每 0.5 秒检查一次持仓
+
+        监控内容：
+        1. 追踪止损检查
+        2. 时间止损检查（30秒）
+        3. 硬止损检查（1%）
+        4. 挂单状态监控（追单撤单）
+        5. 状态维护（订单成交后自动转换到 POSITION_HELD）
+        """
+        try:
+            logger.info(f"🔍 [监控协程] {self.symbol}: 独立持仓监控已启动")
+
+            while self._enabled:
+                try:
+                    # 获取当前持仓
+                    position = self.get_position(self.symbol)
+                    current_state = self._get_state()
+
+                    # 检查是否有持仓
+                    if position and abs(position.size) > 0:
+                        # 从订单管理器获取当前价格
+                        current_price = 0.0
+                        if self._order_manager:
+                            # 尝试获取最新价格
+                            if hasattr(self, 'public_gateway') and self.public_gateway:
+                                best_bid, best_ask = self.public_gateway.get_best_bid_ask()
+                                current_price = (best_bid + best_ask) / 2 if best_bid > 0 and best_ask > 0 else 0.0
+
+                        if current_price > 0:
+                            now = time.time()
+
+                            # 1. 追踪止损检查
+                            if self.state_manager._trailing_stop:
+                                should_close, stop_price = self.state_manager.update_trailing_stop(current_price)
+
+                                if should_close:
+                                    logger.info(
+                                        f"🎯 [监控-追踪止损] {self.symbol}: "
+                                        f"止损价={stop_price:.6f}, 当前价={current_price:.6f}"
+                                    )
+                                    await self._close_position(reason="trailing_stop", stop_price=stop_price, current_price=current_price)
+                                    continue
+
+                            # 2. 时间止损检查
+                            entry_time = self.state_manager._position.entry_time
+                            if entry_time > 0:
+                                position_age = now - entry_time
+
+                                if position_age >= self.config.time_limit_seconds:
+                                    logger.info(
+                                        f"⏰ [监控-时间止损] {self.symbol}: "
+                                        f"持仓时间={position_age:.1f}s >= {self.config.time_limit_seconds}s"
+                                    )
+                                    await self._close_position(reason="time_stop", current_price=current_price)
+                                    continue
+
+                            # 3. 硬止损检查（带状态检查）
+                            entry_price = self.state_manager._position.entry_price
+                            if entry_price > 0:
+                                hard_stop_price = entry_price * (1 - self.config.stop_loss_pct)
+
+                                # 🔥 [修复] 检查是否已触发平仓，避免重复触发
+                                if current_price <= hard_stop_price:
+                                    if current_state == StrategyState.PENDING_CLOSE:
+                                        logger.warning(
+                                            f"⚠️ [监控-重复触发] {self.symbol}: "
+                                            f"硬止损已触发，跳过重复操作"
+                                        )
+                                        continue
+
+                                    logger.info(
+                                        f"📉 [监控-硬止损] {self.symbol}: "
+                                        f"当前价={current_price:.6f} <= 止损价={hard_stop_price:.6f}"
+                                    )
+                                    await self._close_position(reason="hard_stop", current_price=current_price)
+                                    continue
+
+                    # 🔥 [新增] 挂单状态监控（PENDING_OPEN）
+                    if current_state == StrategyState.PENDING_OPEN:
+                        # 检查是否应该追单
+                        maker_order_id = self.state_manager.get_maker_order_id()
+
+                        if maker_order_id and maker_order_id != "pending":
+                            # 获取当前价格
+                            maker_price = 0.0
+                            if hasattr(self, 'public_gateway') and self.public_gateway:
+                                best_bid, best_ask = self.public_gateway.get_best_bid_ask()
+                                maker_price = best_bid if best_bid > 0 else 0.0
+
+                            if maker_price > 0:
+                                # 获取挂单价格和存活时间
+                                maker_order_price = self.state_manager.get_maker_order_price()
+                                maker_order_age = self.state_manager.get_maker_order_age()
+
+                                # 检查是否应该追单
+                                should_chase = self.execution_algo.should_chase(
+                                    current_maker_price=maker_order_price,
+                                    current_price=maker_price,
+                                    order_age=maker_order_age
+                                )
+
+                                if should_chase:
+                                    logger.info(
+                                        f"🔥 [监控-触发追单] {self.symbol}: "
+                                        f"挂单价={maker_order_price:.6f}, "
+                                        f"当前价={maker_price:.6f}, "
+                                        f"存活时间={maker_order_age:.1f}s"
+                                    )
+
+                                    # 撤单
+                                    await self._cancel_maker_order()
+
+                                    # 重新计算价格并挂单
+                                    await self._reorder_after_cancel()
+
+                    # ========== 状态一致性检查 ==========
+                    # 如果有持仓但状态是 PENDING_OPEN，说明订单成交但状态未更新
+                    if position and abs(position.size) > 0 and current_state == StrategyState.PENDING_OPEN:
+                        logger.warning(
+                            f"🔧 [监控-状态修复] {self.symbol}: "
+                            f"检测到持仓但状态=PENDING_OPEN，自动转换到 POSITION_HELD"
+                        )
+                        self._transition_to_state(StrategyState.POSITION_HELD, "检测到持仓")
+
+                    # 如果没有持仓但状态是 POSITION_HELD，需要重置
+                    elif (not position or abs(position.size) <= 0) and current_state == StrategyState.POSITION_HELD:
+                        logger.warning(
+                            f"🔧 [监控-状态修复] {self.symbol}: "
+                            f"检测到无持仓但状态=POSITION_HELD，自动重置到 IDLE"
+                        )
+                        await self._reset_position_state()
+
+                except Exception as e:
+                    logger.error(f"❌ [监控协程异常] {self.symbol}: {e}", exc_info=True)
+
+                # 每 0.5 秒检查一次
+                await asyncio.sleep(0.5)
+
+        except asyncio.CancelledError:
+            logger.info(f"🛑 [监控协程] {self.symbol}: 监控协程已停止")
+        except Exception as e:
+            logger.error(f"❌ [监控协程崩溃] {self.symbol}: {e}", exc_info=True)
 
     def reset_state(self):
         """重置策略状态（包括持仓）"""
