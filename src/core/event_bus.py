@@ -374,6 +374,26 @@ class EventBus:
 
     # 🔥 [新增] 性能监控方法
 
+    def get_event_stats(self) -> Dict[str, int]:
+        """
+        获取事件统计信息（用于 Guardian 死循环检测）
+
+        Returns:
+            Dict[str, int]: 事件类型 -> 触发次数
+        """
+        # 🔥 [Guardian] 返回最近 5 秒内的事件统计
+        # 通过比较 published 和 processed 的差值，可以估算当前处理队列中的事件数量
+        stats = self.get_stats()
+
+        # 简化实现：返回 published 数量作为事件触发次数
+        # 更精确的实现需要在每个事件发布时记录时间戳
+        return {
+            'total_published': stats['published'],
+            'total_processed': stats['processed'],
+            'queue_size': stats['queue_size'],
+            'errors': stats['errors']
+        }
+
     def get_latency_stats(self, event_type: Optional[str] = None) -> Dict:
         """
         获取延迟统计信息

@@ -597,12 +597,49 @@ class Engine:
             await self._rest_gateway.disconnect()
             logger.info("✅ REST Gateway 已断开")
 
-        # 4. 停止 EventBus
+        # 3. 停止 EventBus
         if self._event_bus:
             await self._event_bus.stop()
             logger.info("✅ EventBus 已停止")
 
         logger.info("✅ 系统已停止")
+
+    async def disable_all_strategies(self):
+        """
+        🔥 [Guardian] 禁用所有策略（熔断时调用）
+
+        立即停止所有策略，不再发送新订单。
+        此方法用于 Guardian 熔断机制，与 stop() 的区别是：
+        - stop() 会关闭整个系统
+        - disable_all_strategies() 只停止策略，保持系统运行以便后续处理
+
+        执行步骤：
+        1. 遍历所有策略，调用 strategy.stop()
+        2. 标记策略为已禁用状态
+        3. 记录日志
+        """
+        logger.critical("🛡️ [熔断] 开始禁用所有策略...")
+
+        disabled_count = 0
+        for strategy in self._strategies:
+            try:
+                # 停止策略
+                await strategy.stop()
+                disabled_count += 1
+
+                logger.warning(f"🛡️ [熔断] 策略 {strategy.strategy_id} 已禁用")
+
+                # 可选：标记策略为永久禁用（重启前不恢复）
+                if hasattr(strategy, '_disabled'):
+                    strategy._disabled = True
+
+            except Exception as e:
+                logger.error(
+                    f"🛡️ [熔断] 禁用策略 {strategy.strategy_id} 失败: {e}",
+                    exc_info=True
+                )
+
+        logger.critical(f"🛡️ [熔断] 已禁用 {disabled_count}/{len(self._strategies)} 个策略")
 
     async def run(self):
         """

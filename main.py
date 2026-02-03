@@ -28,6 +28,7 @@ except ImportError:
 from src.utils.logger import setup_logging, get_logger
 from src.core.engine import Engine, create_default_config
 from src.core.event_types import EventType
+from src.safety import Guardian
 
 logger = get_logger(__name__)
 
@@ -144,6 +145,55 @@ def load_config_from_env() -> dict:
         risk_config['max_frequency'] = int(max_frequency)
 
     config['risk'] = risk_config
+
+    # 🔥 [Guardian] 熔断守护进程配置
+    safety_config = config.get('safety', {})
+
+    # 检查是否启用 Guardian
+    guardian_enabled = os.getenv('GUARDIAN_ENABLED', 'true').lower() == 'true'
+    safety_config['guardian_enabled'] = guardian_enabled
+
+    # 检查间隔（默认 5 秒）
+    check_interval = os.getenv('GUARDIAN_CHECK_INTERVAL_SECONDS', '5')
+    safety_config['check_interval_seconds'] = int(check_interval)
+
+    # 死循环检测阈值（默认 10000 次事件）
+    event_loop_threshold = os.getenv('GUARDIAN_EVENT_LOOP_THRESHOLD', '10000')
+    safety_config['event_loop_threshold'] = int(event_loop_threshold)
+
+    # 连续报错检测阈值（默认 20 次）
+    error_log_threshold = os.getenv('GUARDIAN_ERROR_LOG_THRESHOLD', '20')
+    safety_config['error_log_threshold'] = int(error_log_threshold)
+
+    # 严重错误检测阈值（默认 5 条）
+    critical_log_threshold = os.getenv('GUARDIAN_CRITICAL_LOG_THRESHOLD', '5')
+    safety_config['critical_log_threshold'] = int(critical_log_threshold)
+
+    # 资金雪崩检测阈值（默认 10%）
+    equity_drop_threshold_pct = os.getenv('GUARDIAN_EQUITY_DROP_THRESHOLD_PCT', '0.10')
+    safety_config['equity_drop_threshold_pct'] = float(equity_drop_threshold_pct)
+
+    # WebSocket 重连阈值（默认 30 次）
+    ws_reconnect_threshold = os.getenv('GUARDIAN_WS_RECONNECT_THRESHOLD', '30')
+    safety_config['websocket_reconnect_threshold'] = int(ws_reconnect_threshold)
+
+    # 熔断时是否自动平仓（默认 false）
+    auto_close_on_meltdown = os.getenv('GUARDIAN_AUTO_CLOSE_ON_MELTDOWN', 'false').lower() == 'true'
+    safety_config['auto_close_on_meltdown'] = auto_close_on_meltdown
+
+    # 快照保存路径
+    snapshot_path = os.getenv('GUARDIAN_SNAPSHOT_PATH', 'data/meltdown_snapshots/')
+    safety_config['meltdown_snapshot_path'] = snapshot_path
+
+    config['safety'] = safety_config
+
+    if guardian_enabled:
+        logger.info(f"🛡️ [Guardian] 熔断守护进程已启用")
+        logger.info(f"   检查间隔: {safety_config['check_interval_seconds']}秒")
+        logger.info(f"   资金雪崩阈值: {safety_config['equity_drop_threshold_pct']*100:.1f}%")
+        logger.info(f"   自动平仓: {safety_config['auto_close_on_meltdown']}")
+    else:
+        logger.info(f"⚠️ [Guardian] 熔断守护进程已禁用")
 
     # 策略配置
     # 清空默认策略列表，只根据 ACTIVE_STRATEGY 加载指定策略

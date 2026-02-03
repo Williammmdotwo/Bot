@@ -537,6 +537,16 @@ class WsBaseGateway:
         if self._event_bus:
             self._event_bus.put_nowait(event, priority=priority)
 
+    @property
+    def reconnect_count(self) -> int:
+        """
+        🔥 [Guardian] 获取重连次数（公开属性）
+
+        Returns:
+            int: 重连次数
+        """
+        return self._reconnect_attempt
+
     def get_status(self) -> Dict[str, Any]:
         """
         获取连接状态
