@@ -25,9 +25,12 @@ class TradeModel(BaseModel):
 
 
 class BookLevelModel(BaseModel):
-    """订单簿档位模型"""
+    """订单簿档位模型
+
+    OKX 订单簿中 size 可以为 0（表示已成交的档位）
+    """
     price: float = Field(..., gt=0, description="价格")
-    size: float = Field(..., gt=0, description="数量")
+    size: float = Field(..., ge=0, description="数量（可以为 0，表示已成交）")
     orders: int = Field(default=0, ge=0, description="订单数量")
     depth: int = Field(default=0, ge=0, description="深度档位")
 
