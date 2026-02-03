@@ -26,10 +26,13 @@ class TradeModel(BaseModel):
 
 class BookLevelModel(BaseModel):
     """订单簿档位模型"""
-    price: float = Field(..., gt=0)
-    size: float = Field(..., gt=0)
+    price: float = Field(..., gt=0, description="价格")
+    size: float = Field(..., gt=0, description="数量")
     orders: int = Field(default=0, ge=0, description="订单数量")
     depth: int = Field(default=0, ge=0, description="深度档位")
+
+    class Config:
+        extra = 'allow'  # 允许额外字段
 
 
 class BookDataModel(BaseModel):
@@ -40,11 +43,40 @@ class BookDataModel(BaseModel):
 
     @validator('asks', 'bids', pre=True)
     def validate_book_levels(cls, v):
-        """验证订单簿档位"""
+        """
+        验证并转换订单簿档位数据
+
+        OKX WebSocket 返回格式: [[price_str, size_str, orders_str, depth_str], ...]
+        需要转换为: [{"price": float, "size": float, "orders": int, "depth": int}, ...]
+        """
         if not isinstance(v, list):
             logger.warning(f"⚠️ [BookParser] 订单簿必须是列表，实际类型: {type(v)}")
             return []
-        return v
+
+        converted_levels = []
+        for item in v:
+            try:
+                # 处理列表格式: [price, size, orders, depth]
+                if isinstance(item, list) and len(item) >= 2:
+                    price = float(item[0]) if item[0] else 0.0
+                    size = float(item[1]) if item[1] else 0.0
+                    orders = int(item[2]) if len(item) > 2 and item[2] else 0
+                    depth = int(item[3]) if len(item) > 3 and item[3] else 0
+
+                    converted_levels.append({
+                        'price': price,
+                        'size': size,
+                        'orders': orders,
+                        'depth': depth
+                    })
+                # 处理字典格式（兼容其他可能的格式）
+                elif isinstance(item, dict):
+                    converted_levels.append(item)
+            except (ValueError, TypeError, IndexError) as e:
+                logger.debug(f"⚠️ [BookParser] 订单簿档位转换失败: {item}, 错误: {e}")
+                continue
+
+        return converted_levels
 
 
 class TickerModel(BaseModel):
