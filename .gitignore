@@ -22,10 +22,6 @@ id_rsa.pub
 secrets/
 .secrets/
 
-# Test files
-tests/
-tests_legacy_archive_*/
-
 # Maintenance reports (local only)
 reports/MAINTENANCE_*.md
 reports/*.md
