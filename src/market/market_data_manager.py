@@ -85,10 +85,10 @@ class MarketDataManager:
         logger.info("📊 MarketDataManager 初始化完成")
 
     def _subscribe_to_events(self):
-        """订阅 BOOK_EVENT 和 TICK_EVENT"""
+        """订阅 BOOK_EVENT 和 TICK"""
         self._event_bus.register(EventType.BOOK_EVENT, self._on_book_event)
-        self._event_bus.register(EventType.TICK_EVENT, self._on_tick_event)
-        logger.info("📊 MarketDataManager 已订阅 BOOK_EVENT 和 TICK_EVENT")
+        self._event_bus.register(EventType.TICK, self._on_tick_event)
+        logger.info("📊 MarketDataManager 已订阅 BOOK_EVENT 和 TICK")
 
     async def _on_book_event(self, event: Event):
         """
