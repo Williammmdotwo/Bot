@@ -107,6 +107,7 @@ class EventBus:
         }
         # 🔥 [新增] 性能监控
         self._latency_stats: Dict[str, List[float]] = {}
+        self._max_latency_samples = 1000  # 最多保留 1000 个延迟样本
         self.WARNING_LATENCY_MS = 10.0
         self.CRITICAL_LATENCY_MS = 50.0
         logger.info("EventBus 初始化（优先级队列模式 + 性能监控）")
@@ -313,9 +314,9 @@ class EventBus:
 
         self._latency_stats[event_type_str].append(processing_time_ms)
 
-        # 只保留最近 100 个样本
-        if len(self._latency_stats[event_type_str]) > 100:
-            self._latency_stats[event_type_str] = self._latency_stats[event_type_str][-100:]
+        # 🔥 [优化] 只保留最近 1000 个样本，避免内存无限增长
+        if len(self._latency_stats[event_type_str]) > self._max_latency_samples:
+            self._latency_stats[event_type_str] = self._latency_stats[event_type_str][-self._max_latency_samples:]
 
         # 检查是否超时
         if processing_time_ms > self.CRITICAL_LATENCY_MS:

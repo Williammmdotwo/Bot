@@ -252,29 +252,31 @@ async def stress_test_single_symbol():
     monitor.record_memory()
 
     # 测试循环
-    start_time = time.time()
+    # 🔥 [优化] 使用 time.perf_counter() 提高精度
+    start_time = time.perf_counter()
     tick_interval = 1.0 / TICKS_PER_SECOND_PER_SYMBOL
     book_interval = 1.0 / BOOK_UPDATES_PER_SECOND
-    last_tick_time = 0
-    last_book_time = 0
+    next_tick_time = start_time
+    next_book_time = start_time
 
     logger.info(f"🚀 开始测试: 时长={TEST_DURATION_SECONDS}s, TPS={TICKS_PER_SECOND_PER_SYMBOL}, BPS={BOOK_UPDATES_PER_SECOND}")
 
     try:
-        while time.time() - start_time < TEST_DURATION_SECONDS:
-            current_time = time.time()
+        while time.perf_counter() - start_time < TEST_DURATION_SECONDS:
+            current_time = time.perf_counter()
 
+            # 🔥 [优化] 使用时间戳追踪，而不是间隔判断
             # 生成 Tick 事件
-            if current_time - last_tick_time >= tick_interval:
+            if current_time >= next_tick_time:
                 tick_event = generator.generate_tick_event()
                 await event_bus.put(tick_event, priority=EventPriority.TICK)
-                last_tick_time = current_time
+                next_tick_time += tick_interval
 
             # 生成 Book 事件
-            if current_time - last_book_time >= book_interval:
+            if current_time >= next_book_time:
                 book_event = generator.generate_book_event()
                 await event_bus.put(book_event, priority=EventPriority.TICK)
-                last_book_time = current_time
+                next_book_time += book_interval
 
             # 记录统计（每秒一次）
             if int(current_time) > int(start_time):
@@ -282,8 +284,8 @@ async def stress_test_single_symbol():
                 monitor.record_event_bus_stats(event_bus)
                 monitor.record_market_data_stats(market_data_manager)
 
-            # 短暂休眠避免 CPU 占用过高
-            await asyncio.sleep(0.001)
+            # 🔥 [优化] 减少休眠时间，提高精度
+            await asyncio.sleep(0.0001)
 
     except KeyboardInterrupt:
         logger.info("测试被用户中断")
@@ -346,11 +348,12 @@ async def stress_test_multi_symbols(num_symbols: int = 20):
     monitor.record_memory()
 
     # 测试循环
-    start_time = time.time()
+    # 🔥 [优化] 使用 time.perf_counter() 提高精度
+    start_time = time.perf_counter()
     tick_interval = 1.0 / TICKS_PER_SECOND_PER_SYMBOL
     book_interval = 1.0 / BOOK_UPDATES_PER_SECOND
-    last_tick_time = 0
-    last_book_time = 0
+    next_tick_time = start_time
+    next_book_time = start_time
 
     total_tps = TICKS_PER_SECOND_PER_SYMBOL * num_symbols
     total_bps = BOOK_UPDATES_PER_SECOND * num_symbols
@@ -359,22 +362,23 @@ async def stress_test_multi_symbols(num_symbols: int = 20):
                 f"币种数={num_symbols}, 总TPS={total_tps}, 总BPS={total_bps}")
 
     try:
-        while time.time() - start_time < TEST_DURATION_SECONDS:
-            current_time = time.time()
+        while time.perf_counter() - start_time < TEST_DURATION_SECONDS:
+            current_time = time.perf_counter()
 
+            # 🔥 [优化] 使用时间戳追踪，而不是间隔判断
             # 生成所有币种的 Tick 事件
-            if current_time - last_tick_time >= tick_interval:
+            if current_time >= next_tick_time:
                 for generator in generators:
                     tick_event = generator.generate_tick_event()
                     await event_bus.put(tick_event, priority=EventPriority.TICK)
-                last_tick_time = current_time
+                next_tick_time += tick_interval
 
             # 生成所有币种的 Book 事件
-            if current_time - last_book_time >= book_interval:
+            if current_time >= next_book_time:
                 for generator in generators:
                     book_event = generator.generate_book_event()
                     await event_bus.put(book_event, priority=EventPriority.TICK)
-                last_book_time = current_time
+                next_book_time += book_interval
 
             # 记录统计（每秒一次）
             if int(current_time) > int(start_time):
@@ -382,8 +386,8 @@ async def stress_test_multi_symbols(num_symbols: int = 20):
                 monitor.record_event_bus_stats(event_bus)
                 monitor.record_market_data_stats(market_data_manager)
 
-            # 短暂休眠避免 CPU 占用过高
-            await asyncio.sleep(0.001)
+            # 🔥 [优化] 减少休眠时间，提高精度
+            await asyncio.sleep(0.0001)
 
     except KeyboardInterrupt:
         logger.info("测试被用户中断")
