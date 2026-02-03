@@ -26,6 +26,10 @@ secrets/
 reports/MAINTENANCE_*.md
 reports/*.md
 
+# Test files
+tests/
+tests_legacy_archive_*/
+
 # Cache and temporary files
 .cache/
 *.cache
