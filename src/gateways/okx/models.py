@@ -4,7 +4,7 @@ OKX 数据模型
 使用 Pydantic 进行数据验证和类型安全
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional
 import logging
 
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 class TradeModel(BaseModel):
     """交易数据模型"""
+    model_config = ConfigDict(extra='allow')  # 允许额外字段（向下兼容）
     instId: str = Field(..., description="交易对")
     tradeId: str = Field(..., description="交易ID")
     price: float = Field(..., gt=0, description="成交价格")
@@ -20,22 +21,17 @@ class TradeModel(BaseModel):
     side: str = Field(..., description="买卖方向")
     timestamp: int = Field(..., ge=0, description="时间戳")
 
-    class Config:
-        extra = 'allow'  # 允许额外字段（向下兼容）
-
 
 class BookLevelModel(BaseModel):
     """订单簿档位模型
 
     OKX 订单簿中 size 可以为 0（表示已成交的档位）
     """
+    model_config = ConfigDict(extra='allow')  # 允许额外字段
     price: float = Field(..., gt=0, description="价格")
     size: float = Field(..., ge=0, description="数量（可以为 0，表示已成交）")
     orders: int = Field(default=0, ge=0, description="订单数量")
     depth: int = Field(default=0, ge=0, description="深度档位")
-
-    class Config:
-        extra = 'allow'  # 允许额外字段
 
 
 class BookDataModel(BaseModel):
@@ -44,7 +40,8 @@ class BookDataModel(BaseModel):
     bids: List[BookLevelModel] = Field(default_factory=list)
     timestamp: str = Field(default="")
 
-    @validator('asks', 'bids', pre=True)
+    @field_validator('asks', 'bids', mode='before')
+    @classmethod
     def validate_book_levels(cls, v):
         """
         验证并转换订单簿档位数据
@@ -84,6 +81,7 @@ class BookDataModel(BaseModel):
 
 class TickerModel(BaseModel):
     """行情数据模型"""
+    model_config = ConfigDict(extra='allow')  # 允许额外字段
     instId: str = Field(..., description="交易对")
     last: str = Field(..., description="最新价")
     bid: str = Field(default="")
@@ -94,16 +92,14 @@ class TickerModel(BaseModel):
     vol24h: str = Field(default="")
     volCcy24h: str = Field(default="")
 
-    class Config:
-        extra = 'allow'  # 允许额外字段
-
 
 class CandleModel(BaseModel):
     """K线数据模型"""
     instId: str = Field(..., description="交易对")
     candle: List[str] = Field(..., description="[ts, o, h, l, c, vol, volCcy]")
 
-    @validator('candle')
+    @field_validator('candle')
+    @classmethod
     def validate_candle_length(cls, v):
         """验证 K线数据长度"""
         if not isinstance(v, list) or len(v) < 6:
