@@ -238,9 +238,6 @@ class OkxPublicWsGateway(WsBaseGateway):
             bids = data.get('bids', [])
             asks = data.get('asks', [])
 
-            # 🔍 [调试] 记录订单簿更新
-            logger.info(f"🔍 [调试] on_book_update 被调用: bids={len(bids)}, asks={len(asks)}")
-
             # 更新本地订单簿缓存
             self._order_book = {
                 'bids': bids,
