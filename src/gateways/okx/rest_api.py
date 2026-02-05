@@ -20,6 +20,7 @@ OKX REST API 网关 (Unified Gateway)
 import json
 import logging
 import time
+import asyncio
 from typing import Dict, Any, Optional, List
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, ClientError
