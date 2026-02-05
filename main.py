@@ -389,6 +389,10 @@ def shutdown_handler(signum, frame):
     global stop_event
     stop_event.set()
 
+    # 🔥 直接退出，避免无限等待
+    import sys
+    sys.exit(0)
+
 
 async def main():
     """
@@ -458,16 +462,24 @@ async def main():
             # 🔥 等待所有任务完成
             await asyncio.sleep(1.0)
 
-            # 🔥 取消所有待处理的任务
+            # 🔥 取消所有待处理的任务（使用超时避免递归错误）
             tasks = [t for t in asyncio.all_tasks() if not t.done()]
             if tasks:
                 logger.info(f"🔧 取消 {len(tasks)} 个待处理的异步任务...")
                 for task in tasks:
                     task.cancel()
 
-                # 等待任务取消完成
-                await asyncio.gather(*tasks, return_exceptions=True)
-                logger.info("✅ 所有任务已完成取消")
+                # 🔥 使用超时等待任务取消，避免递归错误
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=2.0
+                    )
+                    logger.info("✅ 所有任务已完成取消")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ 部分任务未在 2 秒内完成取消，强制退出")
+                except Exception as e:
+                    logger.warning(f"⚠️ 任务取消时出错: {e}")
 
         except Exception as e:
             logger.error(f"❌ 优雅关闭时出错: {e}", exc_info=True)
