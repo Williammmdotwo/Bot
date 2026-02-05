@@ -243,30 +243,47 @@ class MarketDataManager:
         Returns:
             Dict: {'bids': [...], 'asks': [...]}
         """
-        # 🔥 [调试] 添加日志
-        logger.info(f"🔍 [调试] get_order_book_depth 被调用: symbol={symbol}, levels={levels}")
-        logger.info(f"🔍 [调试] _order_books 缓存键: {list(self._order_books.keys())}")
+        # 🔥 [调试 1] 方法被调用
+        logger.info(f"🔍 [调试] get_order_book_depth 被调用")
+        logger.info(f"   参数: symbol={symbol}, levels={levels}")
+
+        # 🔥 [调试 2] 检查缓存
+        logger.info(f"   _order_books 缓存键: {list(self._order_books.keys())}")
 
         snapshot = self.get_order_book_snapshot(symbol)
 
         if not snapshot:
-            logger.warning(f"⚠️ [MarketDataManager] {symbol}: OrderBook 缓存为空")
+            logger.warning(f"⚠️ [调试] {symbol}: OrderBook 快照为空")
+            logger.info(f"   _order_books 完整内容: {self._order_books}")
             return {'bids': [], 'asks': []}
 
-        # 🔥 [调试] 显示订单簿内容
-        logger.info(f"🔍 [调试] snapshot 内容: bids={len(snapshot.bids)}, asks={len(snapshot.asks)}")
+        # 🔥 [调试 3] 显示快照结构
+        logger.info(f"   snapshot 类型: {type(snapshot)}")
+        logger.info(f"   bids 长度: {len(snapshot.bids)}")
+        logger.info(f"   asks 长度: {len(snapshot.asks)}")
 
         # 截取指定档位
         bids = snapshot.bids[:levels]
         asks = snapshot.asks[:levels]
 
+        # 🔥 [调试 4] 显示档位数据
+        if bids:
+            logger.info(f"   bids 第一档: {bids[0]}")
+        if asks:
+            logger.info(f"   asks 第一档: {asks[0]}")
+
+        # 🔥 [调试 5] 构造返回结果
         result = {
             'bids': [(p, s) for p, s in bids],
             'asks': [(p, s) for p, s in asks]
         }
 
-        # 🔥 [调试] 显示返回结果
+        # 🔥 [调试 6] 最终结果
         logger.info(f"🔍 [调试] 返回深度: bids={len(result['bids'])}, asks={len(result['asks'])}")
+        if result['bids']:
+            logger.info(f"   bids[0]: {result['bids'][0]}")
+        if result['asks']:
+            logger.info(f"   asks[0]: {result['asks'][0]}")
 
         return result
 
