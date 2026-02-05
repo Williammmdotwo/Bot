@@ -429,7 +429,7 @@ class BaseStrategy(ABC):
 
         # 注册风控配置到 CapitalCommander
         if self._capital_commander and hasattr(self, 'risk_profile'):
-            await self._capital_commander.register_risk_profile(self.risk_profile)
+            self._capital_commander.register_risk_profile(self.risk_profile)
             logger.info(
                 f"策略 {self.strategy_id} 风控配置已注册: "
                 f"max_leverage={self.risk_profile.max_leverage}x, "
