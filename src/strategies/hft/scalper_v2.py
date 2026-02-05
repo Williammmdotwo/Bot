@@ -1083,6 +1083,9 @@ class ScalperV2(BaseStrategy):
 
             # 获取订单簿深度
             if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                # 🔥 [调试] 添加日志
+                logger.info(f"🔍 [调试] ScalperV2 准备调用 get_order_book_depth: symbol={self.symbol}")
+                logger.info(f"🔍 [调试] market_data_manager 对象: {self.market_data_manager}")
                 order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
             elif hasattr(self, 'public_gateway') and self.public_gateway:
                 order_book = self.public_gateway.get_order_book_depth(levels=3)

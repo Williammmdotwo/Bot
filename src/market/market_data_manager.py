@@ -102,13 +102,17 @@ class MarketDataManager:
         # 🔥 [新增] 微秒级计时（使用 time.perf_counter 精度更高）
         start_time = time_module.perf_counter()
 
+        data = event.data
+        symbol = data.get('symbol')
+
+        if not symbol:
+            logger.warning("⚠️ [MarketDataManager] BOOK_EVENT 缺少 symbol")
+            return
+
+        # 🔥 [调试] 添加日志
+        logger.info(f"🔍 [调试] on_book_event: symbol={symbol}, bids={len(data.get('bids', []))}, asks={len(data.get('asks', []))}")
+
         async with self._lock:
-            data = event.data
-            symbol = data.get('symbol')
-
-            if not symbol:
-                return
-
             # 更新订单簿
             self._order_books[symbol] = {
                 'bids': data.get('bids', []),
@@ -239,19 +243,32 @@ class MarketDataManager:
         Returns:
             Dict: {'bids': [...], 'asks': [...]}
         """
+        # 🔥 [调试] 添加日志
+        logger.info(f"🔍 [调试] get_order_book_depth 被调用: symbol={symbol}, levels={levels}")
+        logger.info(f"🔍 [调试] _order_books 缓存键: {list(self._order_books.keys())}")
+
         snapshot = self.get_order_book_snapshot(symbol)
 
         if not snapshot:
+            logger.warning(f"⚠️ [MarketDataManager] {symbol}: OrderBook 缓存为空")
             return {'bids': [], 'asks': []}
+
+        # 🔥 [调试] 显示订单簿内容
+        logger.info(f"🔍 [调试] snapshot 内容: bids={len(snapshot.bids)}, asks={len(snapshot.asks)}")
 
         # 截取指定档位
         bids = snapshot.bids[:levels]
         asks = snapshot.asks[:levels]
 
-        return {
+        result = {
             'bids': [(p, s) for p, s in bids],
             'asks': [(p, s) for p, s in asks]
         }
+
+        # 🔥 [调试] 显示返回结果
+        logger.info(f"🔍 [调试] 返回深度: bids={len(result['bids'])}, asks={len(result['asks'])}")
+
+        return result
 
     def get_latency_stats(self) -> Dict:
         """
