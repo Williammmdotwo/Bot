@@ -138,6 +138,9 @@ grafana_data/
 *.tfstate
 *.tfvars
 
+# Guardian meltdown snapshots (local debugging only)
+data/meltdown_snapshots/
+
 # Load testing results
 load_tests/
 jmeter_results/
