@@ -565,13 +565,16 @@ class Engine:
 
         步骤：
         1. 停止 Strategies
-        2. 断开 Gateways
-        3. 停止 EventBus
+        2. 停止 PositionManager 同步任务
+        3. 断开 REST Gateway（关键修复）
+        4. 断开 WebSocket 连接
+        5. 停止 EventBus
+        6. 等待所有异步任务完成（关键）
         """
         if not self._running:
             return
 
-        logger.info("停止系统...")
+        logger.info("🛑 正在停止系统...")
 
         self._running = False
         self._shutdown_event.set()
@@ -582,25 +585,37 @@ class Engine:
             await strategy.stop()
         logger.info("✅ 所有策略已停止")
 
-        # 2. 断开 Gateways
-        logger.info("断开 Gateways...")
+        # 2. 停止 PositionManager 同步任务
+        logger.info("停止 PositionManager 同步任务...")
+        if hasattr(self, '_position_manager') and self._position_manager:
+            await self._position_manager.stop_sync_task()
+            logger.info("✅ PositionManager 同步任务已停止")
 
-        if self._public_ws:
-            await self._public_ws.disconnect()
-            logger.info("✅ Public WebSocket 已断开")
-
-        if self._private_ws:
-            await self._private_ws.disconnect()
-            logger.info("✅ Private WebSocket 已断开")
-
-        if self._rest_gateway:
+        # 3. 🔥 关闭 REST Gateway（关键修复）
+        logger.info("关闭 REST Gateway...")
+        if hasattr(self, '_rest_gateway') and self._rest_gateway:
             await self._rest_gateway.disconnect()
             logger.info("✅ REST Gateway 已断开")
 
-        # 3. 停止 EventBus
-        if self._event_bus:
+        # 4. 关闭 WebSocket 连接
+        logger.info("断开 WebSocket 连接...")
+        if hasattr(self, '_public_ws') and self._public_ws:
+            await self._public_ws.disconnect()
+            logger.info("✅ Public WebSocket 已断开")
+
+        if hasattr(self, '_private_ws') and self._private_ws:
+            await self._private_ws.disconnect()
+            logger.info("✅ Private WebSocket 已断开")
+
+        # 5. 停止 EventBus
+        logger.info("停止 EventBus...")
+        if hasattr(self, '_event_bus') and self._event_bus:
             await self._event_bus.stop()
             logger.info("✅ EventBus 已停止")
+
+        # 6. 🔥 等待所有异步任务完成（关键）
+        logger.info("等待所有异步任务完成...")
+        await asyncio.sleep(0.5)
 
         logger.info("✅ 系统已停止")
 

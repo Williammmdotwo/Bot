@@ -109,7 +109,11 @@ class OkxRestGateway(RestGateway):
             return False
 
     async def disconnect(self):
-        """断开连接"""
+        """
+        断开连接
+
+        🔥 关键：必须正确关闭 ClientSession，避免资源泄漏
+        """
         if self.session and not self.session.closed:
             # 保存 connector 引用（因为 close() 后可能无法访问）
             connector = self.session.connector if self.session.connector else None
@@ -117,12 +121,15 @@ class OkxRestGateway(RestGateway):
             # 关闭 session
             await self.session.close()
 
+            # 🔥 [修复] 等待连接池完全关闭（重要！）
+            await asyncio.sleep(0.25)
+
             # 显式关闭 connector（防止资源泄漏）
             if connector and not connector.closed:
                 await connector.close()
                 logger.info("OkxRestGateway connector 已关闭")
 
-            logger.info("OkxRestGateway 已断开")
+            logger.info("✅ OkxRestGateway 连接已关闭")
 
         self._connected = False
         self._closed = True  # 标记为已关闭，防止创建新连接

@@ -382,6 +382,14 @@ def print_config(config: dict):
     logger.info("=" * 60)
 
 
+def shutdown_handler(signum, frame):
+    """处理 Ctrl+C 信号"""
+    logger.info("🛑 收到停止信号，正在优雅关闭...")
+    # 设置停止标志
+    global stop_event
+    stop_event.set()
+
+
 async def main():
     """
     主函数
@@ -391,7 +399,11 @@ async def main():
     3. 加载配置
     4. 初始化引擎
     5. 启动系统
+    6. 优雅关闭
     """
+    global stop_event
+    stop_event = asyncio.Event()
+
     # 1. 配置日志（必须最先执行）
     log_level = os.getenv('LOG_LEVEL', 'INFO')
     setup_logging(log_level)
@@ -412,20 +424,38 @@ async def main():
     config = load_config_from_env()
     print_config(config)
 
-    # 4. 创建并运行引擎
+    # 4. 创建引擎
     engine = Engine(config)
 
     try:
+        # 启动系统
         await engine.run()
 
     except KeyboardInterrupt:
-        logger.info("收到 Ctrl+C，准备退出...")
-        await engine.stop()
+        logger.info("🛑 收到 Ctrl+C，正在停止...")
 
-    except Exception as e:
-        logger.error(f"系统异常: {e}", exc_info=True)
-        await engine.stop()
-        sys.exit(1)
+    finally:
+        # 🔥 优雅关闭（关键修复）
+        try:
+            await engine.stop()
+
+            # 🔥 等待所有任务完成
+            await asyncio.sleep(1.0)
+
+            # 🔥 取消所有待处理的任务
+            tasks = [t for t in asyncio.all_tasks() if not t.done()]
+            if tasks:
+                logger.info(f"🔧 取消 {len(tasks)} 个待处理的异步任务...")
+                for task in tasks:
+                    task.cancel()
+
+                # 等待任务取消完成
+                await asyncio.gather(*tasks, return_exceptions=True)
+                logger.info("✅ 所有任务已完成取消")
+
+        except Exception as e:
+            logger.error(f"❌ 优雅关闭时出错: {e}", exc_info=True)
+            sys.exit(1)
 
 
 if __name__ == '__main__':
