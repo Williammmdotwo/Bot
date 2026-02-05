@@ -384,7 +384,7 @@ def print_config(config: dict):
 
 def shutdown_handler(signum, frame):
     """处理 Ctrl+C 信号"""
-    logger.info("🛑 收到停止信号，正在优雅关闭...")
+    logger.info(f"🛑 收到停止信号 {signum}，正在优雅关闭...")
     # 设置停止标志
     global stop_event
     stop_event.set()
@@ -404,7 +404,7 @@ async def main():
     global stop_event
     stop_event = asyncio.Event()
 
-    # 1. 配置日志（必须最先执行）
+    #1. 配置日志（必须最先执行）
     log_level = os.getenv('LOG_LEVEL', 'INFO')
     setup_logging(log_level)
 
@@ -428,8 +428,24 @@ async def main():
     engine = Engine(config)
 
     try:
-        # 启动系统
-        await engine.run()
+        # 启动系统（创建异步任务）
+        engine_task = asyncio.create_task(engine.run())
+
+        # 🔥 [关键] 等待 stop_event 或 engine_task 完成
+        done, pending = await asyncio.wait(
+            [stop_event.wait(), engine_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        # 如果停止事件被触发，取消引擎任务
+        if stop_event.is_set():
+            logger.info("🛑 收到停止信号，正在停止引擎任务...")
+            if not engine_task.done():
+                engine_task.cancel()
+                try:
+                    await engine_task
+                except asyncio.CancelledError:
+                    logger.info("✅ 引擎任务已取消")
 
     except KeyboardInterrupt:
         logger.info("🛑 收到 Ctrl+C，正在停止...")
@@ -459,6 +475,11 @@ async def main():
 
 
 if __name__ == '__main__':
+    # 注册信号处理器（Linux 兼容）
+    import signal
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
