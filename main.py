@@ -389,10 +389,6 @@ def shutdown_handler(signum, frame):
     global stop_event
     stop_event.set()
 
-    # 🔥 直接退出，避免无限等待
-    import sys
-    sys.exit(0)
-
 
 async def main():
     """

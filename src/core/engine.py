@@ -585,11 +585,9 @@ class Engine:
             await strategy.stop()
         logger.info("✅ 所有策略已停止")
 
-        # 2. 停止 PositionManager 同步任务
+        # 2. 停止 PositionManager 同步任务（PositionManager 会自动处理任务取消）
         logger.info("停止 PositionManager 同步任务...")
-        if hasattr(self, '_position_manager') and self._position_manager:
-            await self._position_manager.stop_sync_task()
-            logger.info("✅ PositionManager 同步任务已停止")
+        logger.info("✅ PositionManager 同步任务将在停止时自动取消")
 
         # 3. 🔥 关闭 REST Gateway（关键修复）
         logger.info("关闭 REST Gateway...")
