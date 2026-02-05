@@ -223,6 +223,43 @@ class OkxPublicWsGateway(WsBaseGateway):
         except Exception as e:
             logger.error(f"消息处理异常: {e}")
 
+    def on_book_update(self, event):
+        """
+        📊 订单簿更新事件处理器（修复 OrderBook 数据同步问题）
+
+        🔥 关键修复：BookParser 推送事件，但网关的 _order_book 从未被更新
+        导致 PositionSizer 获取空订单簿，计算下单金额为 0
+
+        Args:
+            event: BOOK_EVENT 事件
+        """
+        try:
+            data = event.data
+            bids = data.get('bids', [])
+            asks = data.get('asks', [])
+
+            # 🔍 [调试] 记录订单簿更新
+            logger.info(f"🔍 [调试] on_book_update 被调用: bids={len(bids)}, asks={len(asks)}")
+
+            # 更新本地订单簿缓存
+            self._order_book = {
+                'bids': bids,
+                'asks': asks
+            }
+
+            # 先计算值，避免 f-string 语法错误
+            best_bid_value = float(bids[0][0]) if bids and len(bids) > 0 else 0.0
+            best_ask_value = float(asks[0][0]) if asks and len(asks) > 0 else 0.0
+
+            logger.debug(
+                f"📊 [OrderBook 更新] best_bid={best_bid_value:.6f}, "
+                f"best_ask={best_ask_value:.6f}, "
+                f"bids={len(bids)}, asks={len(asks)}"
+            )
+
+        except Exception as e:
+            logger.error(f"更新订单簿失败: {e}", exc_info=True)
+
     # 重写基类的 _on_connected 方法，订阅频道
     async def _on_connected(self):
         """

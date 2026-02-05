@@ -621,6 +621,48 @@ class OkxRestGateway(RestGateway):
             logger.error(f"查询订单状态失败: {e}")
             return {}
 
+    async def fetch_active_orders(self, symbol: str = None) -> list:
+        """
+        🔥 [新增] 查询活动订单（原子对账）
+
+        用于启动时的原子对账，验证本地订单状态是否与交易所一致。
+
+        Args:
+            symbol (str): 交易对（可选，不指定则查询所有交易对）
+
+        Returns:
+            list: 活动订单列表，每个订单包含：
+                - ordId: 订单 ID
+                - instId: 交易对
+                - state: 订单状态（live, filled, cancelled, etc.）
+                - side: 方向（buy/sell）
+                - sz: 数量
+                - px: 价格
+        """
+        try:
+            params = {'instType': 'SWAP'}
+            if symbol:
+                params['instId'] = symbol
+
+            response = await self._request(
+                "GET",
+                "/api/v5/trade/orders-pending",
+                params=params
+            )
+
+            raw_orders = response.get('data', [])
+
+            logger.info(
+                f"✅ [原子对账] 查询到 {len(raw_orders)} 个活动订单 "
+                f"(symbol={symbol or '所有'})"
+            )
+
+            return raw_orders
+
+        except Exception as e:
+            logger.error(f"查询活动订单失败: {e}", exc_info=True)
+            return []
+
     async def get_kline(
         self,
         symbol: str,
