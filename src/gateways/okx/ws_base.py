@@ -222,8 +222,16 @@ class WsBaseGateway:
             if self._session is not None:
                 try:
                     if not self._session.closed:
+                        # 保存 connector 引用（因为 close() 后可能无法访问）
+                        connector = self._session.connector if self._session.connector else None
+
                         self._logger.debug("关闭 HTTP Session")
                         await self._session.close()
+
+                        # 显式关闭 connector（防止资源泄漏）
+                        if connector and not connector.closed:
+                            self._logger.debug("关闭 HTTP connector")
+                            await connector.close()
                 except Exception as e:
                     self._logger.error(f"关闭 HTTP Session 异常: {e}")
 
