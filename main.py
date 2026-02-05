@@ -492,4 +492,6 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("👋 Athena OS 已停止")
-        sys.exit(0)
+    except asyncio.CancelledError:
+        # 🔥 捕获任务取消异常（正常退出流程）
+        logger.info("👋 Athena OS 已停止（任务已取消）")
