@@ -112,15 +112,14 @@ class MarketDataManager:
         # 🔥 [调试] 显示数据
         logger.info(f"🔍 [调试] on_book_event: symbol={symbol}, bids={len(data.get('bids', []))}, asks={len(data.get('asks', []))}")
 
-        async with self._lock:
-            # 更新订单簿
-            self._order_books[symbol] = {
-                'bids': data.get('bids', []),
-                'asks': data.get('asks', []),
-                'best_bid': data.get('best_bid', 0.0),
-                'best_ask': data.get('best_ask', 0.0),
-                'timestamp': time.time()
-            }
+        # 🔥 [修复] 移除锁：asyncio.Lock 会导致更新失败，dict 赋值是原子操作
+        self._order_books[symbol] = {
+            'bids': data.get('bids', []),
+            'asks': data.get('asks', []),
+            'best_bid': data.get('best_bid', 0.0),
+            'best_ask': data.get('best_ask', 0.0),
+            'timestamp': time.time()
+        }
 
         # 🔥 [调试] 验证更新成功
         logger.debug(f"   ✅ OrderBook 已更新到缓存: {symbol}")
@@ -132,7 +131,7 @@ class MarketDataManager:
 
         # 更新统计
         stats = self._book_update_latency_stats
-        stats['count'] += 1
+        stats['count'] +=1
         stats['total_us'] += latency_us
         stats['max_us'] = max(stats['max_us'], latency_us)
         stats['min_us'] = min(stats['min_us'], latency_us)
@@ -146,20 +145,20 @@ class MarketDataManager:
         Args:
             event: TICK_EVENT
         """
-        async with self._lock:
-            data = event.data
-            symbol = data.get('symbol')
+        # 🔥 [修复] 移除锁：asyncio.Lock 会导致更新失败，dict 赋值是原子操作
+        data = event.data
+        symbol = data.get('symbol')
 
-            if not symbol:
-                return
+        if not symbol:
+            return
 
-            # 更新 Ticker
-            self._tickers[symbol] = {
-                'last_price': float(data.get('price', 0)),
-                'timestamp': data.get('timestamp', 0) / 1000.0
-            }
+        # 更新 Ticker
+        self._tickers[symbol] = {
+            'last_price': float(data.get('price', 0)),
+            'timestamp': data.get('timestamp', 0) / 1000.0
+        }
 
-            logger.debug(f"📊 [MarketDataManager] 更新 Ticker: {symbol}")
+        logger.debug(f"📊 [MarketDataManager] 更新 Ticker: {symbol}")
 
     def get_order_book_snapshot(self, symbol: str) -> Optional[OrderBookSnapshot]:
         """
