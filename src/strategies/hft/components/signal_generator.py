@@ -216,6 +216,25 @@ class SignalGenerator:
         elif self.sell_vol_increment > 0:
             sell_imbalance = 999.0  # 买量为0，卖量>0 -> 极度看空
 
+        # 🔥 [优化] 提前过滤：根据配置方向预判，避免无效计算
+        # 如果是 long_only 模式且卖方占优，直接跳过
+        if (self.config.trade_direction == 'long_only' and
+            buy_imbalance < self.config.imbalance_ratio):
+            logger.debug(
+                f"[SignalGenerator] {symbol}: LongOnly模式 - "
+                f"买方失衡={buy_imbalance:.2f}x < {self.config.imbalance_ratio}x, 跳过"
+            )
+            return signal
+
+        # 如果是 short_only 模式且买方占优，直接跳过
+        if (self.config.trade_direction == 'short_only' and
+            sell_imbalance < self.config.imbalance_ratio):
+            logger.debug(
+                f"[SignalGenerator] {symbol}: ShortOnly模式 - "
+                f"卖方失衡={sell_imbalance:.2f}x < {self.config.imbalance_ratio}x, 跳过"
+            )
+            return signal
+
         # 5. 失衡信号判断
         signal_direction = None
         imbalance_value = 0.0
@@ -233,7 +252,15 @@ class SignalGenerator:
             )
             return signal
 
-        # 6. 交易方向过滤
+        # 6. 交易方向过滤（保留作为最后防线）
+        # 🔥 [修复] 增加配置日志，便于调试
+        if self.config.trade_direction != 'both':
+            logger.debug(
+                f"[SignalGenerator] {symbol}: "
+                f"交易方向配置={self.config.trade_direction}, "
+                f"信号方向={signal_direction}"
+            )
+
         if self.config.trade_direction == 'long_only' and signal_direction == 'sell':
             logger.debug(
                 f"[SignalGenerator] {symbol}: 交易方向过滤: "
@@ -366,13 +393,13 @@ class SignalGenerator:
 
     def _calculate_depth_ratio(self, order_book: dict = None) -> float:
         """
-        计算订单簿深度比率
+        计算订单簿深度比率（🔥 修复：增加异常值处理）
 
         Args:
             order_book: 订单簿数据（可选，如果为None则从market_data_manager获取）
 
         Returns:
-            float: bid_depth / ask_depth 比率，None 表示无法计算
+            float: bid_depth / ask_depth 比率，None 表示无法计算或数据异常
         """
         try:
             # 从 market_data_manager 获取订单簿
@@ -413,11 +440,28 @@ class SignalGenerator:
                     size = float(ask[1])
                     ask_depth += price * size
 
-            if ask_depth == 0:
-                logger.warning(f"⚠️ [深度计算] {self.config.symbol}: ask_depth=0，无法计算比率")
+            # 🔥 [修复] 防止除零
+            if ask_depth == 0 or bid_depth == 0:
+                logger.warning(
+                    f"⚠️ [深度异常] {self.config.symbol}: "
+                    f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}, "
+                    f"除零风险，跳过深度过滤"
+                )
                 return None
 
             depth_ratio = bid_depth / ask_depth
+
+            # 🔥 [修复] 异常值过滤（比率 > 10 或 < 0.1 视为数据异常）
+            # 正常市场深度比率应该在 0.5-2.0 之间
+            # 异常值（如 1680.06, 47.45）说明订单簿数据不完整
+            if depth_ratio > 10.0 or depth_ratio < 0.1:
+                logger.warning(
+                    f"⚠️ [深度异常] {self.config.symbol}: "
+                    f"深度比率={depth_ratio:.2f} 超出合理范围 [0.1, 10.0]，"
+                    f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}, "
+                    f"跳过深度过滤"
+                )
+                return None
 
             return depth_ratio
 

@@ -65,7 +65,7 @@ class JsonPersistenceAdapter(PersistenceAdapter):
                     self._data = json.load(f)
                 logger.info(f"💾 [Persistence] 从文件加载状态: {len(self._data)} 个键")
             else:
-                logger.debug(f"💾 [Persistence] 文件不存在，使用空状态: {storage_path}")
+                logger.debug(f"💾 [Persistence] 文件不存在，使用空状态: {self.storage_path}")
         except Exception as e:
             logger.error(f"💾 [Persistence] 加载文件失败: {e}")
             self._data = {}
