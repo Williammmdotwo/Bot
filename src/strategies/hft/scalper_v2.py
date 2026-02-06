@@ -300,10 +300,15 @@ class ScalperV2(BaseStrategy):
         Args:
             market_data_manager: MarketDataManager 实例
         """
-        self.market_data_manager = market_data_manager
+        self._market_data_manager = market_data_manager  # ✅ 使用 _market_data_manager（带下划线）
         # ✅ 新增：注入到 signal_generator（用于深度过滤）
         self.signal_generator.market_data_manager = market_data_manager
-        logger.info(f"市场数据管理器已注入到策略 {self.strategy_id}")
+
+        # 🔥 [验证] 立即检查
+        logger.info(f"✅ 市场数据管理器已注入到策略 {self.strategy_id}")
+        logger.info(f"🔍 [验证] self._market_data_manager = {self._market_data_manager}")
+        logger.info(f"🔍 [验证] 是否为 None: {self._market_data_manager is None}")
+        logger.info(f"🔍 [验证] signal_generator.market_data_manager = {self.signal_generator.market_data_manager}")
 
     def set_public_gateway(self, gateway):
         """
@@ -466,9 +471,9 @@ class ScalperV2(BaseStrategy):
             await asyncio.sleep(0.01)  # 10ms 延迟
 
             order_book = None
-            if hasattr(self, 'market_data_manager') and self.market_data_manager:
+            if hasattr(self, '_market_data_manager') and self._market_data_manager:
                 # 尝试获取 OrderBook
-                order_book = self.market_data_manager.get_order_book(self.symbol)
+                order_book = self._market_data_manager.get_order_book(self.symbol)
 
                 # 🔥 [调试] 验证 OrderBook 是否获取成功
                 if order_book:
@@ -482,7 +487,7 @@ class ScalperV2(BaseStrategy):
                         f"⚠️ [调试] on_tick 获取 OrderBook 失败: order_book=None"
                     )
                     logger.warning(
-                        f"   可用键列表: {list(self.market_data_manager._order_books.keys())}"
+                        f"   可用键列表: {list(self._market_data_manager._order_books.keys())}"
                     )
             else:
                 logger.warning(f"⚠️ [调试] MarketDataManager 未注入")
@@ -829,8 +834,8 @@ class ScalperV2(BaseStrategy):
         """
         try:
             # 优先使用 MarketDataManager
-            if hasattr(self, 'market_data_manager') and self.market_data_manager:
-                best_bid, best_ask = self.market_data_manager.get_best_bid_ask(self.symbol)
+            if hasattr(self, '_market_data_manager') and self._market_data_manager:
+                best_bid, best_ask = self._market_data_manager.get_best_bid_ask(self.symbol)
 
                 # 如果数据不可用，降级使用 Last Price
                 if best_bid <= 0 or best_ask <= 0:

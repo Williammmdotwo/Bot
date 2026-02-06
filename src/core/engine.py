@@ -202,7 +202,11 @@ class Engine:
         self._position_manager._order_manager = self._order_manager
         logger.debug("✅ PositionManager 已关联 OrderManager（幽灵单防护已启用）")
 
-        # 6. 加载 Strategies
+        # 🔥 [关键修复] 6. 创建市场数据管理器（必须在策略加载之前）
+        self._market_data_manager = MarketDataManager(event_bus=self._event_bus)
+        logger.info("✅ MarketDataManager 已初始化")
+
+        # 7. 加载 Strategies（现在可以安全注入 MarketDataManager）
         strategies_config = self.config.get('strategies', [])
         for strategy_config in strategies_config:
             strategy = await self._load_strategy(strategy_config)
@@ -210,13 +214,9 @@ class Engine:
                 self._strategies.append(strategy)
         logger.info(f"✅ 已加载 {len(self._strategies)} 个策略")
 
-        # 7. 注册事件处理器
+        # 8. 注册事件处理器
         await self._register_event_handlers()
         logger.info("✅ 事件处理器已注册")
-
-        # 8. 创建市场数据管理器
-        self._market_data_manager = MarketDataManager(event_bus=self._event_bus)
-        logger.info("✅ MarketDataManager 已初始化")
 
         # 9. 🔥 [新增] 创建持久化适配器
         persistence_config = self.config.get('persistence', {})
