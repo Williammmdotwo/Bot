@@ -7,8 +7,6 @@ ScalperV1 Micro-Reversion Sniper Strategy (V2 - Refactored)
 - 执行算法：ExecutionAlgo 负责挂单价格、插队逻辑、模拟盘适配
 - 状态管理：StateManager 负责持仓、订单、冷却、自愈逻辑
 
-import copy
-
 策略核心逻辑（V2 - Micro-Reversion Sniper）:
 1. 完全不看 K 线，只处理 on_tick (Trade Stream)
 2. 趋势过滤：使用 EMA（50 ticks）判断趋势方向
@@ -37,6 +35,7 @@ import copy
 - 接口清晰：组件间通过清晰的接口通信
 """
 
+import copy
 import time
 import asyncio
 import logging

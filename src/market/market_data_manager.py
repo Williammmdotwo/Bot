@@ -9,6 +9,7 @@ MarketDataManager - 统一行情数据管理中心
 - 🔥 [新增] 微秒级延迟监控
 """
 
+import copy  # 🔧 [新增] 用于深拷贝，防止数据被外部修改
 import asyncio
 import time
 from typing import Dict, Tuple, Optional
@@ -248,15 +249,18 @@ class MarketDataManager:
         """
         获取订单簿数据（直接从缓存获取，不转换格式）
 
+        🔥 [修复] 使用深拷贝，防止外部修改影响缓存
+
         Args:
             symbol: 交易对
 
         Returns:
             dict: {'bids': [...], 'asks': [...], 'best_bid': ..., 'best_ask': ...} 或 None
         """
+        # 🔥 [修复] 使用深拷贝，防止外部修改影响缓存
         # 直接读取，dict 读取是原子操作，不需要锁
         order_book = self._order_books.get(symbol)
-        return order_book.copy() if order_book else None
+        return copy.deepcopy(order_book) if order_book else None
 
     def get_order_book_depth(self, symbol: str, levels: int = 3) -> Dict:
         """
