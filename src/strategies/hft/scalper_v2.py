@@ -330,6 +330,9 @@ class ScalperV2(BaseStrategy):
         # 同步 Instrument 详情
         await self._sync_instrument_details()
 
+        # 🔥 [新增] 预热机制：等待订单簿数据就绪
+        await self._wait_for_orderbook_ready()
+
         # 🔥 [修复] 启动独立的监控协程（避免提前退出导致止损失效）
         asyncio.create_task(self._monitor_position())
 
@@ -339,6 +342,79 @@ class ScalperV2(BaseStrategy):
             f"mode=Sniper, "
             f"direction=LongOnly"
         )
+
+    async def _wait_for_orderbook_ready(self, max_wait_seconds: int = 5):
+        """
+        🔥 [新增] 预热机制：等待订单簿数据就绪
+
+        解决启动时订单簿为空导致仓位计算失败的问题：
+        - WebSocket 订阅成功后，第一个 TICK 事件到达时，OrderBook 数据还未完全接收
+        - 导致 PositionSizer 无法计算流动性保护，返回 0 USDT
+        - 错过了启动后的前几个交易机会
+
+        Args:
+            max_wait_seconds: 最长等待时间（秒），默认 5 秒
+        """
+        logger.info(f"⏳ [预热中] {self.symbol}: 等待订单簿数据就绪...")
+
+        start_time = time.time()
+        check_interval = 0.5  # 每 0.5 秒检查一次
+
+        while time.time() - start_time < max_wait_seconds:
+            try:
+                # 检查 MarketDataManager 是否已注入
+                if not hasattr(self, '_market_data_manager') or not self._market_data_manager:
+                    logger.debug(f"⏳ [预热中] {self.symbol}: MarketDataManager 未注入，继续等待...")
+                    await asyncio.sleep(check_interval)
+                    continue
+
+                # 获取订单簿数据
+                order_book = self._market_data_manager.get_order_book(self.symbol)
+
+                # 验证订单簿是否有效
+                if (order_book and
+                    order_book.get('bids') and
+                    len(order_book.get('bids', [])) > 0 and
+                    order_book.get('asks') and
+                    len(order_book.get('asks', [])) > 0):
+
+                    # 订单簿数据已就绪
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"✅ [预热完成] {self.symbol}: "
+                        f"订单簿数据已就绪 (耗时 {elapsed:.2f} 秒), "
+                        f"bids={len(order_book.get('bids', []))}档, "
+                        f"asks={len(order_book.get('asks', []))}档"
+                    )
+
+                    # 标记为已就绪
+                    self._orderbook_received = True
+                    return
+
+                else:
+                    logger.debug(
+                        f"⏳ [预热中] {self.symbol}: "
+                        f"订单簿未就绪 (bids={len(order_book.get('bids', []))}档, "
+                        f"asks={len(order_book.get('asks', []))}档), "
+                        f"继续等待..."
+                    )
+
+            except Exception as e:
+                logger.warning(f"⚠️ [预热异常] {self.symbol}: 检查订单簿时出错: {e}")
+
+            # 等待下次检查
+            await asyncio.sleep(check_interval)
+
+        # 超时警告
+        elapsed = time.time() - start_time
+        logger.warning(
+            f"⚠️ [预热超时] {self.symbol}: "
+            f"订单簿数据在 {max_wait_seconds} 秒内未就绪 (耗时 {elapsed:.2f} 秒), "
+            f"策略将继续运行，但可能会错过初始交易机会"
+        )
+
+        # 即使超时也标记为已就绪，允许策略运行
+        self._orderbook_received = True
 
     async def _sync_instrument_details(self):
         """
@@ -1081,6 +1157,27 @@ class ScalperV2(BaseStrategy):
             if not signal.is_valid:
                 return
 
+            # 🔥 [修复] 验证订单簿数据是否就绪
+            # 检查 OrderBook 数据是否有效（解决启动时订单簿为空的问题）
+            order_book_in_tick = tick_data.get('order_book')
+
+            if not order_book_in_tick:
+                logger.debug(f"⏳ [订单簿检查] {self.symbol}: 订单簿数据未注入到 tick_data，跳过本次开仓")
+                return
+
+            # 验证订单簿是否有数据
+            if (not order_book_in_tick.get('bids') or
+                not order_book_in_tick.get('asks') or
+                len(order_book_in_tick.get('bids', [])) == 0 or
+                len(order_book_in_tick.get('asks', [])) == 0):
+                logger.debug(
+                    f"⏳ [订单簿检查] {self.symbol}: "
+                    f"订单簿为空 (bids={len(order_book_in_tick.get('bids', []))}档, "
+                    f"asks={len(order_book_in_tick.get('asks', []))}档), "
+                    f"跳过本次开仓"
+                )
+                return
+
             # 🔥 [日志] 记录大机会
             if (usdt_val >= self.signal_generator.config.min_flow_usdt and
                 total_vol >= self.signal_generator.config.min_flow_usdt and
@@ -1099,7 +1196,7 @@ class ScalperV2(BaseStrategy):
             # 检查 OrderBook 数据
             best_bid, best_ask = self._get_order_book_best_prices(price)
             if best_bid <= 0 or best_ask <= 0:
-                logger.warning("订单簿数据不可用，跳过本次开仓")
+                logger.debug(f"⏳ [订单簿检查] {self.symbol}: 最优买卖价无效 (bid={best_bid}, ask={best_ask})，跳过本次开仓")
                 return
 
             # 🔥 [修复] 获取策略专属资金（而非全局总权益）
