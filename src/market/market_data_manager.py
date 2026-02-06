@@ -171,31 +171,31 @@ class MarketDataManager:
         Returns:
             OrderBookSnapshot: 订单簿快照，如果不存在返回 None
         """
-        with self._lock:
-            order_book = self._order_books.get(symbol)
+        # 🔥 [修复] 移除锁：同步方法不能使用 asyncio.Lock，且 dict 读取是原子操作
+        order_book = self._order_books.get(symbol)
 
-            if not order_book:
-                return None
+        if not order_book:
+            return None
 
-            bids = order_book.get('bids', [])
-            asks = order_book.get('asks', [])
+        bids = order_book.get('bids', [])
+        asks = order_book.get('asks', [])
 
-            # 提取最佳买卖价
-            best_bid = float(bids[0][0]) if bids and len(bids) > 0 else 0.0
-            best_ask = float(asks[0][0]) if asks and len(asks) > 0 else 0.0
+        # 提取最佳买卖价
+        best_bid = float(bids[0][0]) if bids and len(bids) > 0 else 0.0
+        best_ask = float(asks[0][0]) if asks and len(asks) > 0 else 0.0
 
-            # 转换为不可变元组
-            bids_tuple = tuple((float(b[0]), float(b[1])) for b in bids)
-            asks_tuple = tuple((float(a[0]), float(a[1])) for a in asks)
+        # 转换为不可变元组
+        bids_tuple = tuple((float(b[0]), float(b[1])) for b in bids)
+        asks_tuple = tuple((float(a[0]), float(a[1])) for a in asks)
 
-            return OrderBookSnapshot(
-                symbol=symbol,
-                bids=bids_tuple,
-                asks=asks_tuple,
-                best_bid=best_bid,
-                best_ask=best_ask,
-                timestamp=time.time()
-            )
+        return OrderBookSnapshot(
+            symbol=symbol,
+            bids=bids_tuple,
+            asks=asks_tuple,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            timestamp=time.time()
+        )
 
     def get_ticker_snapshot(self, symbol: str) -> Optional[TickerSnapshot]:
         """
@@ -207,20 +207,20 @@ class MarketDataManager:
         Returns:
             TickerSnapshot: 行情快照，如果不存在返回 None
         """
-        with self._lock:
-            ticker = self._tickers.get(symbol)
+        # 🔥 [修复] 移除锁：同步方法不能使用 asyncio.Lock，且 dict 读取是原子操作
+        ticker = self._tickers.get(symbol)
 
-            if not ticker:
-                return None
+        if not ticker:
+            return None
 
-            return TickerSnapshot(
-                symbol=symbol,
-                last_price=ticker['last_price'],
-                bid_price=ticker.get('bid_price', ticker['last_price']),
-                ask_price=ticker.get('ask_price', ticker['last_price']),
-                volume_24h=ticker.get('volume_24h', 0.0),
-                timestamp=ticker['timestamp']
-            )
+        return TickerSnapshot(
+            symbol=symbol,
+            last_price=ticker['last_price'],
+            bid_price=ticker.get('bid_price', ticker['last_price']),
+            ask_price=ticker.get('ask_price', ticker['last_price']),
+            volume_24h=ticker.get('volume_24h', 0.0),
+            timestamp=ticker['timestamp']
+        )
 
     def get_best_bid_ask(self, symbol: str) -> Tuple[float, float]:
         """
