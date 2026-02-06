@@ -128,8 +128,10 @@ class ScalperV2(BaseStrategy):
         # ========== 初始化组件 ==========
 
         # 1. 信号生成器配置
-        # 🔥 [新增] 从 kwargs 读取 EMA 启用配置
-        ema_enabled = kwargs.get('ema_enabled', True)
+        # ✅ [新增] 从 kwargs 读取双向交易和 EMA 配置
+        trade_direction = kwargs.get('trade_direction', 'both')
+        ema_filter_mode = kwargs.get('ema_filter_mode', 'loose')
+        ema_boost_pct = kwargs.get('ema_boost_pct', 0.20)
 
         signal_generator_config = ScalperV1Config(
             symbol=symbol,
@@ -137,7 +139,15 @@ class ScalperV2(BaseStrategy):
             min_flow_usdt=min_flow_usdt,
             ema_period=50,
             spread_threshold_pct=0.0005,  # 0.05%
-            ema_enabled=ema_enabled  # 🔥 [新增] EMA 过滤开关
+            # ✅ 新增配置
+            trade_direction=trade_direction,  # 'both', 'long_only', 'short_only'
+            ema_filter_mode=ema_filter_mode,  # 'strict', 'loose', 'off'
+            ema_boost_pct=ema_boost_pct,  # EMA 顺势加权比例
+            # ✅ 新增：订单簿深度过滤配置
+            depth_filter_enabled=kwargs.get('depth_filter_enabled', True),
+            depth_ratio_threshold_low=kwargs.get('depth_ratio_threshold_low', 0.8),
+            depth_ratio_threshold_high=kwargs.get('depth_ratio_threshold_high', 1.25),
+            depth_check_levels=kwargs.get('depth_check_levels', 3)
         )
         self.signal_generator = SignalGenerator(signal_generator_config)
 
@@ -288,6 +298,8 @@ class ScalperV2(BaseStrategy):
             market_data_manager: MarketDataManager 实例
         """
         self.market_data_manager = market_data_manager
+        # ✅ 新增：注入到 signal_generator（用于深度过滤）
+        self.signal_generator.market_data_manager = market_data_manager
         logger.info(f"市场数据管理器已注入到策略 {self.strategy_id}")
 
     def set_public_gateway(self, gateway):
@@ -1097,14 +1109,16 @@ class ScalperV2(BaseStrategy):
                 logger.warning(f"⚠️ [警告] {self.symbol}: 无法获取订单簿深度")
                 order_book = {'bids': [], 'asks': []}
 
-            # 计算下单金额（传入合约面值）
+            # 计算下单金额（传入合约面值和 EMA 加权）
+            ema_boost = signal.metadata.get('ema_boost', 1.0)
             usdt_amount = self.position_sizer.calculate_order_size(
                 account_equity=account_equity,
                 order_book=order_book,
                 signal_ratio=signal.metadata.get('imbalance_ratio', 0.0),
                 current_price=price,
-                side='buy',
-                ct_val=self.contract_val  # 🔥 [新增] 传入合约面值
+                side=signal.direction,  # ✅ 使用信号的方向（buy 或 sell）
+                ct_val=self.contract_val,
+                ema_boost=ema_boost  # ✅ 传入 EMA 加权系数
             )
 
             # 如果金额为 0，跳过

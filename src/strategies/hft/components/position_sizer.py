@@ -89,7 +89,8 @@ class PositionSizer:
         signal_ratio: float,
         current_price: float,
         side: str = 'buy',  # 交易方向 'buy' 或 'sell'
-        ct_val: float = None  # 🔥 [修复] 添加合约面值参数
+        ct_val: float = None,  # 合约面值
+        ema_boost: float = 1.0  # ✅ 新增：EMA 加权系数
     ) -> float:
         """
         自适应计算单笔下单金额 (USDT)
@@ -101,6 +102,7 @@ class PositionSizer:
             current_price: 当前价格
             side: 交易方向 'buy' 或 'sell'（决定使用哪方深度）
             ct_val: 合约面值（1张=ct_val个币），如果为 None 则使用 self.ct_val
+            ema_boost: EMA 顺势加权系数（默认 1.0）
 
         Returns:
             float: 下单金额 (USDT)
@@ -145,6 +147,14 @@ class PositionSizer:
 
         signal_adjusted_amount = base_amount * multiplier
 
+        # ✅ 新增：EMA 加权（顺势时增加仓位）
+        if ema_boost > 1.0:
+            logger.info(
+                f"📈 [EMA加权] 顺势交易，仓位加权 {ema_boost:.2f}x"
+            )
+
+        ema_adjusted_amount = signal_adjusted_amount * ema_boost
+
         # --- 3. 波动率保护（标准差计算）---
         volatility_factor = 1.0
         if self.cfg.volatility_protection_enabled:
@@ -170,7 +180,7 @@ class PositionSizer:
                     f"< 阈值{self.cfg.volatility_threshold:.4%}, 不调整"
                 )
 
-        volatility_adjusted_amount = signal_adjusted_amount * volatility_factor
+        volatility_adjusted_amount = ema_adjusted_amount * volatility_factor
 
         # --- 4. 流动性/滑点保护（单向深度）---
         liquidity_limit = float('inf')

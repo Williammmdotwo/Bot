@@ -32,7 +32,15 @@ class ScalperV1Config:
     min_flow_usdt: float = 5000.0
     ema_period: int = 50
     spread_threshold_pct: float = 0.0005
-    ema_enabled: bool = True  # 🔥 [新增] EMA 过滤开关
+    # ✅ 新增配置
+    trade_direction: str = 'both'  # 'both', 'long_only', 'short_only'
+    ema_filter_mode: str = 'loose'  # 'strict', 'loose', 'off'
+    ema_boost_pct: float = 0.20  # EMA 顺势时仓位加权比例（20%）
+    # ✅ 新增：订单簿深度过滤配置
+    depth_filter_enabled: bool = True
+    depth_ratio_threshold_low: float = 0.8   # 做多时，bid_depth/ask_depth 必须 >= 0.8
+    depth_ratio_threshold_high: float = 1.25  # 做空时，bid_depth/ask_depth 必须 <= 1.25
+    depth_check_levels: int = 3              # 检查前N档深度
 
 
 @dataclass
@@ -86,6 +94,9 @@ class SignalGenerator:
         # 避免每次都从 OrderBook 重新计算，改为增量更新
         self.buy_vol_increment = 0.0
         self.sell_vol_increment = 0.0
+
+        # ✅ 新增：market_data_manager 引用（用于获取订单簿）
+        self.market_data_manager = None
 
         # 🔧 [调试] 验证 min_flow_usdt 配置
         logger.info(f"🔧 [配置验证] SignalGenerator 初始化:")
@@ -158,7 +169,7 @@ class SignalGenerator:
         volume_usdt: float
     ) -> Signal:
         """
-        计算交易信号
+        计算交易信号（双向交易 + EMA 宽松过滤）
 
         Args:
             symbol (str): 交易对
@@ -170,36 +181,13 @@ class SignalGenerator:
         Returns:
             Signal: 交易信号对象
         """
-        # 🔥 [修复] 在方法开头初始化所有可能用到的变量
-        trend_bias = 'neutral'  # 默认趋势偏置
-
-        # 1. 更新 EMA（趋势过滤）
+        # 1. 更新 EMA
         self._update_ema(price)
 
         # 2. 初始化信号对象
         signal = Signal()
 
-        # 3. 趋势过滤：只做多（Price > EMA）
-        # 🔥 [新增] 如果 EMA 过滤被禁用，跳过趋势检查
-        if self.config.ema_enabled:
-            trend_bias = self.get_trend_bias()
-            if trend_bias != "bullish":
-                signal.is_valid = False
-                signal.direction = "neutral"
-                signal.reason = f"trend_filter:{trend_bias}"
-                signal.metadata = {
-                    'ema_value': self.ema_value,
-                    'current_price': price
-                }
-                logger.debug(
-                    f"[SignalGenerator] {symbol}: "
-                    f"趋势过滤: Trend={trend_bias}, "
-                    f"Price={price:.6f}, EMA={self.ema_value:.6f} "
-                    f"(不满足看涨条件)"
-                )
-                return signal
-
-        # 4. 检查流动性：最小流速（USDT）
+        # 3. 检查流动性：最小流速（USDT）
         if volume_usdt < self.config.min_flow_usdt:
             signal.is_valid = False
             signal.direction = "neutral"
@@ -215,57 +203,142 @@ class SignalGenerator:
             )
             return signal
 
-        # 5. 计算买卖失衡
-        imbalance = 0.0
-        if self.sell_vol_increment > 0:
-            imbalance = self.buy_vol_increment / self.sell_vol_increment
-        elif self.buy_vol_increment > 0:
-            # 卖量为0，买量>0 -> 极度看多
-            imbalance = 999.0
-            logger.debug(
-                f"[SignalGenerator] {symbol}: "
-                f"极端失衡: 卖={self.sell_vol_increment:.0f} USDT, "
-                f"买={self.buy_vol_increment:.0f} USDT, 失衡比=∞"
-            )
+        # 4. 计算买卖失衡
+        buy_imbalance = 0.0
+        sell_imbalance = 0.0
 
-        # 检查是否满足失衡阈值
-        if imbalance < self.config.imbalance_ratio:
-            signal.is_valid = False
-            signal.direction = "neutral"
-            signal.reason = f"imbalance_filter:ratio_too_low"
-            signal.metadata = {
-                'buy_vol': self.buy_vol_increment,
-                'sell_vol': self.sell_vol_increment,
-                'imbalance_ratio': imbalance,
-                'threshold': self.config.imbalance_ratio
-            }
+        if self.sell_vol_increment > 0:
+            buy_imbalance = self.buy_vol_increment / self.sell_vol_increment
+        elif self.buy_vol_increment > 0:
+            buy_imbalance = 999.0  # 卖量为0，买量>0 -> 极度看多
+
+        if self.buy_vol_increment > 0:
+            sell_imbalance = self.sell_vol_increment / self.buy_vol_increment
+        elif self.sell_vol_increment > 0:
+            sell_imbalance = 999.0  # 买量为0，卖量>0 -> 极度看空
+
+        # 5. 失衡信号判断
+        signal_direction = None
+        imbalance_value = 0.0
+
+        if buy_imbalance >= self.config.imbalance_ratio:
+            signal_direction = 'buy'
+            imbalance_value = buy_imbalance
+        elif sell_imbalance >= self.config.imbalance_ratio:
+            signal_direction = 'sell'
+            imbalance_value = sell_imbalance
+        else:
             logger.debug(
-                f"[SignalGenerator] {symbol}: "
-                f"失衡过滤: Imbalance={imbalance:.2f}x < "
-                f"阈值={self.config.imbalance_ratio:.2f}x"
+                f"[SignalGenerator] {symbol}: 失衡过滤: "
+                f"buy={buy_imbalance:.2f}x, sell={sell_imbalance:.2f}x < {self.config.imbalance_ratio}x"
             )
             return signal
 
-        # 6. 信号有效
+        # 6. 交易方向过滤
+        if self.config.trade_direction == 'long_only' and signal_direction == 'sell':
+            logger.debug(
+                f"[SignalGenerator] {symbol}: 交易方向过滤: "
+                f"配置=long_only, 信号=sell, 跳过"
+            )
+            return signal
+
+        if self.config.trade_direction == 'short_only' and signal_direction == 'buy':
+            logger.debug(
+                f"[SignalGenerator] {symbol}: 交易方向过滤: "
+                f"配置=short_only, 信号=buy, 跳过"
+            )
+            return signal
+
+        # 7. 订单簿深度比率过滤
+        if self.config.depth_filter_enabled:
+            depth_ratio = self._calculate_depth_ratio(order_book=None)
+
+            if depth_ratio is not None:
+                if signal_direction == 'buy' and depth_ratio < self.config.depth_ratio_threshold_low:
+                    logger.info(
+                        f"🛑 [深度过滤] {symbol}: 做多信号被拒绝 - "
+                        f"深度比率={depth_ratio:.2f} < {self.config.depth_ratio_threshold_low:.2f} "
+                        f"(卖方盘口过厚，做多风险高)"
+                    )
+                    return signal
+
+                if signal_direction == 'sell' and depth_ratio > self.config.depth_ratio_threshold_high:
+                    logger.info(
+                        f"🛑 [深度过滤] {symbol}: 做空信号被拒绝 - "
+                        f"深度比率={depth_ratio:.2f} > {self.config.depth_ratio_threshold_high:.2f} "
+                        f"(买方盘口过厚，做空风险高)"
+                    )
+                    return signal
+
+                logger.debug(
+                    f"✅ [深度过滤] {symbol}: 深度比率={depth_ratio:.2f} 通过 "
+                    f"(signal={signal_direction})"
+                )
+
+        # 8. EMA 趋势过滤/加权
+        trend = self.get_trend_bias()
+        ema_boost = 1.0  # 默认无加权
+
+        if self.config.ema_filter_mode == 'strict':
+            # 严格模式：必须顺势
+            if signal_direction == 'buy' and trend != 'bullish':
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: EMA严格过滤 (做多): "
+                    f"Trend={trend}, Price={price:.6f}, EMA={self.ema_value:.6f}"
+                )
+                return signal
+
+            if signal_direction == 'sell' and trend != 'bearish':
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: EMA严格过滤 (做空): "
+                    f"Trend={trend}, Price={price:.6f}, EMA={self.ema_value:.6f}"
+                )
+                return signal
+
+        elif self.config.ema_filter_mode == 'loose':
+            # 宽松模式：顺势加权
+            if signal_direction == 'buy' and trend == 'bullish':
+                ema_boost = 1.0 + self.config.ema_boost_pct
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: EMA顺势加权 (做多): "
+                    f"boost={ema_boost:.2f}x, Price={price:.6f} > EMA={self.ema_value:.6f}"
+                )
+
+            elif signal_direction == 'sell' and trend == 'bearish':
+                ema_boost = 1.0 + self.config.ema_boost_pct
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: EMA顺势加权 (做空): "
+                    f"boost={ema_boost:.2f}x, Price={price:.6f} < EMA={self.ema_value:.6f}"
+                )
+
+            else:
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: EMA逆势 (无加权): "
+                    f"signal={signal_direction}, trend={trend}"
+                )
+
+        else:  # 'off'
+            # 关闭模式：不使用 EMA
+            logger.debug(f"[SignalGenerator] {symbol}: EMA过滤已关闭")
+
+        # 8. 生成信号
         signal.is_valid = True
-        signal.direction = "bullish"
-        signal.strength = min(imbalance / self.config.imbalance_ratio, 1.0)
+        signal.direction = signal_direction
+        signal.strength = min(imbalance_value / self.config.imbalance_ratio, 1.0)
         signal.reason = "imbalance_triggered"
         signal.metadata = {
             'ema_value': self.ema_value,
-            'trend_bias': trend_bias,
+            'trend': trend,
+            'ema_boost': ema_boost,
+            'imbalance_ratio': imbalance_value,
             'buy_vol': self.buy_vol_increment,
             'sell_vol': self.sell_vol_increment,
-            'imbalance_ratio': imbalance,
             'total_vol': self.buy_vol_increment + self.sell_vol_increment
         }
 
         logger.info(
-            f"[SignalGenerator] {symbol}: "
-            f"生成有效信号: Direction={signal.direction}, "
-            f"Strength={signal.strength:.3f}, "
-            f"Reason={signal.reason}, "
-            f"Imbalance={imbalance:.2f}x"
+            f"✅ [信号生成] {symbol}: {signal_direction.upper()} | "
+            f"失衡={imbalance_value:.2f}x, EMA加权={ema_boost:.2f}x, 趋势={trend}"
         )
 
         return signal
@@ -291,3 +364,70 @@ class SignalGenerator:
                 'spread_threshold_pct': self.config.spread_threshold_pct
             }
         }
+
+    def _calculate_depth_ratio(self, order_book: dict = None) -> float:
+        """
+        计算订单簿深度比率
+
+        Args:
+            order_book: 订单簿数据（可选，如果为None则从market_data_manager获取）
+
+        Returns:
+            float: bid_depth / ask_depth 比率，None 表示无法计算
+        """
+        try:
+            # 从 market_data_manager 获取订单簿
+            if not order_book and self.market_data_manager:
+                order_book = self.market_data_manager.get_order_book_depth(
+                    self.config.symbol,
+                    levels=self.config.depth_check_levels
+                )
+
+            if not order_book:
+                return None
+
+            bids = order_book.get('bids', [])
+            asks = order_book.get('asks', [])
+
+            if not bids or not asks:
+                return None
+
+            # 计算前N档深度总价值
+            bid_depth = 0.0
+            ask_depth = 0.0
+
+            levels = self.config.depth_check_levels
+
+            for i in range(min(levels, len(bids))):
+                bid = bids[i]
+                if len(bid) >= 2:
+                    price = float(bid[0])
+                    size = float(bid[1])
+                    bid_depth += price * size
+
+            for i in range(min(levels, len(asks))):
+                ask = asks[i]
+                if len(ask) >= 2:
+                    price = float(ask[0])
+                    size = float(ask[1])
+                    ask_depth += price * size
+
+            if ask_depth == 0:
+                return None
+
+            depth_ratio = bid_depth / ask_depth
+
+            logger.debug(
+                f"📊 [深度计算] {self.config.symbol}: "
+                f"bid_depth={bid_depth:.2f} USDT, ask_depth={ask_depth:.2f} USDT, "
+                f"ratio={depth_ratio:.2f}"
+            )
+
+            return depth_ratio
+
+        except Exception as e:
+            logger.error(
+                f"❌ [深度计算] {self.config.symbol}: 计算失败 - {e}",
+                exc_info=True
+            )
+            return None

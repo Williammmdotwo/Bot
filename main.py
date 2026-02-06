@@ -246,8 +246,8 @@ def load_config_from_env() -> dict:
                 'capital': float(os.getenv('SCALPER_CAPITAL', 10000.0)),
                 'params': {
                     'symbol': os.getenv('SCALPER_SYMBOL', 'DOGE-USDT-SWAP'),
-                    'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 5.0)),  # V2: 5.0
-                    'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 5000.0)),  # V2: 5000
+                    'imbalance_ratio': float(os.getenv('SCALPER_IMBALANCE_RATIO', 3.0)),  # ✅ 降低到 3.0
+                    'min_flow_usdt': float(os.getenv('SCALPER_MIN_FLOW', 500.0)),  # ✅ 降低到 500
                     'take_profit_pct': float(os.getenv('SCALPER_TAKE_PROFIT_PCT', 0.002)),
                     'stop_loss_pct': float(os.getenv('SCALPER_STOP_LOSS_PCT', 0.01)),
                     'time_limit_seconds': int(os.getenv('SCALPER_TIME_LIMIT_SECONDS', 30)),  # V2: 30s
@@ -264,8 +264,15 @@ def load_config_from_env() -> dict:
                     'enable_chasing': os.getenv('SCALPER_ENABLE_CHASING', 'true').lower() == 'true',  # 是否启用追单
                     'tick_size': float(os.getenv('SCALPER_TICK_SIZE', 0.01)),  # 最小价格跳动
                     'max_chase_distance_pct': float(os.getenv('SCALPER_MAX_CHASE_DISTANCE', 0.001)),  # 最大追单距离 0.1%
-                    # 🔥 [新增] EMA 过滤开关
-                    'ema_enabled': os.getenv('SCALPER_EMA_ENABLED', 'true').lower() == 'true',  # 是否启用 EMA 过滤
+                    # ✅ [新增] 双向交易和 EMA 配置
+                    'trade_direction': os.getenv('SCALPER_TRADE_DIRECTION', 'both'),  # 'both', 'long_only', 'short_only'
+                    'ema_filter_mode': os.getenv('SCALPER_EMA_FILTER_MODE', 'loose'),  # 'strict', 'loose', 'off'
+                    'ema_boost_pct': float(os.getenv('SCALPER_EMA_BOOST_PCT', 0.20)),  # EMA 顺势加权比例 20%
+                    # ✅ [新增] 订单簿深度过滤配置
+                    'depth_filter_enabled': os.getenv('SCALPER_DEPTH_FILTER_ENABLED', 'true').lower() == 'true',
+                    'depth_ratio_threshold_low': float(os.getenv('SCALPER_DEPTH_RATIO_LOW', 0.8)),
+                    'depth_ratio_threshold_high': float(os.getenv('SCALPER_DEPTH_RATIO_HIGH', 1.25)),
+                    'depth_check_levels': int(os.getenv('SCALPER_DEPTH_CHECK_LEVELS', 3)),
                     # ========== 自适应仓位管理配置 (Position Sizing) ==========
                     'position_sizing': {
                         # 基础资金配置
