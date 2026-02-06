@@ -467,8 +467,10 @@ async def main():
             # 🔥 等待所有任务完成
             await asyncio.sleep(1.0)
 
-            # 🔥 取消所有待处理的任务（使用超时避免递归错误）
-            tasks = [t for t in asyncio.all_tasks() if not t.done()]
+            # 🔥 取消所有待处理的任务（排除当前任务和主任务）
+            current_task = asyncio.current_task()
+            tasks = [t for t in asyncio.all_tasks() if not t.done() and t != current_task]
+
             if tasks:
                 logger.info(f"🔧 取消 {len(tasks)} 个待处理的异步任务...")
                 for task in tasks:
@@ -483,9 +485,15 @@ async def main():
                     logger.info("✅ 所有任务已完成取消")
                 except asyncio.TimeoutError:
                     logger.warning("⚠️ 部分任务未在 2 秒内完成取消，强制退出")
+                except asyncio.CancelledError:
+                    # 🔥 [关键修复] 捕获 CancelledError，避免异常泄漏
+                    logger.info("✅ 任务取消流程已完成")
                 except Exception as e:
                     logger.warning(f"⚠️ 任务取消时出错: {e}")
 
+        except asyncio.CancelledError:
+            # 🔥 [关键修复] 在顶层捕获 CancelledError，避免泄漏
+            logger.info("✅ 优雅关闭流程被取消（正常退出）")
         except Exception as e:
             logger.error(f"❌ 优雅关闭时出错: {e}", exc_info=True)
             sys.exit(1)
