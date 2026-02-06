@@ -444,6 +444,11 @@ class ScalperV2(BaseStrategy):
             event (Event): TICK 事件
         """
         try:
+            # 🔍 [调试] 检查 MarketDataManager 是否注入
+            if not hasattr(self, '_market_data_manager') or self._market_data_manager is None:
+                logger.error(f"❌ [ScalperV2] MarketDataManager 未注入")
+                return
+
             # 1. 解析 Tick 数据
             tick_data = event.data
             now = time.time()
@@ -467,8 +472,18 @@ class ScalperV2(BaseStrategy):
 
             order_book = None
             if hasattr(self, '_market_data_manager') and self._market_data_manager:
-                # 尝试获取 OrderBook
+                # 🔍 [调试] 尝试获取 OrderBook
                 order_book = self._market_data_manager.get_order_book(self.symbol)
+                if order_book is None:
+                    logger.warning(f"⚠️ [ScalperV2] OrderBook 为 None: {self.symbol}")
+                else:
+                    # 🔍 [调试] 检查 bids/asks 是否为空
+                    bids = order_book.get('bids', [])
+                    asks = order_book.get('asks', [])
+                    logger.info(f"📊 [ScalperV2] OrderBook 状态: bids={len(bids)}, asks={len(asks)}")
+
+                    if not bids or not asks:
+                        logger.warning(f"⚠️ [ScalperV2] OrderBook 数据为空: bids={bids[:2]}, asks={asks[:2]}")
             else:
                 logger.warning(f"⚠️ [警告] MarketDataManager 未注入")
 

@@ -107,6 +107,15 @@ class PositionSizer:
         Returns:
             float: 下单金额 (USDT)
         """
+        # 🔍 [调试] 添加输入参数日志
+        logger.info(f"📊 [PositionSizer] 输入参数:")
+        logger.info(f"   account_equity={account_equity:.2f}")
+        logger.info(f"   signal_ratio={signal_ratio:.2f}")
+        logger.info(f"   order_book={order_book}")
+        logger.info(f"   current_price={current_price:.6f}")
+        logger.info(f"   side={side}")
+        logger.info(f"   ema_boost={ema_boost:.2f}")
+
         # 🔥 [修复] 如果未传入 ct_val，使用初始化时的值
         if ct_val is None:
             ct_val = self.ct_val
