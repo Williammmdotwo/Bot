@@ -462,9 +462,13 @@ class ScalperV2(BaseStrategy):
                 return
 
             # ✅ 关键修复：获取并注入 OrderBook
+            # 🔥 [临时] 等待 BOOK_EVENT 处理完（避免竞态条件）
+            await asyncio.sleep(0.01)  # 10ms 延迟
+
             order_book = None
             if hasattr(self, 'market_data_manager') and self.market_data_manager:
-                order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=self.signal_generator.config.depth_check_levels)
+                # 尝试获取 OrderBook
+                order_book = self.market_data_manager.get_order_book(self.symbol)
 
                 # 🔥 [调试] 验证 OrderBook 是否获取成功
                 if order_book:
@@ -474,7 +478,14 @@ class ScalperV2(BaseStrategy):
                         f"asks={len(order_book.get('asks', []))}"
                     )
                 else:
-                    logger.warning(f"⚠️ [调试] on_tick 获取 OrderBook 失败")
+                    logger.warning(
+                        f"⚠️ [调试] on_tick 获取 OrderBook 失败: order_book=None"
+                    )
+                    logger.warning(
+                        f"   可用键列表: {list(self.market_data_manager._order_books.keys())}"
+                    )
+            else:
+                logger.warning(f"⚠️ [调试] MarketDataManager 未注入")
 
             # 注入到 tick_data
             tick_data['order_book'] = order_book
