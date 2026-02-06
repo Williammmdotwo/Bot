@@ -264,6 +264,8 @@ def load_config_from_env() -> dict:
                     'enable_chasing': os.getenv('SCALPER_ENABLE_CHASING', 'true').lower() == 'true',  # 是否启用追单
                     'tick_size': float(os.getenv('SCALPER_TICK_SIZE', 0.01)),  # 最小价格跳动
                     'max_chase_distance_pct': float(os.getenv('SCALPER_MAX_CHASE_DISTANCE', 0.001)),  # 最大追单距离 0.1%
+                    # 🔥 [新增] EMA 过滤开关
+                    'ema_enabled': os.getenv('SCALPER_EMA_ENABLED', 'true').lower() == 'true',  # 是否启用 EMA 过滤
                     # ========== 自适应仓位管理配置 (Position Sizing) ==========
                     'position_sizing': {
                         # 基础资金配置

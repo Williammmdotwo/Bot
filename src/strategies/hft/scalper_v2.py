@@ -128,12 +128,16 @@ class ScalperV2(BaseStrategy):
         # ========== 初始化组件 ==========
 
         # 1. 信号生成器配置
+        # 🔥 [新增] 从 kwargs 读取 EMA 启用配置
+        ema_enabled = kwargs.get('ema_enabled', True)
+
         signal_generator_config = ScalperV1Config(
             symbol=symbol,
             imbalance_ratio=imbalance_ratio,
             min_flow_usdt=min_flow_usdt,
             ema_period=50,
-            spread_threshold_pct=0.0005  # 0.05%
+            spread_threshold_pct=0.0005,  # 0.05%
+            ema_enabled=ema_enabled  # 🔥 [新增] EMA 过滤开关
         )
         self.signal_generator = SignalGenerator(signal_generator_config)
 

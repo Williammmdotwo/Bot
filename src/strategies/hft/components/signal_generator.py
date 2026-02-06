@@ -32,6 +32,7 @@ class ScalperV1Config:
     min_flow_usdt: float = 5000.0
     ema_period: int = 50
     spread_threshold_pct: float = 0.0005
+    ema_enabled: bool = True  # 🔥 [新增] EMA 过滤开关
 
 
 @dataclass
@@ -176,22 +177,24 @@ class SignalGenerator:
         signal = Signal()
 
         # 3. 趋势过滤：只做多（Price > EMA）
-        trend_bias = self.get_trend_bias()
-        if trend_bias != "bullish":
-            signal.is_valid = False
-            signal.direction = "neutral"
-            signal.reason = f"trend_filter:{trend_bias}"
-            signal.metadata = {
-                'ema_value': self.ema_value,
-                'current_price': price
-            }
-            logger.debug(
-                f"[SignalGenerator] {symbol}: "
-                f"趋势过滤: Trend={trend_bias}, "
-                f"Price={price:.6f}, EMA={self.ema_value:.6f} "
-                f"(不满足看涨条件)"
-            )
-            return signal
+        # 🔥 [新增] 如果 EMA 过滤被禁用，跳过趋势检查
+        if self.config.ema_enabled:
+            trend_bias = self.get_trend_bias()
+            if trend_bias != "bullish":
+                signal.is_valid = False
+                signal.direction = "neutral"
+                signal.reason = f"trend_filter:{trend_bias}"
+                signal.metadata = {
+                    'ema_value': self.ema_value,
+                    'current_price': price
+                }
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: "
+                    f"趋势过滤: Trend={trend_bias}, "
+                    f"Price={price:.6f}, EMA={self.ema_value:.6f} "
+                    f"(不满足看涨条件)"
+                )
+                return signal
 
         # 4. 检查流动性：最小流速（USDT）
         if volume_usdt < self.config.min_flow_usdt:
