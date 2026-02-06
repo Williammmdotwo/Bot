@@ -142,6 +142,26 @@ class SignalGenerator:
         elif side == 'sell':
             self.sell_vol_increment += usdt_val
 
+    def get_min_flow_threshold(self, signal_ratio: float) -> float:
+        """
+        根据信号强度动态调整最小流量阈值
+
+        🔥 [优化] 对于极强信号，允许更小的单笔成交量
+        避免错过高质量交易机会
+
+        Args:
+            signal_ratio (float): 信号强度（失衡比率）
+
+        Returns:
+            float: 动态调整后的最小流量阈值（USDT）
+        """
+        if signal_ratio >= 10.0:  # 极强信号（10x 以上）
+            return 200.0  # 允许更小的流量，因为信号质量高
+        elif signal_ratio >= 5.0:  # 强信号（5-10x）
+            return 350.0  # 中等流量要求
+        else:  # 普通信号（3-5x）
+            return 500.0  # 保持严格要求
+
     def get_trend_bias(self) -> str:
         """
         获取趋势偏置
@@ -187,22 +207,7 @@ class SignalGenerator:
         # 2. 初始化信号对象
         signal = Signal()
 
-        # 3. 检查流动性：最小流速（USDT）
-        if volume_usdt < self.config.min_flow_usdt:
-            signal.is_valid = False
-            signal.direction = "neutral"
-            signal.reason = f"volume_filter:volume_too_low"
-            signal.metadata = {
-                'volume_usdt': volume_usdt,
-                'min_flow': self.config.min_flow_usdt
-            }
-            logger.info(  # 🔍 改为 INFO 级别
-                f"⚠️ [SignalGenerator-流动性过滤] {symbol}: "
-                f"Volume={volume_usdt:.0f} USDT < MinFlow={self.config.min_flow_usdt:.0f} USDT"
-            )
-            return signal
-
-        # 4. 计算买卖失衡
+        # 3. 🔥 [优化] 计算买卖失衡（用于动态阈值调整）
         buy_imbalance = 0.0
         sell_imbalance = 0.0
 
@@ -216,7 +221,30 @@ class SignalGenerator:
         elif self.sell_vol_increment > 0:
             sell_imbalance = 999.0  # 买量为0，卖量>0 -> 极度看空
 
-        # 🔥 [优化] 提前过滤：根据配置方向预判，避免无效计算
+        # 4. 计算动态最小流量阈值
+        # 取买卖失衡的较大值作为信号强度
+        signal_ratio = max(buy_imbalance, sell_imbalance)
+        dynamic_min_flow = self.get_min_flow_threshold(signal_ratio)
+
+        # 5. 检查流动性：最小流速（USDT）- 使用动态阈值
+        if volume_usdt < dynamic_min_flow:
+            signal.is_valid = False
+            signal.direction = "neutral"
+            signal.reason = f"volume_filter:volume_too_low"
+            signal.metadata = {
+                'volume_usdt': volume_usdt,
+                'min_flow': self.config.min_flow_usdt,
+                'dynamic_min_flow': dynamic_min_flow,
+                'signal_ratio': signal_ratio
+            }
+            logger.info(  # 🔍 改为 INFO 级别
+                f"⚠️ [SignalGenerator-流动性过滤] {symbol}: "
+                f"Volume={volume_usdt:.0f} USDT < DynamicMinFlow={dynamic_min_flow:.0f} USDT "
+                f"(Signal={signal_ratio:.1f}x)"
+            )
+            return signal
+
+        # 6. 🔥 [优化] 提前过滤：根据配置方向预判，避免无效计算
         # 如果是 long_only 模式且卖方占优，直接跳过
         if (self.config.trade_direction == 'long_only' and
             buy_imbalance < self.config.imbalance_ratio):
@@ -235,7 +263,7 @@ class SignalGenerator:
             )
             return signal
 
-        # 5. 失衡信号判断
+        # 7. 失衡信号判断
         signal_direction = None
         imbalance_value = 0.0
 
