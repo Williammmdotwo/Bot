@@ -253,24 +253,24 @@ class MarketDataManager:
         logger.debug(f"🔍 [调试] MarketDataManager.get_order_book 被调用: symbol={symbol}")
 
         # 🔥 [调试 2] 显示缓存状态
-        with self._lock:
-            logger.debug(f"   _order_books.keys()={list(self._order_books.keys())}")
-            logger.debug(f"   _order_books 长度={len(self._order_books)}")
+        logger.debug(f"   _order_books.keys()={list(self._order_books.keys())}")
+        logger.debug(f"   _order_books 长度={len(self._order_books)}")
 
-            order_book = self._order_books.get(symbol)
+        # 直接读取，dict 读取是原子操作，不需要锁
+        order_book = self._order_books.get(symbol)
 
-            # 🔥 [调试 3] 显示结果
-            if order_book:
-                logger.debug(
-                    f"   ✅ 找到 OrderBook: "
-                    f"bids={len(order_book.get('bids', []))}, "
-                    f"asks={len(order_book.get('asks', []))}"
-                )
-            else:
-                logger.warning(f"   ❌ 未找到 OrderBook: symbol={symbol}")
-                logger.warning(f"   可用键列表: {list(self._order_books.keys())}")
+        # 🔥 [调试 3] 显示结果
+        if order_book:
+            logger.debug(
+                f"   ✅ 找到 OrderBook: "
+                f"bids={len(order_book.get('bids', []))}, "
+                f"asks={len(order_book.get('asks', []))}"
+            )
+        else:
+            logger.warning(f"   ❌ 未找到 OrderBook: symbol={symbol}")
+            logger.warning(f"   可用键列表: {list(self._order_books.keys())}")
 
-            return order_book.copy() if order_book else None
+        return order_book.copy() if order_book else None
 
     def get_order_book_depth(self, symbol: str, levels: int = 3) -> Dict:
         """
