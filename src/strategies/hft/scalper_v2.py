@@ -536,6 +536,9 @@ class ScalperV2(BaseStrategy):
                 # 🔥 [优化 70] 使用增量更新买卖量
                 self.signal_generator.update_volumes_increment('sell', usdt_val)
 
+            # 🔍 [调试] 记录调用 signal_generator.compute() 前的状态
+            logger.info(f"🔍 [on_tick-步骤A] 准备调用 signal_generator.compute()")
+
             # 🔥 [修复 73] 重构 on_tick() 为 FSM 状态路由器
             # 根据当前状态调用不同的处理方法，实现模块化架构
 
@@ -545,7 +548,9 @@ class ScalperV2(BaseStrategy):
             # IDLE 状态：无持仓、无挂单
             if current_state == StrategyState.IDLE:
                 # 【轻量级】信号生成 + 开仓逻辑
+                logger.info(f"🔍 [on_tick-步骤B] 调用 _handle_idle_state() 之前")
                 await self._handle_idle_state(event.data)
+                logger.info(f"🔍 [on_tick-步骤C] 调用 _handle_idle_state() 之后")
 
             # PENDING_OPEN 状态：有挂单，开仓中
             elif current_state == StrategyState.PENDING_OPEN:
@@ -1076,7 +1081,14 @@ class ScalperV2(BaseStrategy):
             # 计算总量
             total_vol = self.buy_vol + self.sell_vol
 
+            # 🔍 [调试] 记录调用 signal_generator.compute() 前的状态
+            order_book_in_tick = tick_data.get('order_book')
+            logger.info(f"🔍 [IDLE-步骤0] 开始: order_book_in_tick={'None' if order_book_in_tick is None else '有值'}")
+            if order_book_in_tick:
+                logger.info(f"🔍 [IDLE-步骤0] bids={len(order_book_in_tick.get('bids', []))}, asks={len(order_book_in_tick.get('asks', []))}")
+
             # 使用信号生成器计算信号
+            logger.info(f"🔍 [IDLE-步骤1] 调用 signal_generator.compute() 之前")
             signal = self.signal_generator.compute(
                 symbol=symbol,
                 price=price,
@@ -1084,6 +1096,11 @@ class ScalperV2(BaseStrategy):
                 size=size,
                 volume_usdt=usdt_val
             )
+            logger.info(f"🔍 [IDLE-步骤2] 调用 signal_generator.compute() 之后")
+
+            # 🔍 [调试] 记录调用 signal_generator.compute() 后的状态
+            if order_book_in_tick:
+                logger.info(f"🔍 [IDLE-步骤3] compute() 后: bids={len(order_book_in_tick.get('bids', []))}, asks={len(order_book_in_tick.get('asks', []))}")
 
             # 如果信号无效，直接返回
             if not signal.is_valid:

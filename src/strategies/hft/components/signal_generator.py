@@ -376,12 +376,17 @@ class SignalGenerator:
             float: bid_depth / ask_depth 比率，None 表示无法计算
         """
         try:
+            # 🔍 [调试] 记录传入时的状态
+            logger.info(f"🔍 [深度计算-步骤1] 开始: order_book={'None' if order_book is None else '传入'}")
+
             # 从 market_data_manager 获取订单簿
             if not order_book and self.market_data_manager:
+                logger.info(f"🔍 [深度计算-步骤2] 从 market_data_manager 获取订单簿...")
                 order_book = self.market_data_manager.get_order_book_depth(
                     self.config.symbol,
                     levels=self.config.depth_check_levels
                 )
+                logger.info(f"🔍 [深度计算-步骤3] 获取完成: bids={len(order_book.get('bids', []))}, asks={len(order_book.get('asks', []))}")
 
             if not order_book:
                 logger.warning(f"⚠️ [深度计算] {self.config.symbol}: 订单簿数据为空")
@@ -389,6 +394,10 @@ class SignalGenerator:
 
             bids = order_book.get('bids', [])
             asks = order_book.get('asks', [])
+
+            # 🔍 [调试] 记录 bids/asks 的 id 和长度
+            logger.info(f"🔍 [深度计算-步骤4] bids id={id(bids)}, len={len(bids)}")
+            logger.info(f"🔍 [深度计算-步骤5] asks id={id(asks)}, len={len(asks)}")
 
             if not bids or not asks:
                 logger.warning(f"⚠️ [深度计算] {self.config.symbol}: bids 或 asks 为空")
