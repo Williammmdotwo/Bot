@@ -196,10 +196,9 @@ class SignalGenerator:
                 'volume_usdt': volume_usdt,
                 'min_flow': self.config.min_flow_usdt
             }
-            logger.debug(
-                f"[SignalGenerator] {symbol}: "
-                f"流动性过滤: Volume={volume_usdt:.0f} USDT < "
-                f"MinFlow={self.config.min_flow_usdt:.0f} USDT"
+            logger.info(  # 🔍 改为 INFO 级别
+                f"⚠️ [SignalGenerator-流动性过滤] {symbol}: "
+                f"Volume={volume_usdt:.0f} USDT < MinFlow={self.config.min_flow_usdt:.0f} USDT"
             )
             return signal
 
