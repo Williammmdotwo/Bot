@@ -170,6 +170,9 @@ class SignalGenerator:
         Returns:
             Signal: 交易信号对象
         """
+        # 🔥 [修复] 在方法开头初始化所有可能用到的变量
+        trend_bias = 'neutral'  # 默认趋势偏置
+
         # 1. 更新 EMA（趋势过滤）
         self._update_ema(price)
 
