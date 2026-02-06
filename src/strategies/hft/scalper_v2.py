@@ -445,14 +445,14 @@ class ScalperV2(BaseStrategy):
         """
         try:
             # 1. 解析 Tick 数据
-            tick = event.data
+            tick_data = event.data
             now = time.time()
 
             # 提取基础数据
-            symbol = tick.get('symbol')
-            price = float(tick.get('price', 0))
-            size = float(tick.get('size', 0))
-            side = tick.get('side', '').lower()
+            symbol = tick_data.get('symbol', '')
+            price = float(tick_data.get('price', 0))
+            size = float(tick_data.get('size', 0))
+            side = tick_data.get('side', '').lower()
 
             # 计算交易价值
             usdt_val = price * size * self.contract_val
@@ -460,6 +460,24 @@ class ScalperV2(BaseStrategy):
             # 检查交易对是否匹配
             if symbol != self.symbol:
                 return
+
+            # ✅ 关键修复：获取并注入 OrderBook
+            order_book = None
+            if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=self.signal_generator.config.depth_check_levels)
+
+                # 🔥 [调试] 验证 OrderBook 是否获取成功
+                if order_book:
+                    logger.debug(
+                        f"🔍 [调试] on_tick 获取 OrderBook 成功: "
+                        f"bids={len(order_book.get('bids', []))}, "
+                        f"asks={len(order_book.get('asks', []))}"
+                    )
+                else:
+                    logger.warning(f"⚠️ [调试] on_tick 获取 OrderBook 失败")
+
+            # 注入到 tick_data
+            tick_data['order_book'] = order_book
 
             # 🔥 [新增] 计算节流（Scheme A Implementation）
             # 检查：如果当前 Tick 价格与 self._last_price 之差小于 tick_size，且距离上次计算不足 50ms
