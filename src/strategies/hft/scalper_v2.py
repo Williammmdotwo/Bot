@@ -128,15 +128,18 @@ class ScalperV2(BaseStrategy):
         # ========== 初始化组件 ==========
 
         # 1. 信号生成器配置
-        # ✅ [新增] 从 kwargs 读取双向交易和 EMA 配置
+        # ✅ [新增] 从 kwargs 读取配置（包括 imbalance_ratio）
+        # 优先使用 kwargs 中的值，其次使用函数参数默认值
+        final_imbalance_ratio = kwargs.get('imbalance_ratio', imbalance_ratio)
+        final_min_flow_usdt = kwargs.get('min_flow_usdt', min_flow_usdt)
         trade_direction = kwargs.get('trade_direction', 'both')
         ema_filter_mode = kwargs.get('ema_filter_mode', 'loose')
         ema_boost_pct = kwargs.get('ema_boost_pct', 0.20)
 
         signal_generator_config = ScalperV1Config(
             symbol=symbol,
-            imbalance_ratio=imbalance_ratio,
-            min_flow_usdt=min_flow_usdt,
+            imbalance_ratio=final_imbalance_ratio,
+            min_flow_usdt=final_min_flow_usdt,
             ema_period=50,
             spread_threshold_pct=0.0005,  # 0.05%
             # ✅ 新增配置
