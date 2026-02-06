@@ -181,6 +181,9 @@ class SignalGenerator:
         Returns:
             Signal: 交易信号对象
         """
+        # 🔍 [调试] 记录输入参数
+        logger.info(f"🔍 [Signal.compute] 开始: symbol={symbol}, price={price:.6f}, volume_usdt={volume_usdt:.0f}, min_flow={self.config.min_flow_usdt:.0f}")
+
         # 1. 更新 EMA
         self._update_ema(price)
 
