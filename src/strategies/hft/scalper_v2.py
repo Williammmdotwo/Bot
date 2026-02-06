@@ -1102,9 +1102,16 @@ class ScalperV2(BaseStrategy):
             if order_book_in_tick:
                 logger.info(f"🔍 [IDLE-步骤3] compute() 后: bids={len(order_book_in_tick.get('bids', []))}, asks={len(order_book_in_tick.get('asks', []))}")
 
-            # 如果信号无效，直接返回
-            if not signal.is_valid:
+            # 🔍 [IDLE-步骤4] 检查信号是否有效
+            if not signal:
+                logger.warning(f"⚠️ [IDLE-步骤4] signal 为 None，跳过")
                 return
+
+            if not signal.is_valid:
+                logger.info(f"⚠️ [IDLE-步骤4] signal.is_valid=False，跳过")
+                return
+
+            logger.info(f"🔍 [IDLE-步骤4] signal 有效: direction={signal.direction}, imbalance={signal.metadata.get('imbalance_ratio', 0.0):.2f}x")
 
             # 🔥 [日志] 记录大机会
             if (usdt_val >= self.signal_generator.config.min_flow_usdt and
