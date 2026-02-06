@@ -488,8 +488,12 @@ class ScalperV2(BaseStrategy):
             else:
                 logger.warning(f"⚠️ [警告] MarketDataManager 未注入")
 
-            # 注入到 tick_data
+            # 🔥 [修复] 注入到 tick_data 后，验证是否成功
             tick_data['order_book'] = order_book
+            if tick_data.get('order_book') is None:
+                logger.warning(f"⚠️ [ScalperV2] 注入后 order_book 仍为 None")
+            else:
+                logger.info(f"✅ [ScalperV2] OrderBook 注入成功: bids={len(tick_data['order_book'].get('bids', []))}, asks={len(tick_data['order_book'].get('asks', []))}")
 
             # 🔥 [新增] 计算节流（Scheme A Implementation）
             # 检查：如果当前 Tick 价格与 self._last_price 之差小于 tick_size，且距离上次计算不足 50ms
