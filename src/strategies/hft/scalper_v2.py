@@ -469,23 +469,8 @@ class ScalperV2(BaseStrategy):
             if hasattr(self, '_market_data_manager') and self._market_data_manager:
                 # 尝试获取 OrderBook
                 order_book = self._market_data_manager.get_order_book(self.symbol)
-
-                # 🔥 [调试] 验证 OrderBook 是否获取成功
-                if order_book:
-                    logger.debug(
-                        f"🔍 [调试] on_tick 获取 OrderBook 成功: "
-                        f"bids={len(order_book.get('bids', []))}, "
-                        f"asks={len(order_book.get('asks', []))}"
-                    )
-                else:
-                    logger.warning(
-                        f"⚠️ [调试] on_tick 获取 OrderBook 失败: order_book=None"
-                    )
-                    logger.warning(
-                        f"   可用键列表: {list(self._market_data_manager._order_books.keys())}"
-                    )
             else:
-                logger.warning(f"⚠️ [调试] MarketDataManager 未注入")
+                logger.warning(f"⚠️ [警告] MarketDataManager 未注入")
 
             # 注入到 tick_data
             tick_data['order_book'] = order_book
@@ -540,9 +525,6 @@ class ScalperV2(BaseStrategy):
 
             # 检查当前状态
             current_state = self._get_state()
-
-            # 🔍 [临时调试] 记录当前状态
-            logger.debug(f"🔍 [FSM 路由] {self.symbol}: state={current_state.name}, tick price={price:.6f}")
 
             # IDLE 状态：无持仓、无挂单
             if current_state == StrategyState.IDLE:
@@ -1131,9 +1113,6 @@ class ScalperV2(BaseStrategy):
 
             # 获取订单簿深度
             if hasattr(self, 'market_data_manager') and self.market_data_manager:
-                # 🔥 [调试] 添加日志
-                logger.info(f"🔍 [调试] ScalperV2 准备调用 get_order_book_depth: symbol={self.symbol}")
-                logger.info(f"🔍 [调试] market_data_manager 对象: {self.market_data_manager}")
                 order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
             elif hasattr(self, 'public_gateway') and self.public_gateway:
                 order_book = self.public_gateway.get_order_book_depth(levels=3)
