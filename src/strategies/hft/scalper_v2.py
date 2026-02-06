@@ -1151,7 +1151,16 @@ class ScalperV2(BaseStrategy):
                     f"未找到策略资金，使用全局权益={account_equity:.2f} USDT"
                 )
 
+            # 🔍 [调试] 检查 order_book_in_tick 的状态
+            logger.info(f"🔍 [传递前-检查1] order_book_in_tick id={id(order_book_in_tick) if order_book_in_tick else None}")
+            if order_book_in_tick:
+                bids_before = order_book_in_tick.get('bids', [])
+                asks_before = order_book_in_tick.get('asks', [])
+                logger.info(f"🔍 [传递前-检查2] bids id={id(bids_before)}, len={len(bids_before)}")
+                logger.info(f"🔍 [传递前-检查3] asks id={id(asks_before)}, len={len(asks_before)}")
+
             # 获取订单簿深度
+            logger.info(f"🔍 [传递前-检查4] 准备调用 get_order_book_depth()")
             if hasattr(self, 'market_data_manager') and self.market_data_manager:
                 order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
             elif hasattr(self, 'public_gateway') and self.public_gateway:
@@ -1160,7 +1169,23 @@ class ScalperV2(BaseStrategy):
                 logger.warning(f"⚠️ [警告] {self.symbol}: 无法获取订单簿深度")
                 order_book = {'bids': [], 'asks': []}
 
-            # 🔍 [调试] 传递前检查 OrderBook 数据
+            logger.info(f"🔍 [传递前-检查5] get_order_book_depth() 返回")
+
+            # 🔍 [调试] 检查 order_book_in_tick 是否被修改
+            logger.info(f"🔍 [传递前-检查6] 检查 order_book_in_tick 是否被 get_order_book_depth() 修改")
+            if order_book_in_tick:
+                bids_after = order_book_in_tick.get('bids', [])
+                asks_after = order_book_in_tick.get('asks', [])
+                logger.info(f"🔍 [传递前-检查7] order_book_in_tick id={id(order_book_in_tick)}")
+                logger.info(f"🔍 [传递前-检查8] bids id={id(bids_after)}, len={len(bids_after)} (变化: {id(bids_after) != id(bids_before) if 'bids_before' in locals() else 'N/A'})")
+                logger.info(f"🔍 [传递前-检查9] asks id={id(asks_after)}, len={len(asks_after)} (变化: {id(asks_after) != id(asks_before) if 'asks_before' in locals() else 'N/A'})")
+
+                if len(bids_after) != len(bids_before):
+                    logger.error(f"❌ [传递前-检查10] bids 长度变化: {len(bids_before)} -> {len(bids_after)}")
+                if len(asks_after) != len(asks_before):
+                    logger.error(f"❌ [传递前-检查11] asks 长度变化: {len(asks_before)} -> {len(asks_after)}")
+
+            # 🔍 [调试] 传递前检查新获取的 order_book
             bids = order_book.get('bids', [])
             asks = order_book.get('asks', [])
             logger.info(f"🔍 [传递前-1] order_book.bids={len(bids)}, order_book.asks={len(asks)}")
