@@ -1163,17 +1163,29 @@ class ScalperV2(BaseStrategy):
                 logger.info(f"🔍 [传递前-检查2] bids id={id(bids_before)}, len={len(bids_before)}")
                 logger.info(f"🔍 [传递前-检查3] asks id={id(asks_before)}, len={len(asks_before)}")
 
-            # 获取订单簿深度
-            logger.info(f"🔍 [传递前-检查4] 准备调用 get_order_book_depth()")
-            if hasattr(self, 'market_data_manager') and self.market_data_manager:
-                order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
-            elif hasattr(self, 'public_gateway') and self.public_gateway:
-                order_book = self.public_gateway.get_order_book_depth(levels=3)
+            # 🔥 [修复] 优先使用 order_book_in_tick，避免重新获取
+            if order_book_in_tick:
+                # 使用已经注入的 order_book_in_tick
+                logger.info(f"🔍 [传递前-检查4] 使用 order_book_in_tick")
+                bids_list = order_book_in_tick.get('bids', [])
+                asks_list = order_book_in_tick.get('asks', [])
+                order_book = {
+                    'bids': bids_list[:3] if bids_list else [],
+                    'asks': asks_list[:3] if asks_list else []
+                }
+                logger.info(f"🔍 [传递前-检查5] 构造完成: bids={len(order_book['bids'])}, asks={len(order_book['asks'])}")
             else:
-                logger.warning(f"⚠️ [警告] {self.symbol}: 无法获取订单簿深度")
-                order_book = {'bids': [], 'asks': []}
+                # 降级：重新获取
+                logger.info(f"🔍 [传递前-检查4] order_book_in_tick 为 None，重新获取")
+                if hasattr(self, 'market_data_manager') and self.market_data_manager:
+                    order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
+                elif hasattr(self, 'public_gateway') and self.public_gateway:
+                    order_book = self.public_gateway.get_order_book_depth(levels=3)
+                else:
+                    logger.warning(f"⚠️ [警告] {self.symbol}: 无法获取订单簿深度")
+                    order_book = {'bids': [], 'asks': []}
 
-            logger.info(f"🔍 [传递前-检查5] get_order_book_depth() 返回")
+                logger.info(f"🔍 [传递前-检查5] get_order_book_depth() 返回: bids={len(order_book['bids'])}, asks={len(order_book['asks'])}")
 
             # 🔍 [调试] 检查 order_book_in_tick 是否被修改
             logger.info(f"🔍 [传递前-检查6] 检查 order_book_in_tick 是否被 get_order_book_depth() 修改")
