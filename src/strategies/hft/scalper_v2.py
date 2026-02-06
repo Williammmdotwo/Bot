@@ -7,6 +7,8 @@ ScalperV1 Micro-Reversion Sniper Strategy (V2 - Refactored)
 - 执行算法：ExecutionAlgo 负责挂单价格、插队逻辑、模拟盘适配
 - 状态管理：StateManager 负责持仓、订单、冷却、自愈逻辑
 
+import copy
+
 策略核心逻辑（V2 - Micro-Reversion Sniper）:
 1. 完全不看 K 线，只处理 on_tick (Trade Stream)
 2. 趋势过滤：使用 EMA（50 ticks）判断趋势方向
@@ -1135,11 +1137,23 @@ class ScalperV2(BaseStrategy):
                 logger.warning(f"⚠️ [警告] {self.symbol}: 无法获取订单簿深度")
                 order_book = {'bids': [], 'asks': []}
 
+            # 🔍 [调试] 传递前检查 OrderBook 数据
+            bids = order_book.get('bids', [])
+            asks = order_book.get('asks', [])
+            logger.info(f"🔍 [传递前-1] order_book.bids={len(bids)}, order_book.asks={len(asks)}")
+            if bids:
+                logger.info(f"🔍 [传递前-2] bids[0]={bids[0]}")
+            if asks:
+                logger.info(f"🔍 [传递前-3] asks[0]={asks[0]}")
+
+            # 🔥 [修复] 使用深拷贝传递数据，避免数据丢失
+            order_book_copy = copy.deepcopy(order_book)
+
             # 计算下单金额（传入合约面值和 EMA 加权）
             ema_boost = signal.metadata.get('ema_boost', 1.0)
             usdt_amount = self.position_sizer.calculate_order_size(
                 account_equity=account_equity,
-                order_book=order_book,
+                order_book=order_book_copy,  # 🔥 使用深拷贝
                 signal_ratio=signal.metadata.get('imbalance_ratio', 0.0),
                 current_price=price,
                 side=signal.direction,  # ✅ 使用信号的方向（buy 或 sell）
@@ -1360,10 +1374,22 @@ class ScalperV2(BaseStrategy):
             else:
                 order_book = {'bids': [], 'asks': []}
 
+            # 🔍 [调试] 传递前检查 OrderBook 数据
+            bids = order_book.get('bids', [])
+            asks = order_book.get('asks', [])
+            logger.info(f"🔍 [追单-传递前-1] order_book.bids={len(bids)}, order_book.asks={len(asks)}")
+            if bids:
+                logger.info(f"🔍 [追单-传递前-2] bids[0]={bids[0]}")
+            if asks:
+                logger.info(f"🔍 [追单-传递前-3] asks[0]={asks[0]}")
+
+            # 🔥 [修复] 使用深拷贝传递数据，避免数据丢失
+            order_book_copy = copy.deepcopy(order_book)
+
             # 计算下单金额
             usdt_amount = self.position_sizer.calculate_order_size(
                 account_equity=account_equity,
-                order_book=order_book,
+                order_book=order_book_copy,  # 🔥 使用深拷贝
                 signal_ratio=5.0,  # 使用默认值
                 current_price=best_bid,
                 side='buy',
