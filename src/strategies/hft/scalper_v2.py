@@ -303,12 +303,7 @@ class ScalperV2(BaseStrategy):
         self._market_data_manager = market_data_manager  # ✅ 使用 _market_data_manager（带下划线）
         # ✅ 新增：注入到 signal_generator（用于深度过滤）
         self.signal_generator.market_data_manager = market_data_manager
-
-        # 🔥 [验证] 立即检查
         logger.info(f"✅ 市场数据管理器已注入到策略 {self.strategy_id}")
-        logger.info(f"🔍 [验证] self._market_data_manager = {self._market_data_manager}")
-        logger.info(f"🔍 [验证] 是否为 None: {self._market_data_manager is None}")
-        logger.info(f"🔍 [验证] signal_generator.market_data_manager = {self.signal_generator.market_data_manager}")
 
     def set_public_gateway(self, gateway):
         """

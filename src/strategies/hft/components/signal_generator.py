@@ -376,19 +376,12 @@ class SignalGenerator:
             float: bid_depth / ask_depth 比率，None 表示无法计算
         """
         try:
-            # 🔥 [调试 1] 方法被调用
-            logger.info(f"🔍 [调试] _calculate_depth_ratio 被调用")
-
             # 从 market_data_manager 获取订单簿
             if not order_book and self.market_data_manager:
-                logger.info(f"🔍 [调试] order_book 为 None，从 market_data_manager 获取")
                 order_book = self.market_data_manager.get_order_book_depth(
                     self.config.symbol,
                     levels=self.config.depth_check_levels
                 )
-
-            # 🔥 [调试 2] 检查 order_book 是否存在
-            logger.info(f"🔍 [调试] order_book 存在: {order_book is not None}")
 
             if not order_book:
                 logger.warning(f"⚠️ [深度计算] {self.config.symbol}: 订单簿数据为空")
@@ -396,9 +389,6 @@ class SignalGenerator:
 
             bids = order_book.get('bids', [])
             asks = order_book.get('asks', [])
-
-            # 🔥 [调试 3] 显示数据
-            logger.info(f"🔍 [调试] bids 长度: {len(bids)}, asks 长度: {len(asks)}")
 
             if not bids or not asks:
                 logger.warning(f"⚠️ [深度计算] {self.config.symbol}: bids 或 asks 为空")
@@ -429,12 +419,6 @@ class SignalGenerator:
                 return None
 
             depth_ratio = bid_depth / ask_depth
-
-            logger.info(
-                f"📊 [深度计算] {self.config.symbol}: "
-                f"bid_depth={bid_depth:.2f} USDT, ask_depth={ask_depth:.2f} USDT, "
-                f"ratio={depth_ratio:.2f}"
-            )
 
             return depth_ratio
 

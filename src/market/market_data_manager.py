@@ -109,10 +109,7 @@ class MarketDataManager:
             logger.warning("⚠️ [MarketDataManager] BOOK_EVENT 缺少 symbol")
             return
 
-        # 🔥 [调试] 显示数据
-        logger.info(f"🔍 [调试] on_book_event: symbol={symbol}, bids={len(data.get('bids', []))}, asks={len(data.get('asks', []))}")
-
-        # 🔥 [修复] 移除锁：asyncio.Lock 会导致更新失败，dict 赋值是原子操作
+        # 更新订单簿
         self._order_books[symbol] = {
             'bids': data.get('bids', []),
             'asks': data.get('asks', []),
@@ -120,10 +117,6 @@ class MarketDataManager:
             'best_ask': data.get('best_ask', 0.0),
             'timestamp': time.time()
         }
-
-        # 🔥 [调试] 验证更新成功
-        logger.debug(f"   ✅ OrderBook 已更新到缓存: {symbol}")
-        logger.debug(f"   缓存键列表: {list(self._order_books.keys())}")
 
         # 🔥 [新增] 计算延迟（微秒）
         end_time = time_module.perf_counter()
@@ -248,27 +241,8 @@ class MarketDataManager:
         Returns:
             dict: {'bids': [...], 'asks': [...], 'best_bid': ..., 'best_ask': ...} 或 None
         """
-        # 🔥 [调试 1] 方法被调用
-        logger.debug(f"🔍 [调试] MarketDataManager.get_order_book 被调用: symbol={symbol}")
-
-        # 🔥 [调试 2] 显示缓存状态
-        logger.debug(f"   _order_books.keys()={list(self._order_books.keys())}")
-        logger.debug(f"   _order_books 长度={len(self._order_books)}")
-
         # 直接读取，dict 读取是原子操作，不需要锁
         order_book = self._order_books.get(symbol)
-
-        # 🔥 [调试 3] 显示结果
-        if order_book:
-            logger.debug(
-                f"   ✅ 找到 OrderBook: "
-                f"bids={len(order_book.get('bids', []))}, "
-                f"asks={len(order_book.get('asks', []))}"
-            )
-        else:
-            logger.warning(f"   ❌ 未找到 OrderBook: symbol={symbol}")
-            logger.warning(f"   可用键列表: {list(self._order_books.keys())}")
-
         return order_book.copy() if order_book else None
 
     def get_order_book_depth(self, symbol: str, levels: int = 3) -> Dict:
@@ -282,49 +256,19 @@ class MarketDataManager:
         Returns:
             Dict: {'bids': [...], 'asks': [...]}
         """
-        # 🔥 [调试 1] 方法被调用
-        logger.info(f"🔍 [调试] get_order_book_depth 被调用")
-        logger.info(f"   参数: symbol={symbol}, levels={levels}")
-
-        # 🔥 [调试 2] 检查缓存
-        logger.info(f"   _order_books 缓存键: {list(self._order_books.keys())}")
-
         snapshot = self.get_order_book_snapshot(symbol)
 
         if not snapshot:
-            logger.warning(f"⚠️ [调试] {symbol}: OrderBook 快照为空")
-            logger.info(f"   _order_books 完整内容: {self._order_books}")
             return {'bids': [], 'asks': []}
-
-        # 🔥 [调试 3] 显示快照结构
-        logger.info(f"   snapshot 类型: {type(snapshot)}")
-        logger.info(f"   bids 长度: {len(snapshot.bids)}")
-        logger.info(f"   asks 长度: {len(snapshot.asks)}")
 
         # 截取指定档位
         bids = snapshot.bids[:levels]
         asks = snapshot.asks[:levels]
 
-        # 🔥 [调试 4] 显示档位数据
-        if bids:
-            logger.info(f"   bids 第一档: {bids[0]}")
-        if asks:
-            logger.info(f"   asks 第一档: {asks[0]}")
-
-        # 🔥 [调试 5] 构造返回结果
-        result = {
+        return {
             'bids': [(p, s) for p, s in bids],
             'asks': [(p, s) for p, s in asks]
         }
-
-        # 🔥 [调试 6] 最终结果
-        logger.info(f"🔍 [调试] 返回深度: bids={len(result['bids'])}, asks={len(result['asks'])}")
-        if result['bids']:
-            logger.info(f"   bids[0]: {result['bids'][0]}")
-        if result['asks']:
-            logger.info(f"   asks[0]: {result['asks'][0]}")
-
-        return result
 
     def get_latency_stats(self) -> Dict:
         """
