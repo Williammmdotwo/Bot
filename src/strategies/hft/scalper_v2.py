@@ -473,27 +473,12 @@ class ScalperV2(BaseStrategy):
 
             order_book = None
             if hasattr(self, '_market_data_manager') and self._market_data_manager:
-                # 🔍 [调试] 尝试获取 OrderBook
                 order_book = self._market_data_manager.get_order_book(self.symbol)
-                if order_book is None:
-                    logger.warning(f"⚠️ [ScalperV2] OrderBook 为 None: {self.symbol}")
-                else:
-                    # 🔍 [调试] 检查 bids/asks 是否为空
-                    bids = order_book.get('bids', [])
-                    asks = order_book.get('asks', [])
-                    logger.info(f"📊 [ScalperV2] OrderBook 状态: bids={len(bids)}, asks={len(asks)}")
-
-                    if not bids or not asks:
-                        logger.warning(f"⚠️ [ScalperV2] OrderBook 数据为空: bids={bids[:2]}, asks={asks[:2]}")
             else:
-                logger.warning(f"⚠️ [警告] MarketDataManager 未注入")
+                logger.warning(f"⚠️ [ScalperV2] MarketDataManager 未注入")
 
-            # 🔥 [修复] 注入到 tick_data 后，验证是否成功
+            # 🔥 [修复] 注入到 tick_data
             tick_data['order_book'] = order_book
-            if tick_data.get('order_book') is None:
-                logger.warning(f"⚠️ [ScalperV2] 注入后 order_book 仍为 None")
-            else:
-                logger.info(f"✅ [ScalperV2] OrderBook 注入成功: bids={len(tick_data['order_book'].get('bids', []))}, asks={len(tick_data['order_book'].get('asks', []))}")
 
             # 🔥 [新增] 计算节流（Scheme A Implementation）
             # 检查：如果当前 Tick 价格与 self._last_price 之差小于 tick_size，且距离上次计算不足 50ms
@@ -540,10 +525,7 @@ class ScalperV2(BaseStrategy):
                 # 🔥 [优化 70] 使用增量更新买卖量
                 self.signal_generator.update_volumes_increment('sell', usdt_val)
 
-            # 🔍 [调试] 记录调用 signal_generator.compute() 前的状态
-            logger.info(f"🔍 [on_tick-步骤A] 准备调用 signal_generator.compute()")
-
-            # 🔥 [修复 73] 重构 on_tick() 为 FSM 状态路由器
+            #  [修复 73] 重构 on_tick() 为 FSM 状态路由器
             # 根据当前状态调用不同的处理方法，实现模块化架构
 
             # 检查当前状态
@@ -552,9 +534,7 @@ class ScalperV2(BaseStrategy):
             # IDLE 状态：无持仓、无挂单
             if current_state == StrategyState.IDLE:
                 # 【轻量级】信号生成 + 开仓逻辑
-                logger.info(f"🔍 [on_tick-步骤B] 调用 _handle_idle_state() 之前")
                 await self._handle_idle_state(event.data)
-                logger.info(f"🔍 [on_tick-步骤C] 调用 _handle_idle_state() 之后")
 
             # PENDING_OPEN 状态：有挂单，开仓中
             elif current_state == StrategyState.PENDING_OPEN:
@@ -1085,14 +1065,7 @@ class ScalperV2(BaseStrategy):
             # 计算总量
             total_vol = self.buy_vol + self.sell_vol
 
-            # 🔍 [调试] 记录调用 signal_generator.compute() 前的状态
-            order_book_in_tick = tick_data.get('order_book')
-            logger.info(f"🔍 [IDLE-步骤0] 开始: order_book_in_tick={'None' if order_book_in_tick is None else '有值'}")
-            if order_book_in_tick:
-                logger.info(f"🔍 [IDLE-步骤0] bids={len(order_book_in_tick.get('bids', []))}, asks={len(order_book_in_tick.get('asks', []))}")
-
             # 使用信号生成器计算信号
-            logger.info(f"🔍 [IDLE-步骤1] 调用 signal_generator.compute() 之前")
             signal = self.signal_generator.compute(
                 symbol=symbol,
                 price=price,
@@ -1100,22 +1073,13 @@ class ScalperV2(BaseStrategy):
                 size=size,
                 volume_usdt=usdt_val
             )
-            logger.info(f"🔍 [IDLE-步骤2] 调用 signal_generator.compute() 之后")
 
-            # 🔍 [调试] 记录调用 signal_generator.compute() 后的状态
-            if order_book_in_tick:
-                logger.info(f"🔍 [IDLE-步骤3] compute() 后: bids={len(order_book_in_tick.get('bids', []))}, asks={len(order_book_in_tick.get('asks', []))}")
-
-            # 🔍 [IDLE-步骤4] 检查信号是否有效
+            # 检查信号是否有效
             if not signal:
-                logger.warning(f"⚠️ [IDLE-步骤4] signal 为 None，跳过")
                 return
 
             if not signal.is_valid:
-                logger.info(f"⚠️ [IDLE-步骤4] signal.is_valid=False，跳过")
                 return
-
-            logger.info(f"🔍 [IDLE-步骤4] signal 有效: direction={signal.direction}, imbalance={signal.metadata.get('imbalance_ratio', 0.0):.2f}x")
 
             # 🔥 [日志] 记录大机会
             if (usdt_val >= self.signal_generator.config.min_flow_usdt and
@@ -1155,60 +1119,26 @@ class ScalperV2(BaseStrategy):
                     f"未找到策略资金，使用全局权益={account_equity:.2f} USDT"
                 )
 
-            # 🔍 [调试] 检查 order_book_in_tick 的状态
-            logger.info(f"🔍 [传递前-检查1] order_book_in_tick id={id(order_book_in_tick) if order_book_in_tick else None}")
-            if order_book_in_tick:
-                bids_before = order_book_in_tick.get('bids', [])
-                asks_before = order_book_in_tick.get('asks', [])
-                logger.info(f"🔍 [传递前-检查2] bids id={id(bids_before)}, len={len(bids_before)}")
-                logger.info(f"🔍 [传递前-检查3] asks id={id(asks_before)}, len={len(asks_before)}")
+            # 获取订单簿深度
+            order_book_in_tick = tick_data.get('order_book')
 
-            # 🔥 [修复] 优先使用 order_book_in_tick，避免重新获取
             if order_book_in_tick:
                 # 使用已经注入的 order_book_in_tick
-                logger.info(f"🔍 [传递前-检查4] 使用 order_book_in_tick")
                 bids_list = order_book_in_tick.get('bids', [])
                 asks_list = order_book_in_tick.get('asks', [])
                 order_book = {
                     'bids': bids_list[:3] if bids_list else [],
                     'asks': asks_list[:3] if asks_list else []
                 }
-                logger.info(f"🔍 [传递前-检查5] 构造完成: bids={len(order_book['bids'])}, asks={len(order_book['asks'])}")
             else:
                 # 降级：重新获取
-                logger.info(f"🔍 [传递前-检查4] order_book_in_tick 为 None，重新获取")
                 if hasattr(self, 'market_data_manager') and self.market_data_manager:
                     order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
                 elif hasattr(self, 'public_gateway') and self.public_gateway:
                     order_book = self.public_gateway.get_order_book_depth(levels=3)
                 else:
-                    logger.warning(f"⚠️ [警告] {self.symbol}: 无法获取订单簿深度")
+                    logger.warning(f"⚠️ [ScalperV2] {self.symbol}: 无法获取订单簿深度")
                     order_book = {'bids': [], 'asks': []}
-
-                logger.info(f"🔍 [传递前-检查5] get_order_book_depth() 返回: bids={len(order_book['bids'])}, asks={len(order_book['asks'])}")
-
-            # 🔍 [调试] 检查 order_book_in_tick 是否被修改
-            logger.info(f"🔍 [传递前-检查6] 检查 order_book_in_tick 是否被 get_order_book_depth() 修改")
-            if order_book_in_tick:
-                bids_after = order_book_in_tick.get('bids', [])
-                asks_after = order_book_in_tick.get('asks', [])
-                logger.info(f"🔍 [传递前-检查7] order_book_in_tick id={id(order_book_in_tick)}")
-                logger.info(f"🔍 [传递前-检查8] bids id={id(bids_after)}, len={len(bids_after)} (变化: {id(bids_after) != id(bids_before) if 'bids_before' in locals() else 'N/A'})")
-                logger.info(f"🔍 [传递前-检查9] asks id={id(asks_after)}, len={len(asks_after)} (变化: {id(asks_after) != id(asks_before) if 'asks_before' in locals() else 'N/A'})")
-
-                if len(bids_after) != len(bids_before):
-                    logger.error(f"❌ [传递前-检查10] bids 长度变化: {len(bids_before)} -> {len(bids_after)}")
-                if len(asks_after) != len(asks_before):
-                    logger.error(f"❌ [传递前-检查11] asks 长度变化: {len(asks_before)} -> {len(asks_after)}")
-
-            # 🔍 [调试] 传递前检查新获取的 order_book
-            bids = order_book.get('bids', [])
-            asks = order_book.get('asks', [])
-            logger.info(f"🔍 [传递前-1] order_book.bids={len(bids)}, order_book.asks={len(asks)}")
-            if bids:
-                logger.info(f"🔍 [传递前-2] bids[0]={bids[0]}")
-            if asks:
-                logger.info(f"🔍 [传递前-3] asks[0]={asks[0]}")
 
             # 🔥 [修复] 使用深拷贝传递数据，避免数据丢失
             order_book_copy = copy.deepcopy(order_book)
@@ -1437,15 +1367,6 @@ class ScalperV2(BaseStrategy):
                 order_book = self.public_gateway.get_order_book_depth(levels=3)
             else:
                 order_book = {'bids': [], 'asks': []}
-
-            # 🔍 [调试] 传递前检查 OrderBook 数据
-            bids = order_book.get('bids', [])
-            asks = order_book.get('asks', [])
-            logger.info(f"🔍 [追单-传递前-1] order_book.bids={len(bids)}, order_book.asks={len(asks)}")
-            if bids:
-                logger.info(f"🔍 [追单-传递前-2] bids[0]={bids[0]}")
-            if asks:
-                logger.info(f"🔍 [追单-传递前-3] asks[0]={asks[0]}")
 
             # 🔥 [修复] 使用深拷贝传递数据，避免数据丢失
             order_book_copy = copy.deepcopy(order_book)

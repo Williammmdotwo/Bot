@@ -110,27 +110,14 @@ class MarketDataManager:
             logger.warning("⚠️ [MarketDataManager] BOOK_EVENT 缺少 symbol")
             return
 
-        # 🔍 [调试] 添加详细日志
-        bids = data.get('bids', [])
-        asks = data.get('asks', [])
-        logger.info(f"📊 [MarketDataManager] 接收到 BOOK_EVENT: {symbol}")
-        logger.info(f"📊 [MarketDataManager] bids={len(bids)}, asks={len(asks)}")
-
         # 更新订单簿
         self._order_books[symbol] = {
-            'bids': bids,
-            'asks': asks,
+            'bids': data.get('bids', []),
+            'asks': data.get('asks', []),
             'best_bid': data.get('best_bid', 0.0),
             'best_ask': data.get('best_ask', 0.0),
             'timestamp': time.time()
         }
-
-        # 🔍 [调试] 验证缓存是否更新
-        cached_book = self._order_books.get(symbol)
-        if cached_book:
-            logger.info(f"✅ [MarketDataManager] 缓存已更新: bids={len(cached_book['bids'])}, asks={len(cached_book['asks'])}")
-        else:
-            logger.error(f"❌ [MarketDataManager] 缓存更新失败: {symbol}")
 
         # 🔥 [新增] 计算延迟（微秒）
         end_time = time_module.perf_counter()
