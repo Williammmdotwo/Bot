@@ -108,8 +108,8 @@ class EventBus:
         # 🔥 [新增] 性能监控
         self._latency_stats: Dict[str, List[float]] = {}
         self._max_latency_samples = 1000  # 最多保留 1000 个延迟样本
-        self.WARNING_LATENCY_MS = 10.0
-        self.CRITICAL_LATENCY_MS = 50.0
+        self.WARNING_LATENCY_MS = 30.0  # 警告阈值：30ms
+        self.CRITICAL_LATENCY_MS = 50.0  # 严重阈值：50ms
         logger.info("EventBus 初始化（优先级队列模式 + 性能监控）")
 
     def register(self, event_type: EventType, handler: Callable):
