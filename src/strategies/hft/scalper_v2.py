@@ -226,44 +226,16 @@ class ScalperV2(BaseStrategy):
         )
 
         # ========== 初始化自适应仓位管理器 ==========
-        # 优先级：环境变量 > 配置文件 > 代码默认值
+        # 🔥 [关键修复] 不要在 __init__ 中初始化 PositionSizer
+        # 等到 on_start 中获取正确的 ctVal 后再初始化
+        self.position_sizer = None  # ✅ 延迟初始化
+
         # 从kwargs中获取position_sizing配置（如果有的话）
-        position_sizing_kwargs = kwargs.get('position_sizing', {})
-
-        # 创建仓位管理配置
-        position_sizing_config = PositionSizingConfig(
-            # 基础资金配置
-            base_equity_ratio=position_sizing_kwargs.get('base_equity_ratio', 0.02),  # 总资金的 2%
-            max_leverage=position_sizing_kwargs.get('max_leverage', 5.0),
-            min_order_value=position_sizing_kwargs.get('min_order_value', 10.0),  # 最小下单金额 10 USDT
-
-            # 信号强度自适应配置
-            signal_scaling_enabled=position_sizing_kwargs.get('signal_scaling_enabled', True),
-            signal_threshold_normal=position_sizing_kwargs.get('signal_threshold_normal', 5.0),
-            signal_threshold_aggressive=position_sizing_kwargs.get('signal_threshold_aggressive', 10.0),
-            signal_aggressive_multiplier=position_sizing_kwargs.get('signal_aggressive_multiplier', 1.5),
-
-            # 流动性/滑点保护配置
-            liquidity_protection_enabled=position_sizing_kwargs.get('liquidity_protection_enabled', True),
-            liquidity_depth_ratio=position_sizing_kwargs.get('liquidity_depth_ratio', 0.20),  # 单笔金额不超过盘口前 3 档的 20%
-            liquidity_depth_levels=position_sizing_kwargs.get('liquidity_depth_levels', 3),
-
-            # 波动率保护配置
-            volatility_protection_enabled=position_sizing_kwargs.get('volatility_protection_enabled', True),
-            volatility_ema_period=position_sizing_kwargs.get('volatility_ema_period', 20),
-            volatility_threshold=position_sizing_kwargs.get('volatility_threshold', 0.001)  # 0.1%
-        )
-
-        # 初始化仓位计算器
-        # 🔥 [修复] 传入合约面值，确保深度计算正确
-        self.position_sizer = PositionSizer(position_sizing_config, ct_val=self.contract_val)
+        self._position_sizing_kwargs = kwargs.get('position_sizing', {})
 
         logger.info(
-            f"✅ [ScalperV2] 自适应仓位管理器已初始化: "
-            f"base_ratio={position_sizing_config.base_equity_ratio*100:.1f}%, "
-            f"signal_normal={position_sizing_config.signal_threshold_normal}x, "
-            f"signal_agg={position_sizing_config.signal_threshold_aggressive}x, "
-            f"liquidity_ratio={position_sizing_config.liquidity_depth_ratio*100:.0f}%"
+            f"⏳ [PositionSizer] {self.symbol}: "
+            f"将在 on_start 中初始化（需要先获取 ctVal）"
         )
 
         # ========== 保留的变量 ==========
@@ -479,28 +451,38 @@ class ScalperV2(BaseStrategy):
             # 4. 同步 Tick Size
             self.tick_size = float(inst_data.get('tickSz', 0.01))
 
-            # 🔥 [修复] 确保 PositionSizer 使用正确的 ct_val
-            # 在启动时（__init__中）PositionSizer 使用默认值 ct_val=1.0
-            # 这里必须同步更新，否则仓位计算会错误
-            if hasattr(self, 'position_sizer') and self.position_sizer:
-                old_ct_val = self.position_sizer.ct_val
-                self.position_sizer.ct_val = self.contract_val
+            # 🔥 [关键修复] 在 on_start 中初始化 PositionSizer（使用正确的 ct_val）
+            # 创建仓位管理配置
+            position_sizing_config = PositionSizingConfig(
+                base_equity_ratio=self._position_sizing_kwargs.get('base_equity_ratio', 0.02),
+                max_leverage=self._position_sizing_kwargs.get('max_leverage', 5.0),
+                min_order_value=self._position_sizing_kwargs.get('min_order_value', 10.0),
+                signal_scaling_enabled=self._position_sizing_kwargs.get('signal_scaling_enabled', True),
+                signal_threshold_normal=self._position_sizing_kwargs.get('signal_threshold_normal', 5.0),
+                signal_threshold_aggressive=self._position_sizing_kwargs.get('signal_threshold_aggressive', 10.0),
+                signal_aggressive_multiplier=self._position_sizing_kwargs.get('signal_aggressive_multiplier', 1.5),
+                liquidity_protection_enabled=self._position_sizing_kwargs.get('liquidity_protection_enabled', True),
+                liquidity_depth_ratio=self._position_sizing_kwargs.get('liquidity_depth_ratio', 0.20),
+                liquidity_depth_levels=self._position_sizing_kwargs.get('liquidity_depth_levels', 3),
+                volatility_protection_enabled=self._position_sizing_kwargs.get('volatility_protection_enabled', True),
+                volatility_ema_period=self._position_sizing_kwargs.get('volatility_ema_period', 20),
+                volatility_threshold=self._position_sizing_kwargs.get('volatility_threshold', 0.001)
+            )
 
-                if old_ct_val != self.contract_val:
-                    logger.info(
-                        f"✅ [合约面值同步] {self.symbol}: "
-                        f"PositionSizer.ct_val {old_ct_val} → {self.contract_val}"
-                    )
-                else:
-                    logger.info(
-                        f"✅ [合约面值确认] {self.symbol}: "
-                        f"PositionSizer.ct_val = {self.contract_val}（无需更新）"
-                    )
-            else:
-                logger.warning(
-                    f"⚠️ [合约面值] {self.symbol}: "
-                    f"PositionSizer 未初始化，无法同步 ct_val"
-                )
+            # 使用正确的 ct_val 初始化 PositionSizer
+            self.position_sizer = PositionSizer(
+                position_sizing_config,
+                ct_val=self.contract_val  # ✅ 使用从交易所获取的 ct_val
+            )
+
+            logger.info(
+                f"✅ [PositionSizer已初始化] {self.symbol}: "
+                f"base_ratio={position_sizing_config.base_equity_ratio*100}%, "
+                f"signal_normal={position_sizing_config.signal_threshold_normal}x, "
+                f"signal_agg={position_sizing_config.signal_threshold_aggressive}x, "
+                f"liquidity_ratio={position_sizing_config.liquidity_depth_ratio*100}%, "
+                f"ctVal={self.contract_val}"
+            )
 
             # 5. 🔥 [改进] 同步智能点差阈值
             if current_price > 0:
@@ -653,6 +635,7 @@ class ScalperV2(BaseStrategy):
             elif side == 'sell':
                 self.sell_vol += usdt_val
                 # 🔥 [优化 70] 使用增量更新买卖量
+                # 避免每次都重新计算 Imbalance
                 self.signal_generator.update_volumes_increment('sell', usdt_val)
 
             #  [修复 73] 重构 on_tick() 为 FSM 状态路由器
@@ -847,7 +830,7 @@ class ScalperV2(BaseStrategy):
 
             logger.info(
                 f"🔄 [撤单] {self.symbol}: "
-                    f"撤销挂单 {maker_order_id}"
+                f"撤销挂单 {maker_order_id}"
             )
 
             # 调用 OrderManager 撤单
@@ -1136,8 +1119,7 @@ class ScalperV2(BaseStrategy):
                 # 被取消的订单不是当前 maker 订单，跳过
                 logger.debug(
                     f"🔔 [订单取消跳过] {self.symbol}: "
-                        f"取消订单={order_id} != 当前订单={maker_order_id}"
-                        f"跳过处理"
+                    f"取消订单={order_id} != 当前订单={maker_order_id}，跳过处理"
                 )
                 return
 
@@ -1321,10 +1303,10 @@ class ScalperV2(BaseStrategy):
 
             logger.info(
                 f"🎯 [自适应仓位] {self.symbol}: "
-                    f"账户权益={account_equity:.2f} USDT, "
-                    f"下单金额={usdt_amount:.2f} USDT, "
-                    f"合约张数={trade_size} 张, "
-                    f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
+                f"账户权益={account_equity:.2f} USDT, "
+                f"下单金额={usdt_amount:.2f} USDT, "
+                f"合约张数={trade_size} 张, "
+                f"不平衡比={signal.metadata.get('imbalance_ratio', 0.0):.1f}x"
             )
 
             # 🔥 [新增] VWAP 滑点预估
@@ -1614,7 +1596,7 @@ class ScalperV2(BaseStrategy):
                         if current_price > 0:
                             now = time.time()
 
-                            # 1. 追踪止损检查
+                            #1. 追踪止损检查
                             if self.state_manager._trailing_stop:
                                 should_close, stop_price = self.state_manager.update_trailing_stop(current_price)
 
@@ -1626,7 +1608,7 @@ class ScalperV2(BaseStrategy):
                                     await self._close_position(reason="trailing_stop", stop_price=stop_price, current_price=current_price)
                                     continue
 
-                            # 2. 时间止损检查
+                            #2. 时间止损检查
                             entry_time = self.state_manager._position.entry_time
                             if entry_time > 0:
                                 position_age = now - entry_time
@@ -1639,7 +1621,7 @@ class ScalperV2(BaseStrategy):
                                     await self._close_position(reason="time_stop", current_price=current_price)
                                     continue
 
-                            # 3. 硬止损检查（带状态检查）
+                            #3. 硬止损检查（带状态检查）
                             entry_price = self.state_manager._position.entry_price
                             if entry_price > 0:
                                 hard_stop_price = entry_price * (1 - self.config.stop_loss_pct)
