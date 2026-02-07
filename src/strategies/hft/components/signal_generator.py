@@ -154,6 +154,26 @@ class SignalGenerator:
         elif side == 'sell':
             self.sell_vol_increment += usdt_val
 
+    def reset_volumes(self):
+        """
+        🔥 [新增] 重置成交量增量
+
+        防止数据无限累积导致极端失衡比率（如 999x）
+        必须在时间窗口到期时调用此方法
+
+        使用场景：
+        - 策略中的成交量窗口到期时（如 3 秒）
+        - 系统重启时
+        - 手动重置时
+        """
+        self.buy_vol_increment = 0.0
+        self.sell_vol_increment = 0.0
+
+        logger.debug(
+            f"[SignalGenerator] {self.config.symbol}: "
+            f"成交量增量已重置"
+        )
+
     def get_min_flow_threshold(self, signal_ratio: float) -> float:
         """
         根据信号强度动态调整最小流量阈值
@@ -202,6 +222,8 @@ class SignalGenerator:
     ) -> Signal:
         """
         计算交易信号（双向交易 + EMA 宽松过滤）
+
+        🔥 [修复] 在信号生成前提前检查交易方向，避免生成无效信号
 
         Args:
             symbol (str): 交易对
@@ -267,24 +289,38 @@ class SignalGenerator:
 
             return signal
 
-        # 6. 🔥 [优化] 提前过滤：根据配置方向预判，避免无效计算
-        # 如果是 long_only 模式且卖方占优，直接跳过
-        if (self.config.trade_direction == 'long_only' and
-            buy_imbalance < self.config.imbalance_ratio):
-            logger.debug(
-                f"[SignalGenerator] {symbol}: LongOnly模式 - "
-                f"买方失衡={buy_imbalance:.2f}x < {self.config.imbalance_ratio}x, 跳过"
-            )
-            return signal
+        # 🔥 [修复] 提前检查交易方向（在计算信号之前）
+        # 如果是 long_only 模式，且卖方失衡更强，直接跳过
+        if self.config.trade_direction == 'long_only':
+            if sell_imbalance > buy_imbalance:
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: LongOnly模式 - "
+                    f"卖方失衡={sell_imbalance:.2f}x > 买方失衡={buy_imbalance:.2f}x, 跳过"
+                )
+                return signal
+            # 检查买方失衡是否达到阈值
+            if buy_imbalance < self.config.imbalance_ratio:
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: LongOnly模式 - "
+                    f"买方失衡={buy_imbalance:.2f}x < {self.config.imbalance_ratio}x, 跳过"
+                )
+                return signal
 
-        # 如果是 short_only 模式且买方占优，直接跳过
-        if (self.config.trade_direction == 'short_only' and
-            sell_imbalance < self.config.imbalance_ratio):
-            logger.debug(
-                f"[SignalGenerator] {symbol}: ShortOnly模式 - "
-                f"卖方失衡={sell_imbalance:.2f}x < {self.config.imbalance_ratio}x, 跳过"
-            )
-            return signal
+        # 如果是 short_only 模式，且买方失衡更强，直接跳过
+        elif self.config.trade_direction == 'short_only':
+            if buy_imbalance > sell_imbalance:
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: ShortOnly模式 - "
+                    f"买方失衡={buy_imbalance:.2f}x > 卖方失衡={sell_imbalance:.2f}x, 跳过"
+                )
+                return signal
+            # 检查卖方失衡是否达到阈值
+            if sell_imbalance < self.config.imbalance_ratio:
+                logger.debug(
+                    f"[SignalGenerator] {symbol}: ShortOnly模式 - "
+                    f"卖方失衡={sell_imbalance:.2f}x < {self.config.imbalance_ratio}x, 跳过"
+                )
+                return signal
 
         # 7. 失衡信号判断
         signal_direction = None
@@ -455,7 +491,12 @@ class SignalGenerator:
 
     def _calculate_depth_ratio(self, order_book: dict = None) -> float:
         """
-        计算订单簿深度比率（🔥 修复：增加异常值处理）
+        计算订单簿深度比率（🔥 改进：去除异常大单，使用平均值）
+
+        改进方案：
+        1. 去除异常大单（单档占比 > 50%）
+        2. 使用平均值而非总和（更稳定）
+        3. 异常值检测（比率 > 10 或 < 0.1）
 
         Args:
             order_book: 订单簿数据（可选，如果为None则从market_data_manager获取）
@@ -482,45 +523,71 @@ class SignalGenerator:
                 logger.warning(f"⚠️ [深度计算] {self.config.symbol}: bids 或 asks 为空")
                 return None
 
-            # 计算前N档深度总价值
-            bid_depth = 0.0
-            ask_depth = 0.0
-
+            # 计算每档深度
             levels = self.config.depth_check_levels
+            bid_depths = []
+            ask_depths = []
 
             for i in range(min(levels, len(bids))):
                 bid = bids[i]
                 if len(bid) >= 2:
                     price = float(bid[0])
                     size = float(bid[1])
-                    bid_depth += price * size
+                    depth = price * size
+                    bid_depths.append(depth)
 
             for i in range(min(levels, len(asks))):
                 ask = asks[i]
                 if len(ask) >= 2:
                     price = float(ask[0])
                     size = float(ask[1])
-                    ask_depth += price * size
+                    depth = price * size
+                    ask_depths.append(depth)
 
-            # 🔥 [修复] 防止除零
-            if ask_depth == 0 or bid_depth == 0:
+            if not bid_depths or not ask_depths:
+                logger.warning(f"⚠️ [深度计算] {self.config.symbol}: 深度数据为空")
+                return None
+
+            # 🔥 [改进] 去除异常大单（单档占比 > 50%）
+            def remove_outliers(depths: list) -> list:
+                """去除异常大的单档挂单"""
+                total = sum(depths)
+                if total == 0:
+                    return []
+                # 过滤掉单档占比超过 50% 的异常值
+                return [d for d in depths if d < total * 0.5]
+
+            bid_depths_clean = remove_outliers(bid_depths)
+            ask_depths_clean = remove_outliers(ask_depths)
+
+            # 检查清洗后是否还有数据
+            if not bid_depths_clean or not ask_depths_clean:
+                self.logger.warning(
+                    f"⚠️ [深度过滤失败] {self.config.symbol}: "
+                    f"清洗后数据为空，跳过深度过滤"
+                )
+                return None
+
+            # 🔥 [改进] 使用平均值（更稳定）
+            bid_depth = sum(bid_depths_clean) / len(bid_depths_clean)
+            ask_depth = sum(ask_depths_clean) / len(ask_depths_clean)
+
+            # 🔥 [改进] 防止除零
+            if ask_depth == 0:
                 logger.warning(
                     f"⚠️ [深度异常] {self.config.symbol}: "
-                    f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}, "
-                    f"除零风险，跳过深度过滤"
+                    f"ask_depth=0，跳过深度过滤"
                 )
                 return None
 
             depth_ratio = bid_depth / ask_depth
 
-            # 🔥 [修复] 异常值过滤（比率 > 10 或 < 0.1 视为数据异常）
-            # 正常市场深度比率应该在 0.5-2.0 之间
-            # 异常值（如 1680.06, 47.45）说明订单簿数据不完整
+            # 🔥 [改进] 异常值检测（保留日志）
             if depth_ratio > 10.0 or depth_ratio < 0.1:
-                logger.warning(
+                self.logger.warning(
                     f"⚠️ [深度异常] {self.config.symbol}: "
-                    f"深度比率={depth_ratio:.2f} 超出合理范围 [0.1, 10.0]，"
-                    f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}, "
+                    f"清洗后深度比率={depth_ratio:.2f} 仍超出合理范围 [0.1, 10.0]，"
+                    f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}，"
                     f"跳过深度过滤"
                 )
                 return None

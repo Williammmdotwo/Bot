@@ -421,6 +421,8 @@ class ScalperV2(BaseStrategy):
     async def _sync_instrument_details(self):
         """
         同步 Instrument 详情（合约面值、Tick Size）
+
+        🔥 [修复] 等待 ticker 数据就绪，避免使用不合理的默认点差阈值
         """
         try:
             # 1. 检查是否有 REST gateway
@@ -433,14 +435,42 @@ class ScalperV2(BaseStrategy):
 
             rest_gateway = self._order_manager._rest_gateway
 
-            # 2. 调用 Gateway 获取最新 Instrument 信息
-            instrument = await rest_gateway.get_instrument_details(self.symbol)
-            if not instrument:
-                logger.error(f"❌ [初始化] {self.symbol}: 无法获取 Instrument 信息")
-                return
+            # 2. 🔥 [新增] 等待 ticker 数据就绪（最多等待5秒）
+            logger.info(f"⏳ [Ticker检查] {self.symbol}: 等待 ticker 数据就绪...")
 
-            # OKX 返回的是列表或字典，兼容两种格式
-            inst_data = instrument[0] if isinstance(instrument, list) else instrument
+            max_wait = 5.0
+            start_time = time.time()
+            current_price = 0.0
+
+            while time.time() - start_time < max_wait:
+                # 调用 Gateway 获取最新 Instrument 信息
+                instrument = await rest_gateway.get_instrument_details(self.symbol)
+                if not instrument:
+                    await asyncio.sleep(0.5)
+                    continue
+
+                # OKX 返回的是列表或字典，兼容两种格式
+                inst_data = instrument[0] if isinstance(instrument, list) else instrument
+
+                # 尝试获取价格
+                current_price_raw = inst_data.get('last') or inst_data.get('markPx') or inst_data.get('idxPx')
+                if current_price_raw and float(current_price_raw) > 0:
+                    current_price = float(current_price_raw)
+                    logger.info(
+                        f"✅ [Ticker就绪] {self.symbol}: "
+                        f"current_price={current_price:.2f}, "
+                        f"耗时={time.time() - start_time:.2f}s"
+                    )
+                    break
+
+                # 等待500ms后重试
+                await asyncio.sleep(0.5)
+            else:
+                # 超时警告
+                logger.warning(
+                    f"⚠️ [Ticker超时] {self.symbol}: "
+                    f"未能获取价格（等待{max_wait}s），使用默认点差 {self.signal_generator.config.spread_threshold_pct*100:.3f}%"
+                )
 
             # 3. 同步 Contract Value
             self.contract_val = float(inst_data.get('ctVal', 1.0))
@@ -448,28 +478,22 @@ class ScalperV2(BaseStrategy):
             # 4. 同步 Tick Size
             self.tick_size = float(inst_data.get('tickSz', 0.01))
 
-            # 5. 同步智能点差阈值
-            # 🔥 [修复] 获取当前价格，优先使用 last，如果为 0 则尝试 markPrice 或 idxPx
-            current_price_raw = inst_data.get('last') or inst_data.get('markPx') or inst_data.get('idxPx')
-
-            # 🔥 [修复] 检查价格有效性（处理 None 和 0）
-            if not current_price_raw or float(current_price_raw) <= 0:
-                logger.warning(
-                    f"⚠️ [配置警告] {self.symbol}: 无法获取当前价格 (last={inst_data.get('last')}, markPx={inst_data.get('markPx')}, idxPx={inst_data.get('idxPx')})，使用默认点差阈值"
-                )
-                # 使用配置文件的默认点差阈值（不使用 AutoSpread）
-                final_spread = self.signal_generator.config.spread_threshold_pct
-                # 🔥 [修复] 保持初始化时的 tick_size（0.1），不被覆盖
+            # 🔥 [修复] 同步合约面值到 PositionSizer
+            # 否则仓位计算会使用错误的 ct_val（1.0），导致下单金额错误
+            if hasattr(self, 'position_sizer'):
+                self.position_sizer.ct_val = self.contract_val
                 logger.info(
-                    f"✅ [智能配置] {self.symbol}: "
-                    f"ctVal={self.contract_val}, "
-                    f"TickSize={self.tick_size:.6f} (使用初始化值), "
-                    f"Spread=Config({self.signal_generator.config.spread_threshold_pct:.4%})"
+                    f"✅ [合约面值同步] {self.symbol}: "
+                    f"PositionSizer.ct_val 已更新为 {self.contract_val}"
                 )
-            else:
-                current_price = float(current_price_raw)
 
-                # 🔥 [修复] tick_size 已经是正确的值（0.1），直接使用
+            # 5. 🔥 [改进] 同步智能点差阈值
+            if current_price > 0:
+                # 根据当前价格计算合理的点差阈值
+                # 例如：BTC 68000，0.05% = 34 USDT，约 3.4 个 tick（tickSize=0.1）
+                spread_usdt = current_price * self.signal_generator.config.spread_threshold_pct
+                spread_ticks = spread_usdt / self.tick_size
+
                 auto_spread = self.tick_size * 20  # 允许 20 跳的价差
                 auto_spread_pct = auto_spread / current_price
 
@@ -477,10 +501,18 @@ class ScalperV2(BaseStrategy):
                 final_spread = max(self.signal_generator.config.spread_threshold_pct, auto_spread_pct)
 
                 logger.info(
-                    f"✅ [智能配置] {self.symbol}: "
-                    f"ctVal={self.contract_val}, "
-                    f"TickSize={self.tick_size:.6f}, "
-                    f"AutoSpread={final_spread:.4%} (current_price={current_price:.2f})"
+                    f"✅ [动态点差] {self.symbol}: "
+                    f"price={current_price:.2f}, "
+                    f"spread_threshold={self.signal_generator.config.spread_threshold_pct*100:.3f}% "
+                    f"({spread_usdt:.2f} USDT, {spread_ticks:.1f} ticks), "
+                    f"final_spread={final_spread:.4%}"
+                )
+            else:
+                # 使用默认点差阈值
+                final_spread = self.signal_generator.config.spread_threshold_pct
+                logger.info(
+                    f"✅ [默认点差] {self.symbol}: "
+                    f"Spread=Config({final_spread:.4%})"
                 )
 
             # 更新配置
@@ -588,6 +620,11 @@ class ScalperV2(BaseStrategy):
             # 4. 更新成交量窗口
             # 🔥 [修复] 扩大时间窗口到 3 秒，更容易累积成交量
             if now - self.vol_window_start >= 3.0:
+                # 🔥 [边界修复] 先重置计数器，再重置时间戳（避免竞态）
+                # 如果先重置时间戳，新 TICK 可能在 reset_volumes() 之前到达
+                # 导致数据丢失
+                self.signal_generator.reset_volumes()
+
                 self.vol_window_start = now
                 self.buy_vol = 0.0
                 self.sell_vol = 0.0
