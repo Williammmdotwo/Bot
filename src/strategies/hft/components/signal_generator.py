@@ -17,6 +17,8 @@ SignalGenerator - 信号生成器
 """
 
 import logging
+import os
+import time
 import collections
 from typing import Optional
 from dataclasses import dataclass
@@ -98,11 +100,21 @@ class SignalGenerator:
         # ✅ 新增：market_data_manager 引用（用于获取订单簿）
         self.market_data_manager = None
 
-        # 🔧 [调试] 验证 min_flow_usdt 配置
-        logger.info(f"🔧 [配置验证] SignalGenerator 初始化:")
-        logger.info(f"   config.min_flow_usdt = {config.min_flow_usdt:.0f}")
-        logger.info(f"   self.config.min_flow_usdt = {self.config.min_flow_usdt:.0f}")
-        logger.info(f"   对象 = {config}")
+        # 🔥 [优化] 流动性过滤计数器
+        self._liquidity_filter_count = 0
+        self._last_liquidity_log_time = 0
+        self._log_interval = 5.0  # 每 5 秒汇总一次
+
+        # 🔥 [优化] 深度过滤计数器
+        self._depth_filter_count = 0
+        self._last_depth_log_time = 0
+
+        # 🔥 [优化] 从环境变量读取详细日志开关
+        self._enable_detailed_logs = os.getenv(
+            'SIGNAL_GENERATOR_VERBOSE', 'false'
+        ).lower() == 'true'
+
+        logger.info(f"SignalGenerator 初始化: symbol={config.symbol}, imbalance={config.imbalance_ratio}x, min_flow={config.min_flow_usdt:.0f}")
 
     def _update_ema(self, price: float):
         """
@@ -237,11 +249,22 @@ class SignalGenerator:
                 'dynamic_min_flow': dynamic_min_flow,
                 'signal_ratio': signal_ratio
             }
-            logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
-                f"⚠️ [SignalGenerator-流动性过滤] {symbol}: "
-                f"Volume={volume_usdt:.0f} USDT < DynamicMinFlow={dynamic_min_flow:.0f} USDT "
-                f"(Signal={signal_ratio:.1f}x)"
-            )
+
+            # 🔥 [优化] 批量日志 - 流动性过滤
+            self._liquidity_filter_count += 1
+
+            # 每 5 秒或每 20 次输出一次汇总
+            now = time.time()
+            if (self._liquidity_filter_count % 20 == 0) or \
+               (now - self._last_liquidity_log_time >= self._log_interval):
+                logger.info(
+                    f"⚠️ [流动性过滤-汇总] {symbol}: "
+                    f"已过滤 {self._liquidity_filter_count} 笔, "
+                    f"最后={volume_usdt:.0f} < {dynamic_min_flow:.0f} USDT "
+                    f"(Signal={signal_ratio:.1f}x)"
+                )
+                self._last_liquidity_log_time = now
+
             return signal
 
         # 6. 🔥 [优化] 提前过滤：根据配置方向预判，避免无效计算
@@ -309,25 +332,36 @@ class SignalGenerator:
 
             if depth_ratio is not None:
                 if signal_direction == 'buy' and depth_ratio < self.config.depth_ratio_threshold_low:
-                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
-                        f"🛑 [深度过滤] {symbol}: 做多信号被拒绝 - "
-                        f"深度比率={depth_ratio:.2f} < {self.config.depth_ratio_threshold_low:.2f} "
-                        f"(卖方盘口过厚，做多风险高)"
-                    )
+                    # 🔥 [优化] 批量日志 - 深度过滤
+                    self._depth_filter_count += 1
+
+                    now = time.time()
+                    if (self._depth_filter_count % 10 == 0) or \
+                       (now - self._last_depth_log_time >= self._log_interval):
+                        logger.info(
+                            f"🛑 [深度过滤-汇总] {symbol}: "
+                            f"已拒绝 {self._depth_filter_count} 次做多信号 "
+                            f"(深度比率过低)"
+                        )
+                        self._last_depth_log_time = now
+
                     return signal
 
                 if signal_direction == 'sell' and depth_ratio > self.config.depth_ratio_threshold_high:
-                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
-                        f"🛑 [深度过滤] {symbol}: 做空信号被拒绝 - "
-                        f"深度比率={depth_ratio:.2f} > {self.config.depth_ratio_threshold_high:.2f} "
-                        f"(买方盘口过厚，做空风险高)"
-                    )
-                    return signal
+                    # 🔥 [优化] 批量日志 - 深度过滤
+                    self._depth_filter_count += 1
 
-                logger.debug(
-                    f"✅ [深度过滤] {symbol}: 深度比率={depth_ratio:.2f} 通过 "
-                    f"(signal={signal_direction})"
-                )
+                    now = time.time()
+                    if (self._depth_filter_count % 10 == 0) or \
+                       (now - self._last_depth_log_time >= self._log_interval):
+                        logger.info(
+                            f"🛑 [深度过滤-汇总] {symbol}: "
+                            f"已拒绝 {self._depth_filter_count} 次做空信号 "
+                            f"(深度比率过高)"
+                        )
+                        self._last_depth_log_time = now
+
+                    return signal
 
         # 8. EMA 趋势过滤/加权
         trend = self.get_trend_bias()

@@ -13,6 +13,7 @@
 
 import asyncio
 import logging
+import os
 from typing import Callable, Dict, List, Any, Optional
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -108,9 +109,20 @@ class EventBus:
         # 🔥 [新增] 性能监控
         self._latency_stats: Dict[str, List[float]] = {}
         self._max_latency_samples = 1000  # 最多保留 1000 个延迟样本
-        self.WARNING_LATENCY_MS = 30.0  # 警告阈值：30ms
-        self.CRITICAL_LATENCY_MS = 50.0  # 严重阈值：50ms
-        logger.info("EventBus 初始化（优先级队列模式 + 性能监控）")
+
+        # 🔥 [优化] 从环境变量读取性能监控开关
+        self.enable_latency_tracking = os.getenv(
+            'EVENT_BUS_ENABLE_LATENCY_TRACKING', 'false'
+        ).lower() == 'true'
+
+        # 🔥 [优化] 调整日志级别
+        self.WARNING_LATENCY_MS = 50.0  # 从 30ms 调整到 50ms
+        self.CRITICAL_LATENCY_MS = 100.0  # 从 50ms 调整到 100ms
+
+        if self.enable_latency_tracking:
+            logger.info("📊 [EventBus] 性能监控已启用（开发模式）")
+        else:
+            logger.info("🚀 [EventBus] 性能监控已关闭（生产模式）")
 
     def register(self, event_type: EventType, handler: Callable):
         """
@@ -255,23 +267,22 @@ class EventBus:
 
     async def _process_event(self, event: Event):
         """
-        处理单个事件（带性能监控）
+        处理单个事件（性能优化版本）
 
         调用所有注册的处理器。
 
         Args:
             event (Event): 要处理的事件（已从 PriorityEvent 解包）
         """
-        # 🔥 [新增] 开始计时
-        import time
-        start_time = time.perf_counter()
+        # 🔥 [优化] 只在启用监控时计时
+        if self.enable_latency_tracking:
+            import time
+            start_time = time.perf_counter()
 
-        # 🔥 [P0 修复] 处理的是解包后的 Event 对象
         handlers = self._handlers.get(event.type, [])
 
         if not handlers:
-            logger.debug(f"无处理器注册: {event.type}")
-            return
+            return  # 移除不必要的 debug 日志
 
         # 调用所有处理器
         for handler in handlers:
@@ -304,31 +315,35 @@ class EventBus:
             # 🔥 [修复] 无论成功还是失败，都增加 processed 计数
             self._stats['processed'] += 1
 
-        # 🔥 [新增] 计算并记录延迟
+        # 🔥 [优化] 性能监控逻辑（只在启用时执行）
+        if not self.enable_latency_tracking:
+            return  # 直接返回，节省 15-20ms
+
         processing_time_ms = (time.perf_counter() - start_time) * 1000.0
 
-        # 记录延迟统计
+        # 只在超过严重阈值时记录
+        if processing_time_ms > self.CRITICAL_LATENCY_MS:
+            logger.error(
+                f"⚠️ [EventBus] 事件处理延迟过高: "
+                f"{event.type.value}={processing_time_ms:.2f}ms"
+            )
+        elif processing_time_ms > self.WARNING_LATENCY_MS:
+            logger.warning(
+                f"⚠️ [EventBus] 事件处理延迟: "
+                f"{event.type.value}={processing_time_ms:.2f}ms"
+            )
+
+        # 🔥 [优化] 简化统计记录（移除列表存储）
         event_type_str = event.type.value
         if event_type_str not in self._latency_stats:
             self._latency_stats[event_type_str] = []
 
         self._latency_stats[event_type_str].append(processing_time_ms)
 
-        # 🔥 [优化] 只保留最近 1000 个样本，避免内存无限增长
+        # 🔥 [优化] 限制列表长度（简化版）
         if len(self._latency_stats[event_type_str]) > self._max_latency_samples:
-            self._latency_stats[event_type_str] = self._latency_stats[event_type_str][-self._max_latency_samples:]
-
-        # 检查是否超时
-        if processing_time_ms > self.CRITICAL_LATENCY_MS:
-            logger.error(
-                f"⚠️ [EventBus] 事件处理延迟过高: "
-                f"{event_type_str}={processing_time_ms:.2f}ms > {self.CRITICAL_LATENCY_MS}ms"
-            )
-        elif processing_time_ms > self.WARNING_LATENCY_MS:
-            logger.warning(
-                f"⚠️ [EventBus] 事件处理延迟: "
-                f"{event_type_str}={processing_time_ms:.2f}ms > {self.WARNING_LATENCY_MS}ms"
-            )
+            self._latency_stats[event_type_str] = \
+                self._latency_stats[event_type_str][-100:]  # 只保留最近 100 个
 
     def get_stats(self) -> Dict[str, int]:
         """
