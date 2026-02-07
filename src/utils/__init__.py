@@ -4,7 +4,7 @@ Utils - 工具函数包
 提供各种工具类和函数。
 """
 
-from .logger import logger
+from .logger import setup_logging, get_logger, set_log_level
 from .logger_factory import LoggerFactory
 from .notifier import Notifier
 from .cache import Cache
@@ -24,7 +24,9 @@ from .helpers import (
 )
 
 __all__ = [
-    'logger',
+    'setup_logging',
+    'get_logger',
+    'set_log_level',
     'LoggerFactory',
     'Notifier',
     'Cache',
