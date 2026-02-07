@@ -14,7 +14,7 @@ from .notifier import (
     get_notifier,
     create_notifier
 )
-from .cache import Cache
+from .cache import CacheManager
 from .config import ConfigManager
 from .time import now_ms, format_timestamp_ms, elapsed_s
 from .math import clamp, lerp
@@ -41,7 +41,7 @@ __all__ = [
     'AlertType',
     'get_notifier',
     'create_notifier',
-    'Cache',
+    'CacheManager',
     'ConfigManager',
     'now_ms',
     'format_timestamp_ms',
