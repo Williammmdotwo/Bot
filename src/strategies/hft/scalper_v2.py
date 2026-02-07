@@ -226,16 +226,36 @@ class ScalperV2(BaseStrategy):
         )
 
         # ========== 初始化自适应仓位管理器 ==========
-        # 🔥 [关键修复] 不要在 __init__ 中初始化 PositionSizer
-        # 等到 on_start 中获取正确的 ctVal 后再初始化
-        self.position_sizer = None  # ✅ 延迟初始化
+        # 🔥 [关键修复] 立即初始化 PositionSizer（使用默认 ctVal）
+        # 在 on_start 中会同步正确的 ctVal
 
-        # 从kwargs中获取position_sizing配置（如果有的话）
-        self._position_sizing_kwargs = kwargs.get('position_sizing', {})
+        # 获取 position_sizing 配置
+        position_sizing_kwargs = kwargs.get('position_sizing', {})
+
+        self.position_sizer = PositionSizer(
+            base_equity_ratio=position_sizing_kwargs.get('base_equity_ratio', 0.02),
+            max_leverage=position_sizing_kwargs.get('max_leverage', 5.0),
+            min_order_value=position_sizing_kwargs.get('min_order_value', 10.0),
+            signal_scaling_enabled=position_sizing_kwargs.get('signal_scaling_enabled', True),
+            signal_threshold_normal=position_sizing_kwargs.get('signal_threshold_normal', 5.0),
+            signal_threshold_aggressive=position_sizing_kwargs.get('signal_threshold_aggressive', 10.0),
+            signal_aggressive_multiplier=position_sizing_kwargs.get('signal_aggressive_multiplier', 1.5),
+            liquidity_protection_enabled=position_sizing_kwargs.get('liquidity_protection_enabled', True),
+            liquidity_depth_ratio=position_sizing_kwargs.get('liquidity_depth_ratio', 0.20),
+            liquidity_depth_levels=position_sizing_kwargs.get('liquidity_depth_levels', 3),
+            volatility_protection_enabled=position_sizing_kwargs.get('volatility_protection_enabled', True),
+            volatility_ema_period=position_sizing_kwargs.get('volatility_ema_period', 20),
+            volatility_threshold=position_sizing_kwargs.get('volatility_threshold', 0.001),
+            ct_val=0.01  # ✅ 默认值（BTC-USDT-SWAP 标准）
+        )
 
         logger.info(
-            f"⏳ [PositionSizer] {self.symbol}: "
-            f"将在 on_start 中初始化（需要先获取 ctVal）"
+            f"✅ [ScalperV2] 自适应仓位管理器已初始化: "
+            f"base_ratio={position_sizing_kwargs.get('base_equity_ratio', 0.02)*100:.1f}%, "
+            f"signal_normal={position_sizing_kwargs.get('signal_threshold_normal', 5.0)}x, "
+            f"signal_agg={position_sizing_kwargs.get('signal_threshold_aggressive', 10.0)}x, "
+            f"liquidity_ratio={position_sizing_kwargs.get('liquidity_depth_ratio', 0.20)*100:.0f}%, "
+            f"ctVal=0.01 (默认，将在 on_start 中更新)"
         )
 
         # ========== 保留的变量 ==========
@@ -451,37 +471,11 @@ class ScalperV2(BaseStrategy):
             # 4. 同步 Tick Size
             self.tick_size = float(inst_data.get('tickSz', 0.01))
 
-            # 🔥 [关键修复] 在 on_start 中初始化 PositionSizer（使用正确的 ct_val）
-            # 创建仓位管理配置
-            position_sizing_config = PositionSizingConfig(
-                base_equity_ratio=self._position_sizing_kwargs.get('base_equity_ratio', 0.02),
-                max_leverage=self._position_sizing_kwargs.get('max_leverage', 5.0),
-                min_order_value=self._position_sizing_kwargs.get('min_order_value', 10.0),
-                signal_scaling_enabled=self._position_sizing_kwargs.get('signal_scaling_enabled', True),
-                signal_threshold_normal=self._position_sizing_kwargs.get('signal_threshold_normal', 5.0),
-                signal_threshold_aggressive=self._position_sizing_kwargs.get('signal_threshold_aggressive', 10.0),
-                signal_aggressive_multiplier=self._position_sizing_kwargs.get('signal_aggressive_multiplier', 1.5),
-                liquidity_protection_enabled=self._position_sizing_kwargs.get('liquidity_protection_enabled', True),
-                liquidity_depth_ratio=self._position_sizing_kwargs.get('liquidity_depth_ratio', 0.20),
-                liquidity_depth_levels=self._position_sizing_kwargs.get('liquidity_depth_levels', 3),
-                volatility_protection_enabled=self._position_sizing_kwargs.get('volatility_protection_enabled', True),
-                volatility_ema_period=self._position_sizing_kwargs.get('volatility_ema_period', 20),
-                volatility_threshold=self._position_sizing_kwargs.get('volatility_threshold', 0.001)
-            )
-
-            # 使用正确的 ct_val 初始化 PositionSizer
-            self.position_sizer = PositionSizer(
-                position_sizing_config,
-                ct_val=self.contract_val  # ✅ 使用从交易所获取的 ct_val
-            )
+            # 🔥 [关键修复] 更新 PositionSizer 的 ct_val（而不是重新创建）
+            self.position_sizer.ct_val = self.contract_val
 
             logger.info(
-                f"✅ [PositionSizer已初始化] {self.symbol}: "
-                f"base_ratio={position_sizing_config.base_equity_ratio*100}%, "
-                f"signal_normal={position_sizing_config.signal_threshold_normal}x, "
-                f"signal_agg={position_sizing_config.signal_threshold_aggressive}x, "
-                f"liquidity_ratio={position_sizing_config.liquidity_depth_ratio*100}%, "
-                f"ctVal={self.contract_val}"
+                f"✅ [合约面值同步] {self.symbol}: PositionSizer.ct_val 已更新为 {self.contract_val}"
             )
 
             # 5. 🔥 [改进] 同步智能点差阈值
@@ -1165,6 +1159,13 @@ class ScalperV2(BaseStrategy):
         Args:
             tick_data (dict): Tick 数据
         """
+        # 防御性检查
+        if self.position_sizer is None:
+            logger.error(
+                f"❌ [致命错误] {self.symbol}: position_sizer 未初始化"
+            )
+            return
+
         try:
             # 提取数据
             symbol = tick_data.get('symbol')
