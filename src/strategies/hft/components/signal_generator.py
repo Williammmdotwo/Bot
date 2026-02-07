@@ -86,6 +86,9 @@ class SignalGenerator:
         Args:
             config (ScalperV1Config): 策略配置
         """
+        # 🔥 [修复] 添加 logger 初始化（必须在最前面）
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+
         self.config = config
 
         # 价格历史（用于 EMA 计算）
@@ -165,14 +168,21 @@ class SignalGenerator:
         - 策略中的成交量窗口到期时（如 3 秒）
         - 系统重启时
         - 手动重置时
+
+        🔥 [修复] 只有当 logger 存在时才记录日志（避免 AttributeError）
         """
+        old_buy = self.buy_vol_increment
+        old_sell = self.sell_vol_increment
+
         self.buy_vol_increment = 0.0
         self.sell_vol_increment = 0.0
 
-        logger.debug(
-            f"[SignalGenerator] {self.config.symbol}: "
-            f"成交量增量已重置"
-        )
+        # 🔥 [修复] 只有当 logger 存在时才记录日志
+        if hasattr(self, 'logger'):
+            self.logger.debug(
+                f"[SignalGenerator] {self.config.symbol}: "
+                f"成交量增量已重置 (buy: {old_buy:.2f}→0, sell: {old_sell:.2f}→0)"
+            )
 
     def get_min_flow_threshold(self, signal_ratio: float) -> float:
         """
@@ -491,18 +501,19 @@ class SignalGenerator:
 
     def _calculate_depth_ratio(self, order_book: dict = None) -> float:
         """
-        计算订单簿深度比率（🔥 改进：去除异常大单，使用平均值）
+        计算订单簿深度比率（🔥 改进：去除异常大单，使用平均值，增强异常处理）
 
         改进方案：
         1. 去除异常大单（单档占比 > 50%）
         2. 使用平均值而非总和（更稳定）
         3. 异常值检测（比率 > 10 或 < 0.1）
+        4. 🔥 [修复] 增强异常处理，确保 logger 可用
 
         Args:
             order_book: 订单簿数据（可选，如果为None则从market_data_manager获取）
 
         Returns:
-            float: bid_depth / ask_depth 比率，None 表示无法计算或数据异常
+            float: bid_depth / ask_depth 比率，None 或 0.0 表示无法计算或数据异常
         """
         try:
             # 从 market_data_manager 获取订单簿
@@ -513,15 +524,18 @@ class SignalGenerator:
                 )
 
             if not order_book:
-                logger.warning(f"⚠️ [深度计算] {self.config.symbol}: 订单簿数据为空")
-                return None
+                # 🔥 [修复] 安全的日志（不依赖 self.logger）
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"⚠️ [深度计算] {self.config.symbol}: 订单簿数据为空")
+                return 0.0
 
             bids = order_book.get('bids', [])
             asks = order_book.get('asks', [])
 
             if not bids or not asks:
-                logger.warning(f"⚠️ [深度计算] {self.config.symbol}: bids 或 asks 为空")
-                return None
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"⚠️ [深度计算] {self.config.symbol}: bids 或 asks 为空")
+                return 0.0
 
             # 计算每档深度
             levels = self.config.depth_check_levels
@@ -545,8 +559,9 @@ class SignalGenerator:
                     ask_depths.append(depth)
 
             if not bid_depths or not ask_depths:
-                logger.warning(f"⚠️ [深度计算] {self.config.symbol}: 深度数据为空")
-                return None
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"⚠️ [深度计算] {self.config.symbol}: 深度数据为空")
+                return 0.0
 
             # 🔥 [改进] 去除异常大单（单档占比 > 50%）
             def remove_outliers(depths: list) -> list:
@@ -562,11 +577,12 @@ class SignalGenerator:
 
             # 检查清洗后是否还有数据
             if not bid_depths_clean or not ask_depths_clean:
-                self.logger.warning(
-                    f"⚠️ [深度过滤失败] {self.config.symbol}: "
-                    f"清洗后数据为空，跳过深度过滤"
-                )
-                return None
+                if hasattr(self, 'logger'):
+                    self.logger.warning(
+                        f"⚠️ [深度过滤失败] {self.config.symbol}: "
+                        f"清洗后数据为空，跳过深度过滤"
+                    )
+                return 0.0
 
             # 🔥 [改进] 使用平均值（更稳定）
             bid_depth = sum(bid_depths_clean) / len(bid_depths_clean)
@@ -574,29 +590,33 @@ class SignalGenerator:
 
             # 🔥 [改进] 防止除零
             if ask_depth == 0:
-                logger.warning(
-                    f"⚠️ [深度异常] {self.config.symbol}: "
-                    f"ask_depth=0，跳过深度过滤"
-                )
-                return None
+                if hasattr(self, 'logger'):
+                    self.logger.warning(
+                        f"⚠️ [深度异常] {self.config.symbol}: "
+                        f"ask_depth=0，跳过深度过滤"
+                    )
+                return 0.0
 
             depth_ratio = bid_depth / ask_depth
 
-            # 🔥 [改进] 异常值检测（保留日志）
+            # 🔥 [改进] 异常值检测
             if depth_ratio > 10.0 or depth_ratio < 0.1:
-                self.logger.warning(
-                    f"⚠️ [深度异常] {self.config.symbol}: "
-                    f"清洗后深度比率={depth_ratio:.2f} 仍超出合理范围 [0.1, 10.0]，"
-                    f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}，"
-                    f"跳过深度过滤"
-                )
-                return None
+                if hasattr(self, 'logger'):
+                    self.logger.warning(
+                        f"⚠️ [深度异常] {self.config.symbol}: "
+                        f"清洗后深度比率={depth_ratio:.2f} 仍超出合理范围 [0.1, 10.0]，"
+                        f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}，"
+                        f"跳过深度过滤"
+                    )
+                return 0.0
 
             return depth_ratio
 
         except Exception as e:
-            logger.error(
-                f"❌ [深度计算] {self.config.symbol}: 计算失败 - {e}",
-                exc_info=True
-            )
-            return None
+            # 🔥 [修复] 安全的异常处理（不依赖 self.logger）
+            if hasattr(self, 'logger'):
+                self.logger.error(
+                    f"❌ [深度计算] {self.config.symbol}: 计算失败 - {e}",
+                    exc_info=True
+                )
+            return 0.0

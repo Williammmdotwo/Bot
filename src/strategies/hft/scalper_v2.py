@@ -423,6 +423,7 @@ class ScalperV2(BaseStrategy):
         同步 Instrument 详情（合约面值、Tick Size）
 
         🔥 [修复] 等待 ticker 数据就绪，避免使用不合理的默认点差阈值
+        🔥 [修复] 确保 PositionSizer 在启动时使用正确的 ct_val
         """
         try:
             # 1. 检查是否有 REST gateway
@@ -478,13 +479,27 @@ class ScalperV2(BaseStrategy):
             # 4. 同步 Tick Size
             self.tick_size = float(inst_data.get('tickSz', 0.01))
 
-            # 🔥 [修复] 同步合约面值到 PositionSizer
-            # 否则仓位计算会使用错误的 ct_val（1.0），导致下单金额错误
-            if hasattr(self, 'position_sizer'):
+            # 🔥 [修复] 确保 PositionSizer 使用正确的 ct_val
+            # 在启动时（__init__中）PositionSizer 使用默认值 ct_val=1.0
+            # 这里必须同步更新，否则仓位计算会错误
+            if hasattr(self, 'position_sizer') and self.position_sizer:
+                old_ct_val = self.position_sizer.ct_val
                 self.position_sizer.ct_val = self.contract_val
-                logger.info(
-                    f"✅ [合约面值同步] {self.symbol}: "
-                    f"PositionSizer.ct_val 已更新为 {self.contract_val}"
+
+                if old_ct_val != self.contract_val:
+                    logger.info(
+                        f"✅ [合约面值同步] {self.symbol}: "
+                        f"PositionSizer.ct_val {old_ct_val} → {self.contract_val}"
+                    )
+                else:
+                    logger.info(
+                        f"✅ [合约面值确认] {self.symbol}: "
+                        f"PositionSizer.ct_val = {self.contract_val}（无需更新）"
+                    )
+            else:
+                logger.warning(
+                    f"⚠️ [合约面值] {self.symbol}: "
+                    f"PositionSizer 未初始化，无法同步 ct_val"
                 )
 
             # 5. 🔥 [改进] 同步智能点差阈值
