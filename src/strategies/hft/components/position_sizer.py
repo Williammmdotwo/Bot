@@ -107,14 +107,8 @@ class PositionSizer:
         Returns:
             float: 下单金额 (USDT)
         """
-        # 🔍 [调试] 添加输入参数日志
-        logger.info(f"📊 [PositionSizer] 输入参数:")
-        logger.info(f"   account_equity={account_equity:.2f}")
-        logger.info(f"   signal_ratio={signal_ratio:.2f}")
-        logger.info(f"   order_book={order_book}")
-        logger.info(f"   current_price={current_price:.6f}")
-        logger.info(f"   side={side}")
-        logger.info(f"   ema_boost={ema_boost:.2f}")
+        # 🔍 [优化] 移除详细日志，改为 DEBUG 级别
+        logger.debug(f"📊 [PositionSizer] 输入参数: equity={account_equity:.2f}, signal={signal_ratio:.2f}, price={current_price:.6f}")
 
         # 🔥 [修复] 如果未传入 ct_val，使用初始化时的值
         if ct_val is None:
@@ -126,19 +120,15 @@ class PositionSizer:
         # --- 1. 基础资金限制 ---
         base_amount = account_equity * self.cfg.base_equity_ratio
 
-        logger.debug(
-            f"💰 [基础仓位] 账户权益={account_equity:.2f} USDT, "
-            f"基础金额={base_amount:.2f} USDT ({self.cfg.base_equity_ratio*100:.1f}%)"
-        )
+        # 🔥 [优化] 简化日志
 
         # --- 2. 信号强度自适应 ---
         multiplier = 1.0
         if self.cfg.signal_scaling_enabled:
             if signal_ratio >= self.cfg.signal_threshold_aggressive:
                 multiplier = self.cfg.signal_aggressive_multiplier
-                logger.info(
-                    f"🎯 [信号强度] 极度不平衡 {signal_ratio:.1f}x "
-                    f">= {self.cfg.signal_threshold_aggressive}x, "
+                logger.debug(
+                    f"🎯 [信号强度] 极度不平衡 {signal_ratio:.1f}x >= {self.cfg.signal_threshold_aggressive}x, "
                     f"仓位放大 {multiplier:.1f}倍"
                 )
             elif signal_ratio < self.cfg.signal_threshold_normal:
@@ -158,7 +148,7 @@ class PositionSizer:
 
         # ✅ 新增：EMA 加权（顺势时增加仓位）
         if ema_boost > 1.0:
-            logger.info(
+            logger.debug(
                 f"📈 [EMA加权] 顺势交易，仓位加权 {ema_boost:.2f}x"
             )
 
@@ -178,15 +168,10 @@ class PositionSizer:
                 )
                 volatility_factor = max(0.5, volatility_factor)  # 最小保留50%
 
-                logger.warning(
+                logger.debug(
                     f"📉 [波动率保护] 当前波动率={self._volatility_value:.4%}, "
                     f"阈值={self.cfg.volatility_threshold:.4%}, "
                     f"仓位缩减为{volatility_factor:.1%}"
-                )
-            else:
-                logger.debug(
-                    f"✅ [波动率正常] 当前={self._volatility_value:.4%} "
-                    f"< 阈值{self.cfg.volatility_threshold:.4%}, 不调整"
                 )
 
         volatility_adjusted_amount = ema_adjusted_amount * volatility_factor
@@ -205,12 +190,7 @@ class PositionSizer:
             liquidity_limit = depth_value * self.cfg.liquidity_depth_ratio
 
             side_name = "卖方" if side == 'buy' else "买方"
-            logger.debug(
-                f"📊 [流动性保护] {side_name}盘口前{self.cfg.liquidity_depth_levels}档 "
-                f"总额={depth_value:.2f} USDT, "
-                f"限制={liquidity_limit:.2f} USDT "
-                f"({self.cfg.liquidity_depth_ratio*100:.0f}%)"
-            )
+            # 🔥 [优化] 移除流动性保护的详细日志
 
         # --- 5. 最终决策 ---
         # 取波动调整后的金额和流动性限制的最小值
@@ -224,14 +204,8 @@ class PositionSizer:
             )
             return 0.0
 
-        logger.info(
-            f"✅ [仓位决策] "
-            f"基础={base_amount:.2f} USDT, "
-            f"信号系数={multiplier:.1f}x, "
-            f"波动系数={volatility_factor:.1%}, "
-            f"流动性限制={liquidity_limit:.2f} USDT, "
-            f"最终={final_amount:.2f} USDT"
-        )
+        # 🔥 [优化] 简化最终决策日志
+        logger.info(f"✅ [仓位] {final_amount:.0f} USDT (基础={base_amount:.0f}, 信号={multiplier:.1f}x, 波动={volatility_factor:.1%})")
 
         return final_amount
 
@@ -256,11 +230,7 @@ class PositionSizer:
             # 标准差 / 均值 = 波动率
             self._volatility_value = std_dev / mean if mean > 0 else 0.0
 
-            logger.debug(
-                f"📈 [波动率更新] 均值={mean:.6f}, "
-                f"标准差={std_dev:.6f}, "
-                f"波动率={self._volatility_value:.4%}"
-            )
+            # 🔥 [优化] 移除波动率更新的详细日志
 
     def _calculate_depth_value(self, order_book: Dict[str, Any], levels: int, side: str, ct_val: float = 1.0) -> float:
         """
@@ -300,10 +270,7 @@ class PositionSizer:
                     size = float(order[1])
                     total_value += price * size * ct_val  # 🔥 [修复] 乘以合约面值
 
-            logger.debug(
-                f"📊 [深度计算] {side_name}盘口前{levels}档 "
-                f"总金额={total_value:.2f} USDT (ctVal={ct_val})"
-            )
+            # 🔥 [优化] 移除深度计算的详细日志
 
             return total_value
 
@@ -348,10 +315,7 @@ class PositionSizer:
         else:
             contracts = 0
 
-        logger.debug(
-            f"💰 [合约转换] {amount_usdt:.2f} USDT / "
-            f"({current_price:.6f} × {ct_val}) = {contracts} 张 (每张价值={contract_value:.2f} USDT)"
-        )
+        # 🔥 [优化] 移除合约转换的详细日志
 
         return contracts
 

@@ -126,7 +126,7 @@ class ExecutionAlgo:
                     'target': 'best_ask',
                     'value': best_ask
                 }
-                logger.info(
+                logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                     f"🎯 [模拟盘喂单] {self.config.symbol}: "
                     f"买方激进吃单，挂 BestAsk={best_ask:.6f}"
                 )
@@ -139,7 +139,7 @@ class ExecutionAlgo:
                     'target': 'best_bid',
                     'value': best_bid
                 }
-                logger.info(
+                logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                     f"🎯 [模拟盘喂单] {self.config.symbol}: "
                     f"卖方激进吃单，挂 BestBid={best_bid:.6f}"
                 )
@@ -163,7 +163,7 @@ class ExecutionAlgo:
                         'best_bid': best_bid,
                         'new_price': decision.price
                     }
-                    logger.info(
+                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                         f"⚡ [Aggressive Maker] {self.config.symbol}: "
                         f"Spread={spread_ticks:.1f} Ticks > {self.config.aggressive_maker_spread_ticks}, "
                         f"挂在 Best Bid+{self.config.aggressive_maker_price_offset}={decision.price:.6f}"
@@ -171,7 +171,7 @@ class ExecutionAlgo:
                 else:
                     decision.price = best_ask - self.config.aggressive_maker_price_offset * self.config.tick_size
                     decision.reason = "aggressive_maker"
-                    logger.info(
+                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                         f"⚡ [Aggressive Maker] {self.config.symbol}: "
                         f"Spread={spread_ticks:.1f} Ticks > {self.config.aggressive_maker_spread_ticks}, "
                         f"挂在 Best Ask-{self.config.aggressive_maker_price_offset}={decision.price:.6f}"
@@ -188,7 +188,7 @@ class ExecutionAlgo:
                         'best_bid': best_bid,
                         'new_price': decision.price
                     }
-                    logger.info(
+                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                         f"🛡️ [Conservative Maker] {self.config.symbol}: "
                         f"Spread={spread_ticks:.1f} Ticks <= {self.config.aggressive_maker_spread_ticks}, "
                         f"挂在 Best Bid={decision.price:.6f}"
@@ -196,7 +196,7 @@ class ExecutionAlgo:
                 else:
                     decision.price = best_ask
                     decision.reason = "conservative_maker"
-                    logger.info(
+                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                         f"🛡️ [Conservative Maker] {self.config.symbol}: "
                         f"Spread={spread_ticks:.1f} Ticks <= {self.config.aggressive_maker_spread_ticks}, "
                         f"挂在 Best Ask={decision.price:.6f}"
@@ -270,11 +270,7 @@ class ExecutionAlgo:
                 )
                 return False
 
-            logger.debug(
-                f"🔍 [ExecutionAlgo] {self.config.symbol}: "
-                f"应该插队: Price moved, "
-                f"Distance={chase_distance*100:.3f}%"
-            )
+            # 🔥 [优化] 移除插队决策的详细日志
             return True
 
         logger.debug(

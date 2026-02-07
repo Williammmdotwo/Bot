@@ -237,7 +237,7 @@ class SignalGenerator:
                 'dynamic_min_flow': dynamic_min_flow,
                 'signal_ratio': signal_ratio
             }
-            logger.info(  # 🔍 改为 INFO 级别
+            logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                 f"⚠️ [SignalGenerator-流动性过滤] {symbol}: "
                 f"Volume={volume_usdt:.0f} USDT < DynamicMinFlow={dynamic_min_flow:.0f} USDT "
                 f"(Signal={signal_ratio:.1f}x)"
@@ -309,7 +309,7 @@ class SignalGenerator:
 
             if depth_ratio is not None:
                 if signal_direction == 'buy' and depth_ratio < self.config.depth_ratio_threshold_low:
-                    logger.info(
+                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                         f"🛑 [深度过滤] {symbol}: 做多信号被拒绝 - "
                         f"深度比率={depth_ratio:.2f} < {self.config.depth_ratio_threshold_low:.2f} "
                         f"(卖方盘口过厚，做多风险高)"
@@ -317,7 +317,7 @@ class SignalGenerator:
                     return signal
 
                 if signal_direction == 'sell' and depth_ratio > self.config.depth_ratio_threshold_high:
-                    logger.info(
+                    logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
                         f"🛑 [深度过滤] {symbol}: 做空信号被拒绝 - "
                         f"深度比率={depth_ratio:.2f} > {self.config.depth_ratio_threshold_high:.2f} "
                         f"(买方盘口过厚，做空风险高)"
@@ -390,7 +390,7 @@ class SignalGenerator:
             'total_vol': self.buy_vol_increment + self.sell_vol_increment
         }
 
-        logger.info(
+        logger.debug(  # 🔥 [优化] 改为 DEBUG 级别
             f"✅ [信号生成] {symbol}: {signal_direction.upper()} | "
             f"失衡={imbalance_value:.2f}x, EMA加权={ema_boost:.2f}x, 趋势={trend}"
         )

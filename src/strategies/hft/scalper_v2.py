@@ -1220,7 +1220,7 @@ class ScalperV2(BaseStrategy):
             order_book_in_tick = tick_data.get('order_book')
 
             if order_book_in_tick:
-                # 使用已经注入的 order_book_in_tick
+                # 使用已经注入的 order_book_in_tick（MarketDataManager 已做切片保护）
                 bids_list = order_book_in_tick.get('bids', [])
                 asks_list = order_book_in_tick.get('asks', [])
                 order_book = {
@@ -1237,14 +1237,14 @@ class ScalperV2(BaseStrategy):
                     logger.warning(f"⚠️ [ScalperV2] {self.symbol}: 无法获取订单簿深度")
                     order_book = {'bids': [], 'asks': []}
 
-            # 🔥 [修复] 使用深拷贝传递数据，避免数据丢失
-            order_book_copy = copy.deepcopy(order_book)
+            # 🔥 [优化] 移除深拷贝，直接使用（MarketDataManager 已做切片保护）
+            # order_book_copy = copy.deepcopy(order_book)
 
             # 计算下单金额（传入合约面值和 EMA 加权）
             ema_boost = signal.metadata.get('ema_boost', 1.0)
             usdt_amount = self.position_sizer.calculate_order_size(
                 account_equity=account_equity,
-                order_book=order_book_copy,  # 🔥 使用深拷贝
+                order_book=order_book,  # 🔥 直接使用，MarketDataManager 已做切片保护
                 signal_ratio=signal.metadata.get('imbalance_ratio', 0.0),
                 current_price=price,
                 side=signal.direction,  # ✅ 使用信号的方向（buy 或 sell）
@@ -1465,13 +1465,13 @@ class ScalperV2(BaseStrategy):
             else:
                 order_book = {'bids': [], 'asks': []}
 
-            # 🔥 [修复] 使用深拷贝传递数据，避免数据丢失
-            order_book_copy = copy.deepcopy(order_book)
+            # 🔥 [优化] 移除深拷贝，直接使用（MarketDataManager 已做切片保护）
+            # order_book_copy = copy.deepcopy(order_book)
 
             # 计算下单金额
             usdt_amount = self.position_sizer.calculate_order_size(
                 account_equity=account_equity,
-                order_book=order_book_copy,  # 🔥 使用深拷贝
+                order_book=order_book,  # 🔥 直接使用，MarketDataManager 已做切片保护
                 signal_ratio=5.0,  # 使用默认值
                 current_price=best_bid,
                 side='buy',
