@@ -55,10 +55,12 @@ from .components.signal_generator import ScalperV1Config
 from .components.execution_algo import ExecutionConfig
 from .components.position_sizer import PositionSizer, PositionSizingConfig
 from .strategy_state import StrategyState
+from ..strategy_factory import StrategyFactory
 
 logger = logging.getLogger(__name__)
 
 
+@StrategyFactory.register("scalper_v2")
 class ScalperV2(BaseStrategy):
     """
     ScalperV2 Micro-Reversion Sniper 策略

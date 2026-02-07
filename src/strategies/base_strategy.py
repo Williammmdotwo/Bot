@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from ..core.event_bus import EventBus
 from ..core.event_types import Event, EventType
+from ..core.event_handler import EventHandler
 from ..oms.order_manager import OrderManager
 from ..oms.capital_commander import CapitalCommander
 from ..config.risk_config import DEFAULT_RISK_CONFIG
@@ -30,7 +31,7 @@ class OrderRequest:
     strategy_id: str = "default"
 
 
-class BaseStrategy(ABC):
+class BaseStrategy(EventHandler):
     """
     策略基类
     """
@@ -46,6 +47,9 @@ class BaseStrategy(ABC):
         strategy_id: Optional[str] = None,
         cooldown_seconds: float = 5.0  # [FIX] 冷却时间参数
     ):
+        # 调用父类 EventHandler 的 __init__（初始化事件处理器）
+        super().__init__()
+
         self.strategy_id = (
             strategy_id if strategy_id else self.__class__.__name__.lower()
         )
@@ -417,11 +421,23 @@ class BaseStrategy(ABC):
             logger.error(f"策略 {self.strategy_id} 下单失败", exc_info=True)
             return False
 
+    def _register_handlers(self):
+        """
+        注册事件处理器（EventHandler 实现）
+
+        子类可以覆盖此方法添加自定义事件处理器。
+        """
+        # 注册核心事件处理器
+        self.register(EventType.TICK, self.on_tick)
+        self.register(EventType.ORDER_FILLED, self.on_order_filled)
+        self.register(EventType.ORDER_CANCELLED, self.on_order_cancelled)
+        self.register(EventType.ORDER_SUBMITTED, self.on_order_submitted)
+
     async def start(self):
         """
         启动策略
 
-        注册 TICK 事件处理器和风控配置
+        注册风控配置到 CapitalCommander
         """
         if not self._event_bus:
             logger.error("EventBus 未注入，无法启动")
@@ -436,8 +452,10 @@ class BaseStrategy(ABC):
                 f"stop_loss_type={self.risk_profile.stop_loss_type.value}"
             )
 
-        # 注册 TICK 事件处理器
-        self._event_bus.register(EventType.TICK, self.on_tick)
+        # 将所有已注册的处理器注册到 EventBus
+        for event_type, handler in self.list_handlers().items():
+            self._event_bus.register(event_type, handler)
+
         logger.info(f"策略 {self.strategy_id} 已启动")
 
     async def stop(self):
