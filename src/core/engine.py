@@ -452,34 +452,21 @@ class Engine:
         启动系统
 
         步骤：
-        1. 连接 Gateways
-        2. 启动 Strategies
-        3. 进入主循环
+        1. 连接 REST Gateway
+        2. 设置杠杆
+        3. 清理遗留订单（在连接 WebSocket 之前）
+        4. 连接 WebSocket（此时才开始接收市场数据）
+        5. 启动 Strategies
+        6. 进入主循环
         """
         logger.info("启动系统...")
 
-        # 1. 连接 Gateways
+        # 1. 连接 REST Gateway
         logger.info("连接 Gateways...")
-
-        # REST Gateway
         if not await self._rest_gateway.connect():
             logger.error("REST Gateway 连接失败")
             raise RuntimeError("REST Gateway 连接失败")
         logger.info("✅ REST Gateway 已连接")
-
-        # Public WebSocket
-        if not await self._public_ws.connect():
-            logger.warning("Public WebSocket 连接失败，重试中...")
-            # 继续运行，WebSocket 会自动重连
-        else:
-            logger.info("✅ Public WebSocket 已连接")
-
-        # Private WebSocket
-        if not await self._private_ws.connect():
-            logger.warning("Private WebSocket 连接失败，重试中...")
-            # 继续运行，WebSocket 会自动重连
-        else:
-            logger.info("✅ Private WebSocket 已连接")
 
         # 2. 设置杠杆（优先从策略配置中读取）
         logger.info("设置杠杆...")
@@ -511,7 +498,8 @@ class Engine:
             except Exception as e:
                 logger.warning(f"设置杠杆失败 {symbol}: {e}（继续运行）")
 
-        # 🛡️ [Layer 1: 启动清理] 取消所有挂单，防止遗留订单
+        # 3. 🧹 清理遗留订单（在连接 WebSocket 之前）
+        # 🔥 关键：在 WebSocket 连接之前清理，避免误杀策略的新订单
         logger.info("🧹 清理遗留订单...")
         try:
             cancelled_count = await self._order_manager.cancel_all_orders()
@@ -520,7 +508,22 @@ class Engine:
             logger.error(f"❌ 启动清理失败: {e}", exc_info=True)
             logger.warning("继续启动，但请注意可能有遗留订单")
 
-        # 3. 启动 Strategies
+        # 4. 连接 WebSocket（此时才开始接收市场数据）
+        # Public WebSocket
+        if not await self._public_ws.connect():
+            logger.warning("Public WebSocket 连接失败，重试中...")
+            # 继续运行，WebSocket 会自动重连
+        else:
+            logger.info("✅ Public WebSocket 已连接")
+
+        # Private WebSocket
+        if not await self._private_ws.connect():
+            logger.warning("Private WebSocket 连接失败，重试中...")
+            # 继续运行，WebSocket 会自动重连
+        else:
+            logger.info("✅ Private WebSocket 已连接")
+
+        # 5. 启动 Strategies
         logger.info("启动 Strategies...")
         for strategy in self._strategies:
             await strategy.start()
