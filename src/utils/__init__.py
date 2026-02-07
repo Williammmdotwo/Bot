@@ -6,7 +6,14 @@ Utils - 工具函数包
 
 from .logger import setup_logging, get_logger, set_log_level
 from .logger_factory import LoggerFactory
-from .notifier import Notifier
+from .notifier import (
+    NotificationManager,
+    AlertConfig,
+    AlertLevel,
+    AlertType,
+    get_notifier,
+    create_notifier
+)
 from .cache import Cache
 from .config import ConfigManager
 from .time import now_ms, format_timestamp_ms, elapsed_s
@@ -28,7 +35,12 @@ __all__ = [
     'get_logger',
     'set_log_level',
     'LoggerFactory',
-    'Notifier',
+    'NotificationManager',
+    'AlertConfig',
+    'AlertLevel',
+    'AlertType',
+    'get_notifier',
+    'create_notifier',
     'Cache',
     'ConfigManager',
     'now_ms',
