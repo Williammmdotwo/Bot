@@ -10,6 +10,7 @@ Container - 依赖注入容器
 - 易于测试：可以轻松 Mock 依赖
 """
 
+from __future__ import annotations
 from typing import Dict, Type, Any, Callable, Optional, TypeVar
 import logging
 
