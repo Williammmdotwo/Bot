@@ -264,6 +264,9 @@ class ScalperV2(BaseStrategy):
             f"ctVal=0.01 (默认，将在 on_start 中更新)"
         )
 
+        # ========== 🔥 [关键修复] 添加就绪标志 ==========
+        self._is_ready = False  # ✅ 策略初始化完成标志（防止竞态条件）
+
         # ========== 保留的变量 ==========
         self.vol_window_start = 0.0
         self.buy_vol = 0.0
@@ -335,6 +338,10 @@ class ScalperV2(BaseStrategy):
 
         # 🔥 [修复] 启动独立的监控协程（避免提前退出导致止损失效）
         asyncio.create_task(self._monitor_position())
+
+        # 🔥 [关键修复] 设置就绪标志（防止竞态条件）
+        self._is_ready = True
+        logger.info(f"✅ [启动完成] {self.symbol}: 策略已就绪")
 
         logger.info(
             f"🚀 ScalperV2 启动: symbol={self.symbol}, "
@@ -552,7 +559,11 @@ class ScalperV2(BaseStrategy):
             event (Event): TICK 事件
         """
         try:
-            # 🔍 [调试] 检查 MarketDataManager 是否注入
+            # 🔥 [防御] 未就绪时跳过（防止竞态条件）
+            if not self._is_ready:
+                return
+
+            #  [调试] 检查 MarketDataManager 是否注入
             if not hasattr(self, '_market_data_manager') or self._market_data_manager is None:
                 logger.error(f"❌ [ScalperV2] MarketDataManager 未注入")
                 return
