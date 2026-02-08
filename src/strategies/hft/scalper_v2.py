@@ -232,7 +232,8 @@ class ScalperV2(BaseStrategy):
         # 获取 position_sizing 配置
         position_sizing_kwargs = kwargs.get('position_sizing', {})
 
-        self.position_sizer = PositionSizer(
+        # 创建 PositionSizingConfig 对象
+        position_sizing_config = PositionSizingConfig(
             base_equity_ratio=position_sizing_kwargs.get('base_equity_ratio', 0.02),
             max_leverage=position_sizing_kwargs.get('max_leverage', 5.0),
             min_order_value=position_sizing_kwargs.get('min_order_value', 10.0),
@@ -245,16 +246,21 @@ class ScalperV2(BaseStrategy):
             liquidity_depth_levels=position_sizing_kwargs.get('liquidity_depth_levels', 3),
             volatility_protection_enabled=position_sizing_kwargs.get('volatility_protection_enabled', True),
             volatility_ema_period=position_sizing_kwargs.get('volatility_ema_period', 20),
-            volatility_threshold=position_sizing_kwargs.get('volatility_threshold', 0.001),
+            volatility_threshold=position_sizing_kwargs.get('volatility_threshold', 0.001)
+        )
+
+        # 使用 config 对象初始化 PositionSizer
+        self.position_sizer = PositionSizer(
+            config=position_sizing_config,
             ct_val=0.01  # ✅ 默认值（BTC-USDT-SWAP 标准）
         )
 
         logger.info(
             f"✅ [ScalperV2] 自适应仓位管理器已初始化: "
-            f"base_ratio={position_sizing_kwargs.get('base_equity_ratio', 0.02)*100:.1f}%, "
-            f"signal_normal={position_sizing_kwargs.get('signal_threshold_normal', 5.0)}x, "
-            f"signal_agg={position_sizing_kwargs.get('signal_threshold_aggressive', 10.0)}x, "
-            f"liquidity_ratio={position_sizing_kwargs.get('liquidity_depth_ratio', 0.20)*100:.0f}%, "
+            f"base_ratio={position_sizing_config.base_equity_ratio*100:.1f}%, "
+            f"signal_normal={position_sizing_config.signal_threshold_normal}x, "
+            f"signal_agg={position_sizing_config.signal_threshold_aggressive}x, "
+            f"liquidity_ratio={position_sizing_config.liquidity_depth_ratio*100:.0f}%, "
             f"ctVal=0.01 (默认，将在 on_start 中更新)"
         )
 
