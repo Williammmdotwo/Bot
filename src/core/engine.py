@@ -294,7 +294,7 @@ class Engine:
             return strategy
 
         except Exception as e:
-            logger.error(f"加载策略失败: {e}")
+            logger.error(f"加载策略失败: {e}", exc_info=True)
             return None
 
     async def _register_event_handlers(self):

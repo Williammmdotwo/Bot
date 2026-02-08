@@ -173,43 +173,16 @@ class ScalperV2(BaseStrategy):
         self.execution_algo = ExecutionAlgo(execution_config)
         self.execution_config = execution_config  #  [修复] 保存为实例属性
 
-        # 3. 状态管理器
-        self.state_manager = StateManager(symbol)
+        # ========== 🔥 [关键修复] 必须在创建 OrderMonitor 之前初始化所有需要的属性 ==========
 
-        # 4. 止损监控器
-        stop_loss_config = type('Config', (), {
-            'take_profit_pct': take_profit_pct,
-            'stop_loss_pct': stop_loss_pct,
-            'time_limit_seconds': time_limit_seconds
-        })
-        self.stop_loss_monitor = StopLossMonitor(stop_loss_config)
-
-        # ========== 保存配置为实例属性（必须在 OrderMonitor 之前） ==========
-        #  [修复] 创建 config 对象，保存所有配置参数
-        self.config = type('Config', (), {
-            'cooldown_seconds': cooldown_seconds,
-            'position_size': position_size,
-            'take_profit_pct': take_profit_pct,
-            'stop_loss_pct': stop_loss_pct,
-            'time_limit_seconds': time_limit_seconds
-        })
-
-        # 5. 订单监控器
-        order_monitor_config = {
-            'enable_depth_protection': self.enable_depth_protection,
-            'anti_flipping_threshold': self.anti_flipping_threshold,
-            'tick_size': self.tick_size
-        }
-        self.order_monitor = OrderMonitor(self.execution_algo, order_monitor_config)
-
-        # ========== 保留的配置（必须在 OrderMonitor 之前初始化） ==========
+        # 保留的配置（必须在 OrderMonitor 之前初始化）
         self.contract_val = 1.0  # 合约面值
         self.tick_size = 0.01  # Tick 大小
         self._instrument_synced = False
         self._start_time = 0.0
         self._orderbook_received = False
 
-        # ========== 🔥 [新增] 计算节流配置（必须在 OrderMonitor 之前初始化） ==========
+        # 计算节流配置（必须在 OrderMonitor 之前初始化）
         # 从 kwargs 中读取 execution_algo 配置
         execution_algo_kwargs = kwargs.get('execution_algo', {})
 
@@ -230,6 +203,35 @@ class ScalperV2(BaseStrategy):
             f"anti_flipping={self.anti_flipping_threshold}x, "
             f"depth_protection={self.enable_depth_protection}"
         )
+
+        # 3. 状态管理器
+        self.state_manager = StateManager(symbol)
+
+        # 4. 止损监控器
+        stop_loss_config = type('Config', (), {
+            'take_profit_pct': take_profit_pct,
+            'stop_loss_pct': stop_loss_pct,
+            'time_limit_seconds': time_limit_seconds
+        })
+        self.stop_loss_monitor = StopLossMonitor(stop_loss_config)
+
+        # 保存配置为实例属性
+        #  [修复] 创建 config 对象，保存所有配置参数
+        self.config = type('Config', (), {
+            'cooldown_seconds': cooldown_seconds,
+            'position_size': position_size,
+            'take_profit_pct': take_profit_pct,
+            'stop_loss_pct': stop_loss_pct,
+            'time_limit_seconds': time_limit_seconds
+        })
+
+        # 5. 订单监控器（现在所有需要的属性都已初始化）
+        order_monitor_config = {
+            'enable_depth_protection': self.enable_depth_protection,
+            'anti_flipping_threshold': self.anti_flipping_threshold,
+            'tick_size': self.tick_size
+        }
+        self.order_monitor = OrderMonitor(self.execution_algo, order_monitor_config)
 
         # ========== 状态机管理 ==========
         # 🔥 [修复 68] FSM + 模块化路由架构
