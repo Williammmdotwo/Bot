@@ -826,6 +826,9 @@ class ScalperV2(BaseStrategy):
 
         🔥 关键修复：此方法在 _check_chasing_conditions 中被调用，但从未实现
         导致插队功能失效，挂单永远不会被撤销
+
+        🔥 [关键修复] 撤单成功后立即清除 maker_order_id，解锁开仓锁
+        否则 _reorder_after_cancel() 无法重新下单
         """
         try:
             # 获取当前挂单 ID
@@ -837,7 +840,7 @@ class ScalperV2(BaseStrategy):
                     f"🛑 [撤单跳过] {self.symbol}: "
                     f"无有效挂单 ID (maker_order_id={maker_order_id})"
                 )
-                return
+                return False
 
             logger.info(
                 f"🔄 [撤单] {self.symbol}: "
@@ -851,21 +854,31 @@ class ScalperV2(BaseStrategy):
             )
 
             if success:
+                # 🔥 [关键修复] 撤单成功后立即清除 maker_order_id，解锁开仓锁
+                # 否则 _reorder_after_cancel() 无法重新下单
+                self.state_manager.clear_maker_order()
+
+                # 转换回 IDLE 状态（允许重新下单）
+                self._transition_to_state(StrategyState.IDLE, "撤单成功，准备重新挂单")
+
                 logger.info(
                     f"✅ [撤单成功] {self.symbol}: "
-                    f"挂单 {maker_order_id} 已撤销"
+                    f"挂单 {maker_order_id} 已撤销，开仓锁已解锁"
                 )
+                return True
             else:
                 logger.warning(
                     f"⚠️ [撤单失败] {self.symbol}: "
                     f"挂单 {maker_order_id} 撤单失败，继续尝试重新挂单"
                 )
+                return False
 
         except Exception as e:
             logger.error(
                 f"❌ [撤单异常] {self.symbol}: "
                 f"{e}", exc_info=True
             )
+            return False
 
     async def _handle_position_held_state(self, tick_data: dict):
         """
@@ -1396,15 +1409,15 @@ class ScalperV2(BaseStrategy):
             )
 
             if success:
-                # 🔥 [新增] 状态转换到 PENDING_OPEN
-                self._transition_to_state(StrategyState.PENDING_OPEN, "下单成功")
+                # 🔥 [修复] 状态转换已在 _place_maker_order() 中完成，避免重复转换
                 logger.info(
                     f"✅ [狙击挂单已提交] {self.symbol} @ {decision.price:.6f}, "
                     f"数量={trade_size}, 止损={stop_loss_price:.6f}, "
                     f"策略={decision.reason}"
                 )
             else:
-                self._transition_to_state(StrategyState.IDLE, "下单失败")
+                # 下单失败，状态已在 _place_maker_order() 中保持 IDLE
+                pass
 
         except Exception as e:
             logger.error(f"❌ [IDLE 状态处理失败] {self.symbol}: {e}", exc_info=True)
