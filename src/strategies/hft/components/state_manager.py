@@ -406,6 +406,14 @@ class StateManager:
         if not self._position.is_open:
             return (False, 0.0)
 
+        # 🔥 [防御性检查] entry_price 除零保护
+        if self._position.entry_price <= 0:
+            logger.warning(
+                f"⚠️ [追踪止损] {self.symbol}: "
+                f"entry_price={self._position.entry_price} 无效，跳过计算"
+            )
+            return (False, 0.0)
+
         # 2. 如果未激活，检查是否达到激活阈值
         if not self._trailing_stop.is_activated:
             profit_pct = (current_price - self._position.entry_price) / self._position.entry_price

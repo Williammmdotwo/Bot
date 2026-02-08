@@ -50,7 +50,7 @@ from ...utils.volatility import VolatilityEstimator
 from ..base_strategy import BaseStrategy
 
 # 导入组件
-from .components import SignalGenerator, ExecutionAlgo, StateManager
+from .components import SignalGenerator, ExecutionAlgo, StateManager, StopLossMonitor, OrderMonitor
 from .components.signal_generator import ScalperV1Config
 from .components.execution_algo import ExecutionConfig
 from .components.position_sizer import PositionSizer, PositionSizingConfig
@@ -176,6 +176,22 @@ class ScalperV2(BaseStrategy):
         # 3. 状态管理器
         self.state_manager = StateManager(symbol)
 
+        # 4. 止损监控器
+        stop_loss_config = type('Config', (), {
+            'take_profit_pct': take_profit_pct,
+            'stop_loss_pct': stop_loss_pct,
+            'time_limit_seconds': time_limit_seconds
+        })
+        self.stop_loss_monitor = StopLossMonitor(stop_loss_config)
+
+        # 5. 订单监控器
+        order_monitor_config = {
+            'enable_depth_protection': self.enable_depth_protection,
+            'anti_flipping_threshold': self.anti_flipping_threshold,
+            'tick_size': self.tick_size
+        }
+        self.order_monitor = OrderMonitor(self.execution_algo, order_monitor_config)
+
         # ========== 保存配置为实例属性 ==========
         #  [修复] 创建 config 对象，保存所有配置参数
         self.config = type('Config', (), {
@@ -272,6 +288,10 @@ class ScalperV2(BaseStrategy):
         self.buy_vol = 0.0
         self.sell_vol = 0.0
         self._previous_price = 0.0
+
+        # ========== 🔥 [新增] 事件去重机制 ==========
+        # 防止重复处理相同的订单事件（10秒内的重复事件将被过滤）
+        self._processed_events = {}  # {order_id: timestamp}
 
         logger.info(
             f"🚀 ScalperV2 初始化: symbol={symbol}, "
@@ -690,6 +710,8 @@ class ScalperV2(BaseStrategy):
         🔥 [修复 66] 必须验证成交的订单 ID 是否等于 maker_order_id
         否则任何订单成交都会错误地清除 maker_order_id
 
+        🔥 [新增] 事件去重：防止重复处理相同的订单事件
+
         Args:
             event (Event): ORDER_FILLED 事件
         """
@@ -698,6 +720,25 @@ class ScalperV2(BaseStrategy):
             side = data.get('side', '').lower()
             filled_size = float(data.get('filled_size', 0))
             order_id = data.get('order_id', '')
+
+            # 🔥 [新增] 事件去重检查（10秒内的重复事件）
+            if order_id in self._processed_events:
+                last_time = self._processed_events[order_id]
+                if time.time() - last_time < 10:
+                    logger.debug(
+                        f"⏭️ [去重] {self.symbol}: "
+                        f"订单 {order_id} 已在 {time.time() - last_time:.1f}s 前处理过，跳过"
+                    )
+                    return
+
+            # 记录处理时间
+            self._processed_events[order_id] = time.time()
+
+            # 清理旧记录（保留最近 100 个）
+            if len(self._processed_events) > 100:
+                oldest = sorted(self._processed_events.items(), key=lambda x: x[1])[:50]
+                for oid, _ in oldest:
+                    del self._processed_events[oid]
 
             # 根据订单类型分发处理
             if side == 'buy':
@@ -1121,6 +1162,8 @@ class ScalperV2(BaseStrategy):
         🔥 [修复 66] 必须验证被取消的订单 ID 是否等于 maker_order_id
         否则任何订单取消都会导致重复开仓
 
+        🔥 [新增] 事件去重：防止重复处理相同的订单事件
+
         Args:
             event (Event): ORDER_CANCELLED 事件
         """
@@ -1131,6 +1174,25 @@ class ScalperV2(BaseStrategy):
 
             if symbol != self.symbol:
                 return
+
+            # 🔥 [新增] 事件去重检查（10秒内的重复事件）
+            if order_id in self._processed_events:
+                last_time = self._processed_events[order_id]
+                if time.time() - last_time < 10:
+                    logger.debug(
+                        f"⏭️ [去重] {self.symbol}: "
+                        f"订单 {order_id} 已在 {time.time() - last_time:.1f}s 前处理过，跳过"
+                    )
+                    return
+
+            # 记录处理时间
+            self._processed_events[order_id] = time.time()
+
+            # 清理旧记录（保留最近 100 个）
+            if len(self._processed_events) > 100:
+                oldest = sorted(self._processed_events.items(), key=lambda x: x[1])[:50]
+                for oid, _ in oldest:
+                    del self._processed_events[oid]
 
             # 🔥 [关键修复] 验证订单 ID
             maker_order_id = self.state_manager.get_maker_order_id()
@@ -1590,7 +1652,7 @@ class ScalperV2(BaseStrategy):
 
     async def _monitor_position(self):
         """
-        🔥 [修复] 独立的持仓监控协程
+        🔥 [修复] 独立的持仓监控协程（已重构，使用监控模块）
 
         解决提前退出优化导致的止损失效问题：
         - on_tick 中的提前退出（有挂单时 return）导致无法监控止损
@@ -1598,24 +1660,23 @@ class ScalperV2(BaseStrategy):
         - 每 0.5 秒检查一次持仓
 
         监控内容：
-        1. 追踪止损检查
-        2. 时间止损检查（30秒）
-        3. 硬止损检查（1%）
-        4. 挂单状态监控（追单撤单）
-        5. 状态维护（订单成交后自动转换到 POSITION_HELD）
+        1. 止损检查（使用 StopLossMonitor）
+        2. 挂单状态监控（使用 OrderMonitor）
+        3. 状态维护（订单成交后自动转换到 POSITION_HELD）
         """
         try:
             logger.info(f"🔍 [监控协程] {self.symbol}: 独立持仓监控已启动")
 
             while self._enabled:
                 try:
-                    # 获取当前持仓
+                    # 获取当前持仓和状态
                     position = self.get_position(self.symbol)
                     current_state = self._get_state()
+                    now = time.time()
 
-                    # 检查是否有持仓
+                    # ========== 持仓止损监控 ==========
                     if position and abs(position.size) > 0:
-                        # 从 MarketDataManager 获取当前价格
+                        # 获取当前价格
                         current_price = 0.0
                         if hasattr(self, 'market_data_manager') and self.market_data_manager:
                             best_bid, best_ask = self.market_data_manager.get_best_bid_ask(self.symbol)
@@ -1625,9 +1686,7 @@ class ScalperV2(BaseStrategy):
                             current_price = (best_bid + best_ask) / 2 if best_bid > 0 and best_ask > 0 else 0.0
 
                         if current_price > 0:
-                            now = time.time()
-
-                            #1. 追踪止损检查
+                            # 使用 StopLossMonitor 检查追踪止损
                             if self.state_manager._trailing_stop:
                                 should_close, stop_price = self.state_manager.update_trailing_stop(current_price)
 
@@ -1639,43 +1698,44 @@ class ScalperV2(BaseStrategy):
                                     await self._close_position(reason="trailing_stop", stop_price=stop_price, current_price=current_price)
                                     continue
 
-                            #2. 时间止损检查
-                            entry_time = self.state_manager._position.entry_time
-                            if entry_time > 0:
-                                position_age = now - entry_time
+                            # 使用 StopLossMonitor 检查时间止损
+                            should_close, position_age = self.stop_loss_monitor.check_time_stop(
+                                position=self.state_manager._position,
+                                current_time=now
+                            )
 
-                                if position_age >= self.config.time_limit_seconds:
-                                    logger.info(
-                                        f"⏰ [监控-时间止损] {self.symbol}: "
-                                        f"持仓时间={position_age:.1f}s >= {self.config.time_limit_seconds}s"
+                            if should_close:
+                                logger.info(
+                                    f"⏰ [监控-时间止损] {self.symbol}: "
+                                    f"持仓时间={position_age:.1f}s >= {self.config.time_limit_seconds}s"
+                                )
+                                await self._close_position(reason="time_stop", current_price=current_price)
+                                continue
+
+                            # 使用 StopLossMonitor 检查硬止损
+                            should_close, stop_price = self.stop_loss_monitor.check_hard_stop(
+                                position=self.state_manager._position,
+                                current_price=current_price
+                            )
+
+                            if should_close:
+                                # 检查是否已触发平仓，避免重复触发
+                                if current_state == StrategyState.PENDING_CLOSE:
+                                    logger.warning(
+                                        f"⚠️ [监控-重复触发] {self.symbol}: "
+                                        f"硬止损已触发，跳过重复操作"
                                     )
-                                    await self._close_position(reason="time_stop", current_price=current_price)
                                     continue
 
-                            #3. 硬止损检查（带状态检查）
-                            entry_price = self.state_manager._position.entry_price
-                            if entry_price > 0:
-                                hard_stop_price = entry_price * (1 - self.config.stop_loss_pct)
+                                logger.info(
+                                    f"📉 [监控-硬止损] {self.symbol}: "
+                                    f"当前价={current_price:.6f} <= 止损价={stop_price:.6f}"
+                                )
+                                await self._close_position(reason="hard_stop", current_price=current_price)
+                                continue
 
-                                # 🔥 [修复] 检查是否已触发平仓，避免重复触发
-                                if current_price <= hard_stop_price:
-                                    if current_state == StrategyState.PENDING_CLOSE:
-                                        logger.warning(
-                                            f"⚠️ [监控-重复触发] {self.symbol}: "
-                                            f"硬止损已触发，跳过重复操作"
-                                        )
-                                        continue
-
-                                    logger.info(
-                                        f"📉 [监控-硬止损] {self.symbol}: "
-                                        f"当前价={current_price:.6f} <= 止损价={hard_stop_price:.6f}"
-                                    )
-                                    await self._close_position(reason="hard_stop", current_price=current_price)
-                                    continue
-
-                    # 🔥 [新增] 挂单状态监控（PENDING_OPEN）
+                    # ========== 挂单状态监控 ==========
                     if current_state == StrategyState.PENDING_OPEN:
-                        # 检查是否应该追单
                         maker_order_id = self.state_manager.get_maker_order_id()
 
                         if maker_order_id and maker_order_id != "pending":
@@ -1689,99 +1749,37 @@ class ScalperV2(BaseStrategy):
                                 maker_price = best_bid if best_bid > 0 else 0.0
 
                             if maker_price > 0:
-                                # 获取挂单价格和存活时间
+                                # 获取挂单信息
                                 maker_order_price = self.state_manager.get_maker_order_price()
                                 maker_order_age = self.state_manager.get_maker_order_age()
 
-                                # 检查是否应该追单
-                                should_chase = self.execution_algo.should_chase(
-                                    current_maker_price=maker_order_price,
+                                # 获取订单簿深度
+                                order_book = {}
+                                if self.enable_depth_protection and hasattr(self, 'market_data_manager') and self.market_data_manager:
+                                    order_book = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
+
+                                # 使用 OrderMonitor 监控订单
+                                should_cancel, reason = self.order_monitor.monitor_order(
+                                    order_id=maker_order_id,
+                                    maker_order_price=maker_order_price,
                                     current_price=maker_price,
-                                    order_age=maker_order_age
+                                    order_age=maker_order_age,
+                                    order_book=order_book,
+                                    order_size=maker_order_price  # 简化：使用价格代替实际订单量
                                 )
 
-                                if should_chase:
-                                    logger.info(
-                                        f"🔥 [监控-触发追单] {self.symbol}: "
-                                        f"挂单价={maker_order_price:.6f}, "
-                                        f"当前价={maker_price:.6f}, "
-                                        f"存活时间={maker_order_age:.1f}s"
-                                    )
-
-                                    # 撤单
-                                    await self._cancel_maker_order()
-
-                                    # 重新计算价格并挂单
-                                    await self._reorder_after_cancel()
-
-                                # 🔥 [新增] 深度感知撤单
-                                # 场景：当我们的挂单处于队列中时
-                                # 优化：监控我们订单所在的价格档位，以及其前方的总挂单量
-                                if self.enable_depth_protection and hasattr(self, 'market_data_manager') and self.market_data_manager:
-                                    order_book_depth = self.market_data_manager.get_order_book_depth(self.symbol, levels=3)
-
-                                    if order_book_depth and 'bids' in order_book_depth and len(order_book_depth['bids']) > 0:
-                                        # 查找我们订单所在的档位
-                                        our_price_level = None
-                                        volume_ahead = 0.0
-
-                                        for i, bid in enumerate(order_book_depth['bids']):
-                                            bid_price = bid[0]
-                                            bid_size = bid[1]
-
-                                            # 价格匹配（考虑tick_size精度）
-                                            if abs(bid_price - maker_order_price) < self.tick_size:
-                                                our_price_level = i
-                                                break
-                                            # 在我们订单之前的档位
-                                            elif bid_price > maker_order_price:
-                                                volume_ahead += bid_size
-
-                                        # 如果找到我们的档位
-                                        if our_price_level is not None:
-                                            our_bid = order_book_depth['bids'][our_price_level]
-                                            our_size = our_bid[1]
-
-                                            # 获取上次快照用于检测删单
-                                            last_snapshot = self._last_ask_snapshot.get(maker_order_id, {})
-                                            last_volume_ahead = last_snapshot.get('volume_ahead', 0.0)
-
-                                            # 🔥 [策略1] 如果前方突然出现了巨大的"压单"
-                                            # 压单量 > 我们订单的 10 倍
-                                            if volume_ahead > our_size * self.anti_flipping_threshold:
-                                                logger.warning(
-                                                    f"🚨 [深度感知-压单] {self.symbol}: "
-                                                    f"前方压单量={volume_ahead:.0f} (我们的={our_size:.0f}), "
-                                                    f"超过{self.anti_flipping_threshold}倍阈值，立即撤单"
-                                                )
-                                                await self._cancel_maker_order()
-                                                # 等待500ms
-                                                await asyncio.sleep(0.5)
-                                                continue
-
-                                            # 🔥 [策略2] 前方档位在 100ms 内发生了剧烈的"删单"
-                                            if len(last_snapshot) > 0:
-                                                volume_change = abs(volume_ahead - last_volume_ahead)
-                                                time_since_snapshot = time.time() - last_snapshot.get('timestamp', 0)
-
-                                                # 如果删单量超过我们订单的10倍，且时间<100ms
-                                                if (volume_change > our_size * self.anti_flipping_threshold and
-                                                    time_since_snapshot < 0.1):
-                                                    logger.warning(
-                                                        f"🚨 [深度感知-删单] {self.symbol}: "
-                                                        f"前方删单量={volume_change:.0f} (我们的={our_size:.0f}), "
-                                                        f"超过{self.anti_flipping_threshold}倍阈值，立即撤单"
-                                                    )
-                                                    await self._cancel_maker_order()
-                                                    # 等待500ms
-                                                    await asyncio.sleep(0.5)
-                                                    continue
-
-                                            # 保存快照
-                                            self._last_ask_snapshot[maker_order_id] = {
-                                                'volume_ahead': volume_ahead,
-                                                'timestamp': time.time()
-                                            }
+                                if should_cancel:
+                                    if reason == "追单":
+                                        # 撤单并重新挂单
+                                        await self._cancel_maker_order()
+                                        await self._reorder_after_cancel()
+                                    else:
+                                        # 深度感知撤单
+                                        logger.warning(f"🚨 [监控-{reason}] {self.symbol}: 立即撤单")
+                                        await self._cancel_maker_order()
+                                        # 等待500ms
+                                        await asyncio.sleep(0.5)
+                                        continue
 
                     # ========== 状态一致性检查 ==========
                     # 如果有持仓但状态是 PENDING_OPEN，说明订单成交但状态未更新
