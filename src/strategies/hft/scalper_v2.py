@@ -184,15 +184,7 @@ class ScalperV2(BaseStrategy):
         })
         self.stop_loss_monitor = StopLossMonitor(stop_loss_config)
 
-        # 5. 订单监控器
-        order_monitor_config = {
-            'enable_depth_protection': self.enable_depth_protection,
-            'anti_flipping_threshold': self.anti_flipping_threshold,
-            'tick_size': self.tick_size
-        }
-        self.order_monitor = OrderMonitor(self.execution_algo, order_monitor_config)
-
-        # ========== 保存配置为实例属性 ==========
+        # ========== 保存配置为实例属性（必须在 OrderMonitor 之前） ==========
         #  [修复] 创建 config 对象，保存所有配置参数
         self.config = type('Config', (), {
             'cooldown_seconds': cooldown_seconds,
@@ -202,14 +194,22 @@ class ScalperV2(BaseStrategy):
             'time_limit_seconds': time_limit_seconds
         })
 
-        # ========== 保留的配置 ==========
+        # 5. 订单监控器
+        order_monitor_config = {
+            'enable_depth_protection': self.enable_depth_protection,
+            'anti_flipping_threshold': self.anti_flipping_threshold,
+            'tick_size': self.tick_size
+        }
+        self.order_monitor = OrderMonitor(self.execution_algo, order_monitor_config)
+
+        # ========== 保留的配置（必须在 OrderMonitor 之前初始化） ==========
         self.contract_val = 1.0  # 合约面值
         self.tick_size = 0.01  # Tick 大小
         self._instrument_synced = False
         self._start_time = 0.0
         self._orderbook_received = False
 
-        # ========== 🔥 [新增] 计算节流配置 ==========
+        # ========== 🔥 [新增] 计算节流配置（必须在 OrderMonitor 之前初始化） ==========
         # 从 kwargs 中读取 execution_algo 配置
         execution_algo_kwargs = kwargs.get('execution_algo', {})
 
