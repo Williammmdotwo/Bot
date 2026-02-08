@@ -195,5 +195,5 @@ staging/
 /docs/
 
 # Project status and changelog (local tracking only)
-更新日志.md
-项目状态.md
+CHANGELOG.md
+PROJECT_STATUS.md
