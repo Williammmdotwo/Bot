@@ -600,11 +600,12 @@ class SignalGenerator:
             depth_ratio = bid_depth / ask_depth
 
             # 🔥 [改进] 异常值检测
-            if depth_ratio > 10.0 or depth_ratio < 0.1:
+            if depth_ratio > 20.0 or depth_ratio < 0.5:
                 if hasattr(self, 'logger'):
-                    self.logger.warning(
+                    # 🔥 [优化] 改为 DEBUG 级别，避免频繁警告
+                    self.logger.debug(
                         f"⚠️ [深度异常] {self.config.symbol}: "
-                        f"清洗后深度比率={depth_ratio:.2f} 仍超出合理范围 [0.1, 10.0]，"
+                        f"清洗后深度比率={depth_ratio:.2f} 仍超出合理范围 [0.5, 20.0]，"
                         f"bid_depth={bid_depth:.2f}, ask_depth={ask_depth:.2f}，"
                         f"跳过深度过滤"
                     )

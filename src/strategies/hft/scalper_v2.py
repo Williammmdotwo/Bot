@@ -1665,7 +1665,13 @@ class ScalperV2(BaseStrategy):
         1. 止损检查（使用 StopLossMonitor）
         2. 挂单状态监控（使用 OrderMonitor）
         3. 状态维护（订单成交后自动转换到 POSITION_HELD）
+
+        🔥 [新增] 追单/撤单统计
         """
+        # 🔥 [新增] 初始化统计计数器
+        chase_count = 0
+        cancel_count = 0
+
         try:
             logger.info(f"🔍 [监控协程] {self.symbol}: 独立持仓监控已启动")
 
@@ -1772,10 +1778,18 @@ class ScalperV2(BaseStrategy):
 
                                 if should_cancel:
                                     if reason == "追单":
+                                        # 🔥 [新增] 追单统计
+                                        chase_count += 1
+                                        logger.info(f"🏃 [追单统计] {self.symbol}: 第 {chase_count} 次追单")
+
                                         # 撤单并重新挂单
                                         await self._cancel_maker_order()
                                         await self._reorder_after_cancel()
                                     else:
+                                        # 🔥 [新增] 撤单统计
+                                        cancel_count += 1
+                                        logger.info(f"🛑 [撤单统计] {self.symbol}: 第 {cancel_count} 次撤单 (原因: {reason})")
+
                                         # 深度感知撤单
                                         logger.warning(f"🚨 [监控-{reason}] {self.symbol}: 立即撤单")
                                         await self._cancel_maker_order()
