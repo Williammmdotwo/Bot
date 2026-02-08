@@ -10,8 +10,8 @@
 import time
 import logging
 from typing import Optional, Tuple
-from ...strategy_state import StrategyState
-from ..strategy_state import TrailingStopState, PositionState
+# 🔥 [修复导入] 从 state_manager 导入状态类
+from .state_manager import PositionState
 
 logger = logging.getLogger(__name__)
 
