@@ -20,8 +20,12 @@ import asyncio
 from typing import Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
-if TYPE_CHECKING:
+# 🔥 [修复导入] 移除 TYPE_CHECKING，直接导入（避免无法解析问题）
+# 注意：PersistenceAdapter 是可选依赖，如果不存在也不会影响功能
+try:
     from ...persistence.persistence_adapter import PersistenceAdapter
+except ImportError:
+    PersistenceAdapter = None  # 类型注解时使用 None
 
 logger = logging.getLogger(__name__)
 
