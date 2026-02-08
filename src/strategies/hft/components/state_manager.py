@@ -17,15 +17,11 @@ StateManager - 状态管理器
 import logging
 import time
 import asyncio
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Optional, Tuple, Any
 from dataclasses import dataclass
 
-# 🔥 [修复导入] 移除 TYPE_CHECKING，直接导入（避免无法解析问题）
-# 注意：PersistenceAdapter 是可选依赖，如果不存在也不会影响功能
-try:
-    from ...persistence.persistence_adapter import PersistenceAdapter
-except ImportError:
-    PersistenceAdapter = None  # 类型注解时使用 None
+# 🔥 [修复导入] 使用 Any 类型避免导入解析问题
+# persistence 参数可以是任何实现了持久化接口的对象
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +88,13 @@ class StateManager:
     - 🔥 [新增] 支持可选持久化适配器
     """
 
-    def __init__(self, symbol: str, persistence: Optional['PersistenceAdapter'] = None):
+    def __init__(self, symbol: str, persistence: Optional[Any] = None):
         """
         初始化状态管理器
 
         Args:
             symbol (str): 交易对
-            persistence (PersistenceAdapter): 可选的持久化适配器
+            persistence (Any): 可选的持久化适配器（需实现 save/load/delete/exists 方法）
         """
         self.symbol = symbol
         self._persistence = persistence
@@ -119,11 +115,26 @@ class StateManager:
         # 追踪止损状态
         self._trailing_stop = TrailingStopState()
 
-        # 🔥 [新增] 如果有持久化，尝试恢复状态
-        if self._persistence:
-            asyncio.create_task(self._load_from_persistence())
+        # 🔥 [新增] 标记需要加载持久化状态（不在 __init__ 中直接加载）
+        self._needs_persistence_load = persistence is not None
 
         logger.info(f"📊 [StateManager] 初始化: symbol={symbol}, persistence={persistence is not None}")
+
+    async def initialize_persistence(self):
+        """
+        🔥 [修复] 异步初始化持久化状态
+
+        在 __init__ 中不能直接调用 asyncio.create_task()，
+        因为此时事件循环可能还未运行。
+        改为提供此方法，由调用者在合适的时机调用。
+        """
+        if self._needs_persistence_load and self._persistence:
+            try:
+                await self._load_from_persistence()
+                self._needs_persistence_load = False
+                logger.info(f"✅ [StateManager] {self.symbol}: 持久化状态加载完成")
+            except Exception as e:
+                logger.error(f"❌ [StateManager] {self.symbol}: 持久化状态加载失败: {e}")
 
     # ========== 持仓管理 ==========
 

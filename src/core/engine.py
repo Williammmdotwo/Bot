@@ -527,6 +527,11 @@ class Engine:
         logger.info("启动 Strategies...")
         for strategy in self._strategies:
             await strategy.start()
+
+            # 🔥 [修复] 初始化持久化状态（在策略启动后，事件循环已运行）
+            if hasattr(strategy, 'state_manager') and hasattr(strategy.state_manager, 'initialize_persistence'):
+                await strategy.state_manager.initialize_persistence()
+
         logger.info("✅ 所有策略已启动")
 
         # ✅ [关键] 启动 OMS 定时持仓同步（修复幽灵持仓问题）
