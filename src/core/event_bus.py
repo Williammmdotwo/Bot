@@ -268,9 +268,11 @@ class EventBus:
 
     async def _process_event(self, event: Event):
         """
-        处理单个事件（性能优化版本）
+        处理单个事件（性能优化版本 + 超时保护）
 
         调用所有注册的处理器。
+
+        🔥 [新增] 超时保护：检测哪个 handler 超时，避免整个 EventBus 卡住
 
         Args:
             event (Event): 要处理的事件（已从 PriorityEvent 解包）
@@ -288,10 +290,22 @@ class EventBus:
         # 调用所有处理器
         for handler in handlers:
             try:
+                # 🔥 [新增] 添加超时保护（2秒）
+                # 如果某个 handler 超过 2 秒未返回，打印超时警告
+                # 继续处理后续事件（不会阻塞整个队列）
                 if asyncio.iscoroutinefunction(handler):
-                    await handler(event)
+                    await asyncio.wait_for(handler(event), timeout=2.0)
                 else:
                     handler(event)
+
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"⏰ [超时警告] 事件处理超时: {event.type.value}, "
+                    f"handler={handler.__name__}, "
+                    f"超时=2.0s",
+                    exc_info=True
+                )
+                self._stats['errors'] += 1
 
             except Exception as e:
                 logger.error(

@@ -577,12 +577,18 @@ class ScalperV2(BaseStrategy):
         - 如果当前 Tick 价格与上次的差小于 tick_size，且距离上次计算不足 50ms，则直接返回
         - 将无效的计算密集度降低 85% 以上
 
+        🔥 [诊断] 添加调试日志，追踪执行流程，定位卡住的位置
+
         Args:
             event (Event): TICK 事件
         """
         try:
+            # 🔥 [诊断] 记录开始
+            logger.debug(f"🔍 [on_tick 开始] {self.symbol}")
+
             # 🔥 [防御] 未就绪时跳过（防止竞态条件）
             if not self._is_ready:
+                logger.debug(f"⏭️ [on_tick 跳过] {self.symbol}: 策略未就绪")
                 return
 
             #  [调试] 检查 MarketDataManager 是否注入
@@ -688,30 +694,43 @@ class ScalperV2(BaseStrategy):
             #  [修复 73] 重构 on_tick() 为 FSM 状态路由器
             # 根据当前状态调用不同的处理方法，实现模块化架构
 
+            # 🔥 [诊断] 记录状态检查
+            logger.debug(f"🔍 [on_tick 状态检查] {self.symbol}: 检查当前状态")
+
             # 检查当前状态
             current_state = self._get_state()
+            logger.debug(f"🔍 [on_tick 当前状态] {self.symbol}: {current_state.name}")
 
             # IDLE 状态：无持仓、无挂单
             if current_state == StrategyState.IDLE:
                 # 【轻量级】信号生成 + 开仓逻辑
+                logger.debug(f"🔍 [on_tick 调用 IDLE 处理器] {self.symbol}")
                 await self._handle_idle_state(event.data)
+                logger.debug(f"🔍 [on_tick IDLE 处理器返回] {self.symbol}")
 
             # PENDING_OPEN 状态：有挂单，开仓中
             elif current_state == StrategyState.PENDING_OPEN:
                 # 【极轻量级】挂单维护（插队/撤单）
                 # 注意：由于提前退出优化，这个状态可能不会到达
+                logger.debug(f"🔍 [on_tick PENDING_OPEN] {self.symbol}: 跳过（有挂单）")
                 pass
 
             # POSITION_HELD 状态：已开仓
             elif current_state == StrategyState.POSITION_HELD:
                 # 【轻量级】止损/止盈检查
+                logger.debug(f"🔍 [on_tick 调用 POSITION_HELD 处理器] {self.symbol}")
                 await self._handle_position_held_state(event.data)
+                logger.debug(f"🔍 [on_tick POSITION_HELD 处理器返回] {self.symbol}")
 
             # PENDING_CLOSE 状态：有平仓挂单，平仓中
             elif current_state == StrategyState.PENDING_CLOSE:
                 # 【极轻量级】平仓挂单维护
                 # 注意：由于提前退出优化，这个状态可能不会到达
+                logger.debug(f"🔍 [on_tick PENDING_CLOSE] {self.symbol}: 跳过（有平仓挂单）")
                 pass
+
+            # 🔥 [诊断] 记录结束
+            logger.debug(f"🔍 [on_tick 结束] {self.symbol}")
 
         except Exception as e:
             logger.error(f"处理 Tick 事件失败: {e}", exc_info=True)
@@ -1691,10 +1710,14 @@ class ScalperV2(BaseStrategy):
 
             while self._enabled:
                 try:
+                    # 🔥 [诊断] 每 10 秒打印一次心跳
+                    now = time.time()
+                    if int(now) % 10 == 0:  # 每 10 秒
+                        logger.debug(f"💓 [监控协程心跳] {self.symbol}: 运行中")
+
                     # 获取当前持仓和状态
                     position = self.get_position(self.symbol)
                     current_state = self._get_state()
-                    now = time.time()
 
                     # ========== 持仓止损监控 ==========
                     if position and abs(position.size) > 0:
