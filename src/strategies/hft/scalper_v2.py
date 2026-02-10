@@ -295,6 +295,12 @@ class ScalperV2(BaseStrategy):
         # 防止重复处理相同的订单事件（10秒内的重复事件将被过滤）
         self._processed_events = {}  # {order_id: timestamp}
 
+        # 🔥 [新增] OKX API 失败退避机制
+        # 防止 OKX API 故障时疯狂重试导致触发风控
+        self._api_failure_count = 0
+        self._api_failure_time = 0.0
+        self._api_backoff_until = 0.0  # API 退避截止时间
+
         logger.info(
             f"🚀 ScalperV2 初始化: symbol={symbol}, "
             f"imbalance_ratio={imbalance_ratio}, "
@@ -831,9 +837,11 @@ class ScalperV2(BaseStrategy):
         stop_loss_price: float,
         size: float,
         contract_val: float = 1.0
-    ) -> bool:
+    ):
         """
         下 Maker 挂单（限价单）
+
+        🔥 [新增] 区分失败类型（API 错误 vs 风控拦截）
 
         Args:
             symbol (str): 交易对
@@ -843,7 +851,7 @@ class ScalperV2(BaseStrategy):
             contract_val (float): 合约面值
 
         Returns:
-            bool: 下单是否成功
+            bool/str: True=成功, False=失败, "risk_blocked"=风控拦截
         """
         try:
             # 检查开仓锁
@@ -888,13 +896,29 @@ class ScalperV2(BaseStrategy):
                 )
                 # 🔥 [新增] 状态转换到 PENDING_OPEN
                 self._transition_to_state(StrategyState.PENDING_OPEN, "下单成功")
+                return True
             else:
                 logger.warning(f"🚫 [开仓失败] {self.symbol}: 下单失败，已重置开仓锁")
+                return False
 
-            return order is not None
         except Exception as e:
-            logger.error(f"❌ [Maker 挂单失败] {self.symbol}: 下单失败: {str(e)}")
-            return False
+            error_msg = str(e)
+
+            # 🔥 [新增] 识别 OKX API 错误
+            if "50001" in error_msg or "50013" in error_msg or "503" in error_msg or "500" in error_msg:
+                logger.error(f"❌ [OKX API 错误] {self.symbol}: {e}")
+                # 返回 False，触发退避机制
+                return False
+
+            # 🔥 [新增] 识别风控拦截（不触发退避）
+            elif "风控拒绝" in error_msg or "频率过高" in error_msg:
+                logger.warning(f"🛑 [风控拦截] {self.symbol}: {e}")
+                # 返回 False，但不算 API 失败
+                return "risk_blocked"  # 特殊标记
+
+            else:
+                logger.error(f"❌ [未知错误] {self.symbol}: {e}")
+                return False
 
     async def _cancel_maker_order(self):
         """
@@ -1283,6 +1307,9 @@ class ScalperV2(BaseStrategy):
         - 运行仓位计算
         - 提交挂单
 
+        🔥 [新增] OKX API 失败退避机制
+        - 防止 OKX API 故障时疯狂重试导致触发风控
+
         Args:
             tick_data (dict): Tick 数据
         """
@@ -1292,6 +1319,16 @@ class ScalperV2(BaseStrategy):
                 f"❌ [致命错误] {self.symbol}: position_sizer 未初始化"
             )
             return
+
+        # 🔥 [新增] API 退避检查
+        current_time = time.time()
+        if current_time < self._api_backoff_until:
+            remaining = self._api_backoff_until - current_time
+            logger.debug(
+                f"⏳ [API 退避] {self.symbol}: "
+                f"OKX API 冷却中，剩余 {remaining:.1f}s"
+            )
+            return  # 跳过下单
 
         try:
             # 提取数据
@@ -1497,7 +1534,7 @@ class ScalperV2(BaseStrategy):
             )
 
             # 提交挂单
-            success = await self._place_maker_order(
+            result = await self._place_maker_order(
                 symbol=symbol,
                 price=decision.price,
                 stop_loss_price=stop_loss_price,
@@ -1505,16 +1542,37 @@ class ScalperV2(BaseStrategy):
                 contract_val=self.contract_val
             )
 
-            if success:
-                # 🔥 [修复] 状态转换已在 _place_maker_order() 中完成，避免重复转换
+            # 🔥 [新增] 根据不同失败类型处理
+            if result is True:
+                # 下单成功，重置失败计数
+                self._api_failure_count = 0
+                self._api_failure_time = 0.0
                 logger.info(
                     f"✅ [狙击挂单已提交] {self.symbol} @ {decision.price:.6f}, "
                     f"数量={trade_size}, 止损={stop_loss_price:.6f}, "
                     f"策略={decision.reason}"
                 )
+            elif result == "risk_blocked":
+                # 风控拦截，不触发退避
+                logger.info(
+                    f"⏸️ [风控冷却] {self.symbol}: "
+                    f"等待风控限制解除，不计入 API 失败"
+                )
+                # 不增加失败计数，不启动退避
             else:
-                # 下单失败，状态已在 _place_maker_order() 中保持 IDLE
-                pass
+                # 🔥 [新增] API 失败，启动退避机制
+                self._api_failure_count += 1
+                self._api_failure_time = current_time
+
+                # 指数退避：1s, 2s, 4s, 8s, 16s, 最多 30s
+                backoff_seconds = min(2 ** (self._api_failure_count - 1), 30)
+                self._api_backoff_until = current_time + backoff_seconds
+
+                logger.warning(
+                    f"⚠️ [API 失败退避] {self.symbol}: "
+                    f"连续失败 {self._api_failure_count} 次，"
+                    f"冷却 {backoff_seconds} 秒"
+                )
 
         except Exception as e:
             logger.error(f"❌ [IDLE 状态处理失败] {self.symbol}: {e}", exc_info=True)
