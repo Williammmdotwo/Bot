@@ -620,16 +620,30 @@ class ScalperV2(BaseStrategy):
             # 🔥 [修复] 注入到 tick_data
             tick_data['order_book'] = order_book
 
-            # 🔥 [新增] 计算节流（Scheme A Implementation）
-            # 检查：如果当前 Tick 价格与 self._last_price 之差小于 tick_size，且距离上次计算不足 50ms
-            # 则直接返回（跳过 signal_generator.compute）
-            # 目标：将无效的计算密集度降低 85% 以上
+            # 🔥 [增强] 动态计算节流（解决 EventBus 爆满问题）
+            # 根据当前状态动态调整节流间隔：
+            # - 无持仓、无挂单（IDLE）：200ms（每秒最多 5 个 TICK）
+            # - 持仓中（POSITION_HELD）：50ms（每秒最多 20 个 TICK，需要快速止损）
+            # - 有挂单（PENDING_OPEN/PENDING_CLOSE）：100ms（每秒最多 10 个 TICK）
             if self._last_price > 0:
                 # 价格变化小于 tick_size
                 price_delta = abs(price - self._last_price)
                 time_delta_ms = (now - self._last_compute_time) * 1000  # 转换为毫秒
 
-                if price_delta < self.tick_size and time_delta_ms < self.compute_throttle_ms:
+                # 🔥 [关键] 根据状态动态调整节流间隔
+                current_state = self._get_state()
+                if current_state == StrategyState.POSITION_HELD:
+                    # 持仓时需要快速响应止损，使用较短的节流间隔
+                    throttle_ms = 50
+                elif current_state in (StrategyState.PENDING_OPEN, StrategyState.PENDING_CLOSE):
+                    # 有挂单时需要中等响应速度
+                    throttle_ms = 100
+                else:
+                    # IDLE 状态，可以大幅降低计算频率
+                    throttle_ms = 200
+
+                # 价格变化 + 时间间隔都满足才计算
+                if price_delta < self.tick_size and time_delta_ms < throttle_ms:
                     # 跳过计算
                     return
 

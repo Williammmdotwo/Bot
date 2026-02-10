@@ -98,7 +98,8 @@ class EventBus:
         """初始化事件总线"""
         self._handlers: Dict[EventType, List[Callable]] = defaultdict(list)
         # 🔥 [P0 修复] 替换为优先级队列
-        self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=10000)
+        # 🔥 [修复] 增加队列大小到 50000，避免高频交易时爆满
+        self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=50000)
         self._running: bool = False
         self._task: Optional[asyncio.Task] = None
         self._stats = {
